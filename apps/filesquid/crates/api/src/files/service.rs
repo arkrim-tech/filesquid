@@ -207,6 +207,27 @@ impl<B, R, S> FileService<B, R, S> {
         self.scopes.set(scopes).is_ok()
     }
 
+    /// One page of the folder `folder` of `scope` from the installed [`ScopeObjects`]'s index
+    /// of registered files, at most `limit` entries after `after`; `None` when no index answers
+    /// for the scope (or none is installed). May block.
+    ///
+    /// # Errors
+    /// As the host's index answers.
+    ///
+    /// [`ScopeObjects`]: super::nodes::ScopeObjects
+    pub fn scope_page(
+        &self,
+        scope: &crate::navigation::FolderScope,
+        folder: &str,
+        after: Option<&super::scope_listing::ScopeAfter>,
+        limit: usize,
+    ) -> Result<Option<super::scope_listing::ScopePage>, FileError> {
+        match self.scopes.get() {
+            Some(scopes) => scopes.entries(scope, folder, after, limit),
+            None => Ok(None),
+        }
+    }
+
     /// The object that holds the files of `scope`, from the installed [`ScopeObjects`]
     /// (`None` without one). May block.
     ///
@@ -678,7 +699,7 @@ pub(super) fn resolve<B: StorageBackend>(
 }
 
 /// The checked page size: [`DEFAULT_PAGE`] when absent, else 1 to [`MAX_PAGE_ENTRIES`].
-fn page_size(limit: Option<usize>) -> Result<usize, FileError> {
+pub(super) fn page_size(limit: Option<usize>) -> Result<usize, FileError> {
     match limit.unwrap_or(DEFAULT_PAGE) {
         limit @ 1..=MAX_PAGE_ENTRIES => Ok(limit),
         _ => Err(FileError::invalid(format!(

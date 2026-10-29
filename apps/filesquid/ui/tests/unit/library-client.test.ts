@@ -110,7 +110,7 @@ describe("ClientLibrarySource", () => {
       consent: {
         library_id: "lib-1",
         object_ids: ["o"],
-        statement_id: "version_inventory_repair.v1",
+        statement_id: "version_inventory_repair.v2",
         confirmed: true,
       },
     };

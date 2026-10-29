@@ -62,12 +62,14 @@ use filesquid_api::host::{HostIdentity, NotEnrolled};
 use filesquid_api::jobs::Jobs;
 use filesquid_api::journal::{JournalEntry, Outcome};
 use filesquid_api::journal_writer::JournalSender;
-use filesquid_api::local_library::{LocalLibraryService, RepairLedger};
+use filesquid_api::local_library::{
+    LocalLibraryService, RebuildRunner, RepairLedger, REBUILD_JOB_KIND,
+};
 use filesquid_api::ocfl_validation::ValidationService;
 use filesquid_api::registry::ProcessHandle;
 use filesquid_api::trace_layer::JournalLayer;
 use filesquid_api::ApiState;
-use filesquid_core::InstallationId;
+use filesquid_core::{InstallationId, RepositoryId};
 use filesquid_native::import::plans::SqliteImportPlans;
 use filesquid_native::installation::{
     self, InstallationError, InstallationSource, INSTALLATION_CREATED,
@@ -571,6 +573,33 @@ pub fn install_library_routes(
     Ok(locations)
 }
 
+/// Install this launch's durable job service `jobs` for the job routes (API-S-037) and the
+/// runner of rebuild jobs over the installed library commands, run on `runtime`, the app's
+/// long-lived runtime (Task API-F2.17; API-S-025 **Rebuild as a job**). Resuming an
+/// unfinished rebuild at launch is the host's next step (Task DE-1.8).
+///
+/// # Errors
+/// The library commands are not installed yet, or a job service or a rebuild runner is
+/// already installed.
+pub fn install_job_routes(
+    state: &ApiState,
+    jobs: &Jobs,
+    runtime: tokio::runtime::Handle,
+) -> Result<(), String> {
+    let libraries = state
+        .libraries()
+        .ok_or_else(|| "the library commands are not installed".to_string())?;
+    if !state.install_jobs(Arc::new(jobs.clone())) {
+        return Err("a job service was already installed".to_string());
+    }
+    let runner =
+        RebuildRunner::new(jobs.clone(), libraries, Principal::Owner.actor()).with_runtime(runtime);
+    if !state.install_job_runner(REBUILD_JOB_KIND, Arc::new(runner)) {
+        return Err("a rebuild runner was already installed".to_string());
+    }
+    Ok(())
+}
+
 /// Install where this desktop keeps each user's UI preferences (API-S-011, API-F2.2): the
 /// operational store in `data_dir` ([`SqlitePreferences`]). Opens a database connection.
 ///
@@ -588,13 +617,17 @@ pub fn install_host_preferences(
     Ok(())
 }
 
-/// Tell the file service which OCFL object holds each folder scope's files, for the listing
-/// by navigation node (API-F2.2): [`navigation::CatalogScopes`].
+/// Tell the file service what the listing by navigation node lists (API-F2.2, DE-1.7): the
+/// folders and registered files of a collection or folder node from `catalog`'s index
+/// ([`navigation::CatalogScopes`]).
 ///
 /// # Errors
 /// The file service already has its scope objects.
-pub fn install_file_scopes(files: &filesquid_native::HostFiles) -> Result<(), String> {
-    if !files.install_scope_objects(Arc::new(navigation::CatalogScopes)) {
+pub fn install_file_scopes(
+    files: &filesquid_native::HostFiles,
+    catalog: &Arc<SqliteCatalog>,
+) -> Result<(), String> {
+    if !files.install_scope_objects(Arc::new(navigation::CatalogScopes(catalog.clone()))) {
         return Err("the file service's scope objects were already installed".to_string());
     }
     Ok(())
@@ -702,8 +735,11 @@ fn start_monitor(
     app.manage(DesktopMedia(media_workers(&host)));
     navigation::install_navigation(&state, catalog.clone(), &installation)
         .inspect_err(|_| host.stop())?;
-    app.manage(DesktopCatalog(catalog));
-    install_library_services(app, &host, &installation, &data_dir, opened)
+    app.manage(DesktopCatalog(catalog.clone()));
+    install_library_services(app, &host, &installation, &data_dir, (opened, catalog))
+        .inspect_err(|_| host.stop())?;
+    let runtime = tauri::async_runtime::handle().inner().clone();
+    install_job_routes(&state, &app.state::<DesktopJobs>().0, runtime)
         .inspect_err(|_| host.stop())?;
     app.manage(DesktopInstallation(installation));
     open_test_library(app, &data_dir);
@@ -754,9 +790,11 @@ fn start_imports(
     let plans = Arc::new(SqliteImportPlans::open(&data_dir.join(JOURNAL_FILE))?);
     let jobs = app.state::<DesktopJobs>().0.clone();
     let files = app.state::<DesktopFiles>().0.clone();
+    let catalog = app.state::<DesktopCatalog>().0.clone();
     let worker = Arc::new(ImportWorker::spawn(ImportServices {
         jobs: jobs.clone(),
         files: files.clone(),
+        index: catalog,
         plans: plans.clone(),
         journal: host.monitor().journal(),
         build: import_build(),
@@ -806,7 +844,8 @@ fn prepare_backfill(
     catalog: &Arc<SqliteCatalog>,
     opened: &Arc<OpenedRoots>,
 ) -> Result<(BackfillTask, bool), String> {
-    let jobs = history_backfill::open_jobs(data_dir, host)?;
+    let events = app.state::<ApiState>().events.clone();
+    let jobs = history_backfill::open_jobs(data_dir, host)?.with_events(events);
     let recovered = history_backfill::recover_jobs(&jobs).is_ok();
     let task = BackfillTask {
         jobs: jobs.clone(),
@@ -852,19 +891,21 @@ fn install_library_services(
     host: &HostMonitor,
     installation: &InstallationId,
     data_dir: &std::path::Path,
-    opened: Arc<OpenedRoots>,
+    (opened, catalog): (Arc<OpenedRoots>, Arc<SqliteCatalog>),
 ) -> Result<(), String> {
     let state = app.state::<ApiState>();
     let validation = host.start_validation::<FsBackend>(data_dir, &state)?;
     let files = app.state::<DesktopFiles>().0.clone();
     install_file_provenance(&files, host, installation)?;
-    install_file_scopes(&files)?;
+    install_file_scopes(&files, &catalog)?;
     install_host_preferences(&state, data_dir)?;
     let serving = LibraryServing {
         files,
         validation: Some(validation.clone()),
         opened,
         data_dir: data_dir.to_path_buf(),
+        repository: installation_repository(installation)?,
+        catalog,
     };
     let locations = install_library_routes(&state, host, installation, serving)?;
     let dialog = Box::new(folder_choice::RfdDialog::new(app.clone()));
@@ -872,6 +913,16 @@ fn install_library_services(
     app.manage(DesktopValidation(validation));
     app.manage(DesktopLocations(locations));
     Ok(())
+}
+
+/// This installation as the repository its libraries name (a repository is one
+/// installation). Pure.
+///
+/// # Errors
+/// The installation UUID is not a valid repository ID (never, for a parsed UUID).
+pub fn installation_repository(installation: &InstallationId) -> Result<RepositoryId, String> {
+    RepositoryId::new(installation.as_str())
+        .map_err(|_| "the installation is not a repository ID".to_string())
 }
 
 /// Tick the monitor once per [`TICK`] until `stop` is set at app exit (bounded by the app's lifetime).

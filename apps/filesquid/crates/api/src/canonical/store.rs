@@ -451,6 +451,24 @@ fn operations<B: StorageBackend>(
     Ok(records)
 }
 
+/// The library the storage root's collection snapshot belongs to: the UUID of its object
+/// identifier `urn:uuid:<library-id>`, or `None` when the root holds no snapshot (a new or
+/// earlier folder library) or its identifier has another form. Reads the snapshot object's
+/// head inventory only, so a copied folder keeps the identity of its library (ADR 041
+/// Decision 6).
+///
+/// # Errors
+/// [`CanonicalError`] when the snapshot object exists but cannot be read.
+pub async fn snapshot_library_id<B: StorageBackend>(
+    backend: &B,
+) -> Result<Option<String>, CanonicalError> {
+    if !has_snapshot(backend).await? {
+        return Ok(None);
+    }
+    let object = Object::open(backend, SNAPSHOT_ROOT).await?;
+    Ok(object.id().strip_prefix("urn:uuid:").map(str::to_string))
+}
+
 /// Whether the storage root holds a snapshot object: its object declaration exists.
 async fn has_snapshot<B: StorageBackend>(backend: &B) -> Result<bool, CanonicalError> {
     has_object(backend, SNAPSHOT_ROOT).await

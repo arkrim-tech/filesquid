@@ -21,23 +21,25 @@ Based on the accepted Architecture Decision Records in `resources/architecture/`
 
 Before running any tests, committing code, or completing an execution task, you MUST execute the following CLI commands inside the correct workspace.
 
+During the FileSquid MVP the pre-commit hook's TypeScript lint, typecheck and tests run only for `@filesquid/ui`; its Rust formatting, Clippy and Cargo tests are unchanged and follow the change scope (owner decision 2026-10-23, [ImageSquid during the MVP](./local-verification.md#imagesquid-during-the-mvp)). ImageSquid is still formatted, with `@filesquid/ui`'s Prettier, so these commands need no ImageSquid install.
+
 ### 1. Format each TypeScript UI package
-Run in `apps/filesquid/ui/` and in `apps/imagesquid/`:
+Run in `apps/filesquid/ui/`, then format `apps/imagesquid/` with the same Prettier (Node runs it on every OS):
 ```bash
 cd apps/filesquid/ui/
 npx prettier --write .
 cd ../../imagesquid/
-npx prettier --write .
+node ../filesquid/ui/node_modules/prettier/bin/prettier.cjs --write .
 ```
 
-### 2. Lint each TypeScript UI package (and auto-fix)
-Run in `apps/filesquid/ui/` and in `apps/imagesquid/`:
+### 2. Lint the FileSquid UI package (and auto-fix)
+Run in `apps/filesquid/ui/`:
 ```bash
 cd apps/filesquid/ui/
 npx eslint . --fix
-cd ../../imagesquid/
-npx eslint . --fix
 ```
+
+ImageSquid's ESLint is not required during the MVP. Whoever changes ImageSquid's code MAY run it by hand with `npm ci` and `npx eslint . --fix` in `apps/imagesquid/`; when ImageSquid work starts it becomes required again ([Task FS-3.8](../../resources/implementation-plan.md#task-fs-3.8)).
 
 ### 3. Format and lint the FileSquid Cargo workspace
 Run once from the product-local workspace root. It covers every crate under `apps/filesquid/crates/`.

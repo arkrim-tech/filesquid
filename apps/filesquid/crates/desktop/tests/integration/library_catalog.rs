@@ -1,20 +1,21 @@
-//! Task DE-0.2: the desktop opens its per-library SQLite catalogs at launch, beside the
-//! activity journal in its data directory, and every catalog commit reaches that journal.
-//! Runs against SQLite files on disk.
+//! Tasks DE-0.2 and DE-1.7: the desktop opens its catalog directory at launch, beside the
+//! activity journal in its data directory, keeps one index per library there while the
+//! library itself lives in a folder of its own, and every catalog commit reaches that journal.
+//! Runs against SQLite files and OCFL storage roots on disk.
 
 #[path = "../support/journal.rs"]
 #[allow(dead_code)]
 mod journal;
 
+#[path = "../support/folder_library.rs"]
+#[allow(dead_code)]
+mod folder_library;
+
 use filesquid_api::journal::JournalEntry;
-use filesquid_api::library::{
-    CommandRequest, LibraryCommand, LibraryService, NEW_LIBRARY_REVISION,
-};
-use filesquid_api::operation::{CommandEnvelope, ExpectedRevision, OperationId, OperationScope};
 use filesquid_api::ApiState;
-use filesquid_core::RepositoryId;
 use filesquid_desktop_lib::{open_host_monitor, open_library_catalog, CATALOG_OPEN_OPERATION};
 use filesquid_native::{SqliteJournal, CATALOG_DIR, JOURNAL_FILE};
+use folder_library::{attach_new_library, remove_all};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -22,6 +23,7 @@ use std::sync::Arc;
 fn data_dir(name: &str) -> PathBuf {
     let dir =
         std::env::temp_dir().join(format!("fs-desktop-catalog-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(folder_library::folders_of(&dir));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("data dir");
     dir
@@ -41,36 +43,23 @@ fn installation() -> filesquid_core::InstallationId {
     filesquid_core::InstallationId::parse(INSTALLATION).expect("installation")
 }
 
-/// A create-library request on a fixed repository.
-fn create_library() -> CommandRequest {
-    CommandRequest {
-        envelope: CommandEnvelope::new(
-            OperationId::new("op-create").expect("op"),
-            ExpectedRevision::new(NEW_LIBRARY_REVISION).expect("revision"),
-            OperationScope::new("library").expect("scope"),
-        ),
-        command: LibraryCommand::CreateLibrary {
-            repository_id: RepositoryId::new("repo-1").expect("repo"),
-            name: "Family archive".into(),
-        },
-    }
-}
-
 #[test]
 fn the_host_keeps_one_catalog_file_per_library_and_journals_its_commits() {
     let dir = data_dir("open");
     let state = ApiState::new();
     let host = open_host_monitor(&state, &dir, None).expect("monitor");
     let catalog = Arc::new(open_library_catalog(&dir, &host, &installation()).expect("catalog"));
-    let service = LibraryService::new(catalog.clone(), host.monitor().journal());
-    let result = service.execute("owner", create_library()).expect("create");
-    let library = result.created_id.expect("library id");
-    drop(service);
+    let (library, ocfl) = attach_new_library(&catalog, &dir, "Family archive");
     drop(catalog);
     host.stop();
     let file = dir.join(CATALOG_DIR).join(format!("{library}.sqlite"));
     assert!(file.exists(), "{file:?}");
-    let ocfl = dir.join(CATALOG_DIR).join(format!("{library}.ocfl"));
+    assert!(
+        !dir.join(CATALOG_DIR)
+            .join(format!("{library}.ocfl"))
+            .exists(),
+        "no library root in the data directory"
+    );
     assert!(
         ocfl.join("snapshot").join("0=ocfl_object_1.1").exists(),
         "{ocfl:?}"
@@ -84,7 +73,7 @@ fn the_host_keeps_one_catalog_file_per_library_and_journals_its_commits() {
     let text = serde_json::to_string(&entries).expect("json");
     assert!(!text.contains("Family"), "{text}");
     assert!(!text.contains(dir.to_string_lossy().as_ref()), "{text}");
-    std::fs::remove_dir_all(dir).expect("cleanup");
+    remove_all(&dir);
 }
 
 #[test]
@@ -116,8 +105,7 @@ fn catalog_commits_raise_journal_entry_events() {
     let mut rx = state.events.subscribe();
     let host = open_host_monitor(&state, &dir, None).expect("monitor");
     let catalog = Arc::new(open_library_catalog(&dir, &host, &installation()).expect("catalog"));
-    let service = LibraryService::new(catalog.clone(), host.monitor().journal());
-    service.execute("owner", create_library()).expect("create");
+    attach_new_library(&catalog, &dir, "Family archive");
     let mut operations = Vec::new();
     while let Ok(event) = rx.try_recv() {
         if event.topic == "journal.entry" {
@@ -128,10 +116,9 @@ fn catalog_commits_raise_journal_entry_events() {
         operations.iter().any(|op| op == "library.create"),
         "{operations:?}"
     );
-    drop(service);
     drop(catalog);
     host.stop();
-    std::fs::remove_dir_all(dir).expect("cleanup");
+    remove_all(&dir);
 }
 
 /// DE-0.10: the installation UUID is created once, journaled as
@@ -172,19 +159,10 @@ fn a_catalog_commit_carries_its_history_in_the_same_version() {
     let state = ApiState::new();
     let host = open_host_monitor(&state, &dir, None).expect("monitor");
     let catalog = Arc::new(open_library_catalog(&dir, &host, &installation()).expect("catalog"));
-    let service = LibraryService::new(catalog.clone(), host.monitor().journal());
-    let library = service
-        .execute("owner", create_library())
-        .expect("create")
-        .created_id
-        .expect("library id");
-    drop(service);
+    let (_, folder) = attach_new_library(&catalog, &dir, "Family archive");
     drop(catalog);
     host.stop();
-    let object = dir
-        .join(CATALOG_DIR)
-        .join(format!("{library}.ocfl"))
-        .join("snapshot");
+    let object = folder.join("snapshot");
     let inventory: serde_json::Value =
         serde_json::from_slice(&std::fs::read(object.join("inventory.json")).expect("inventory"))
             .expect("inventory json");
@@ -218,8 +196,10 @@ fn a_catalog_commit_carries_its_history_in_the_same_version() {
     let operations: Vec<&str> = carried.iter().map(|e| e.operation.as_str()).collect();
     assert_eq!(operations, ["ocfl.commit", "library.create"]);
     let object_ref = format!("{}@v1", inventory["id"].as_str().expect("id"));
+    let operation = carried[0].operation_id.clone();
+    assert!(operation.is_some(), "the create's operation ID");
     for entry in &carried {
-        assert_eq!(entry.operation_id.as_deref(), Some("op-create"));
+        assert_eq!(entry.operation_id, operation, "one operation");
         assert_eq!(entry.object_ref.as_deref(), Some(object_ref.as_str()));
     }
     let stored = host_journal(&dir);
@@ -242,5 +222,5 @@ fn a_catalog_commit_carries_its_history_in_the_same_version() {
         !record.contains("Family"),
         "no title in the record: {record}"
     );
-    std::fs::remove_dir_all(dir).expect("cleanup");
+    remove_all(&dir);
 }

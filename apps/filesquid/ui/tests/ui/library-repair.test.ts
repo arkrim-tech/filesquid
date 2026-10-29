@@ -2,7 +2,8 @@
  * UI tests for `<fs-library-repair>` (UI-1.1, API-S-023, API-S-025, OCFL-S-020): the repair offer
  * lists the objects that can be read but not changed; the consent dialog names those objects and
  * says that one copy of the root inventory and its sidecar is added to each object's latest
- * version directory and nothing else changes; only Confirm calls the repair route, with the
+ * version directory and that a new version recording the repair is committed to each object's
+ * history, with no file content changed; only Confirm calls the repair route, with the
  * consent for exactly those objects; Cancel and Escape change nothing; the result is shown per
  * object; a refused repair says nothing was changed.
  */
@@ -120,7 +121,11 @@ describe("<fs-library-repair> consent", () => {
     expect(dialog.querySelector(".consent")?.textContent).toBe(labels.repairConsent);
     expect(labels.repairConsent).toContain("One copy of the root inventory and its sidecar");
     expect(labels.repairConsent).toContain("latest version directory");
-    expect(labels.repairConsent).toContain("Nothing else changes.");
+    expect(labels.repairConsent).toContain(
+      "a new version recording this repair will be committed to each object's history",
+    );
+    expect(labels.repairConsent).toContain("No file content changes.");
+    expect(labels.repairConsent).not.toContain("Nothing else changes.");
     const named = [...dialog.querySelectorAll("li")].map((li) => li.textContent);
     expect(named).toEqual(["urn:uuid:obj-a", "urn:uuid:obj-b"]);
     expect(dialog.querySelector('[data-action="confirm"]')?.textContent).toBe(
@@ -253,7 +258,7 @@ describe("<fs-library-repair> consent", () => {
         consent: {
           library_id: "lib-1",
           object_ids: ids,
-          statement_id: "version_inventory_repair.v1",
+          statement_id: "version_inventory_repair.v2",
           confirmed: true,
         },
       },

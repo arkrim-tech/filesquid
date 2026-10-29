@@ -30,7 +30,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.11"
 time = { version = "0.3", features = ["formatting", "parsing", "macros"] }
-tokio = { version = "1", features = ["sync", "rt"] }
+tokio = { version = "1", features = ["sync", "rt", "time"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["registry"] }
 
@@ -144,6 +144,10 @@ name = "integration_files"
 path = "tests/integration/files.rs"
 
 [[test]]
+name = "integration_scope_listing"
+path = "tests/integration/scope_listing.rs"
+
+[[test]]
 name = "unit_receipts"
 path = "tests/unit/receipts.rs"
 
@@ -216,6 +220,10 @@ name = "unit_job_control"
 path = "tests/unit/job_control.rs"
 
 [[test]]
+name = "unit_rebuild_job"
+path = "tests/unit/rebuild_job.rs"
+
+[[test]]
 name = "integration_job_routes"
 path = "tests/integration/job_routes.rs"
 
@@ -235,3 +243,7 @@ harness = false
 [[test]]
 name = "unit_canonical"
 path = "tests/unit/canonical.rs"
+
+[[test]]
+name = "unit_collection_path"
+path = "tests/unit/collection_path.rs"

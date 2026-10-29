@@ -9,7 +9,9 @@
 # that mirrors the FileSquid layout and crate graph, with a fake origin/main,
 # and checks every scope: docs (with the always-run checker scripts and the
 # root .claude/ and docs/), rust:<crates> with reverse dependencies,
-# npm:<packages> with file: links and the packages' own manifests, mixed
+# npm:<packages> with the packages' own manifests (a change confined to
+# apps/imagesquid selects @filesquid/ui's suite, and ImageSquid's file: link
+# no longer adds it to a @filesquid/ui change), mixed
 # scopes, every full trigger (gate-logic and unknown scripts included), and the
 # fallbacks to full (FULL=1, unknown base, not a git repository, cargo
 # metadata failure, unknown crate directory, missing file list). It also
@@ -152,7 +154,11 @@ expect_list() {
 
 CORE_SCOPE="rust:filesquid-api,filesquid-core,filesquid-desktop,filesquid-native,filesquid-server"
 OCFL_SCOPE="rust:filesquid-cli,filesquid-desktop,filesquid-metadata,filesquid-ocfl"
-UI_SCOPE="npm:apps/filesquid/ui,apps/imagesquid"
+# The hook runs one npm suite, @filesquid/ui's, during the MVP (owner decision 2026-10-23,
+# .agents/rules/local-verification.md). ImageSquid's file: link no longer pulls it into a
+# @filesquid/ui change, and a change confined to apps/imagesquid selects this same scope, because
+# @filesquid/ui's distribution-table test reads ImageSquid's label table and token file.
+UI_SCOPE="npm:apps/filesquid/ui"
 API_SCOPE="rust:filesquid-api,filesquid-desktop,filesquid-native,filesquid-server"
 PROV_SCOPE="rust:filesquid-api,filesquid-desktop,filesquid-native,filesquid-prov,filesquid-server"
 
@@ -164,16 +170,30 @@ test_file_lists() {
   expect_list "$PROV_SCOPE" apps/filesquid/crates/prov/tests/features/prov_o_model_F-067.feature
   expect_list "$PROV_SCOPE" apps/filesquid/crates/prov/src/lib.rs
   expect_list "$UI_SCOPE" apps/filesquid/ui/resources/tasks/Task-x-Walkthrough.md
-  expect_list "npm:apps/imagesquid" apps/imagesquid/resources/prd.md
+  expect_list "$UI_SCOPE" apps/imagesquid/resources/prd.md
   expect_list "$OCFL_SCOPE" apps/filesquid/crates/ocfl/tests/fixtures/README.md
   expect_list "$OCFL_SCOPE" apps/filesquid/crates/ocfl/tests/resources/case.json
   expect_list "$CORE_SCOPE" apps/filesquid/crates/core/src/lib.rs README.md
   expect_list "rust:filesquid-server" apps/filesquid/crates/server/src/main.rs
   expect_list "$UI_SCOPE" apps/filesquid/ui/src/main.ts
   expect_list "$UI_SCOPE" apps/filesquid/ui/README.md
-  expect_list "npm:apps/imagesquid" apps/imagesquid/src/main.ts
-  expect_list "rust:filesquid-c2pa npm:apps/imagesquid" apps/filesquid/crates/c2pa/src/lib.rs apps/imagesquid/src/main.ts
+  expect_list "$UI_SCOPE" apps/imagesquid/src/main.ts
+  expect_list "rust:filesquid-c2pa $UI_SCOPE" apps/filesquid/crates/c2pa/src/lib.rs apps/imagesquid/src/main.ts
   expect_list docs ""
+}
+
+# A change confined to apps/imagesquid runs @filesquid/ui's suite and never ImageSquid's own.
+test_imagesquid_paths() {
+  expect_list "$UI_SCOPE" apps/imagesquid/src/theme/labels.en.json
+  expect_list "$UI_SCOPE" apps/imagesquid/src/theme/tokens.css
+  expect_list "$UI_SCOPE" apps/imagesquid/tests/unit/theme.test.ts
+  expect_list "$UI_SCOPE" apps/imagesquid/tests/ui/distribution.test.ts
+  expect_list "$UI_SCOPE" apps/imagesquid/README.md apps/imagesquid/distribution.json
+  expect_list "$UI_SCOPE" apps/imagesquid/src/main.ts apps/filesquid/ui/src/main.ts
+  expect_list "$UI_SCOPE" apps/imagesquid/src/theme/labels.en.json README.md .agents/rules/rule.md
+  expect_list "rust:filesquid-server $UI_SCOPE" apps/imagesquid/src/theme/tokens.css apps/filesquid/crates/server/src/main.rs
+  expect_list full apps/imagesquid/tests/e2e/package.json
+  expect_list full apps/imagesquid/src/theme/labels.en.json apps/filesquid/Cargo.toml
 }
 
 test_full_triggers() {
@@ -217,8 +237,9 @@ test_script_split() {
 test_npm_manifests() {
   expect_list "$UI_SCOPE" apps/filesquid/ui/package-lock.json
   expect_list "$UI_SCOPE" apps/filesquid/ui/package.json
-  expect_list "npm:apps/imagesquid" apps/imagesquid/package.json
-  expect_list "npm:apps/imagesquid" apps/imagesquid/package-lock.json apps/imagesquid/src/main.ts
+  expect_list "$UI_SCOPE" apps/imagesquid/package.json
+  expect_list "$UI_SCOPE" apps/imagesquid/package-lock.json apps/imagesquid/src/main.ts
+  expect_list "$UI_SCOPE" apps/imagesquid/package-lock.json apps/filesquid/ui/package-lock.json
   expect_list "rust:filesquid-c2pa $UI_SCOPE" apps/filesquid/ui/package-lock.json apps/filesquid/crates/c2pa/src/lib.rs
   expect_list full apps/filesquid/ui/package.json apps/filesquid/ui/src/api/schema.d.ts
   expect_list full apps/imagesquid/package.json apps/filesquid/Cargo.lock
@@ -244,7 +265,7 @@ test_git_changes() {
   assert_eq "staged core" "$CORE_SCOPE" "$(scope_in "$FIXTURE")"
   reset_fixture; put apps/filesquid/crates/c2pa/src/lib.rs "// unstaged"
   put apps/imagesquid/src/main.ts "// staged"; fixture_must add apps/imagesquid
-  assert_eq "staged and unstaged" "rust:filesquid-c2pa npm:apps/imagesquid" "$(scope_in "$FIXTURE")"
+  assert_eq "staged and unstaged" "rust:filesquid-c2pa $UI_SCOPE" "$(scope_in "$FIXTURE")"
   reset_fixture; put apps/filesquid/crates/server/src/new.rs "// untracked"
   assert_eq "untracked" "rust:filesquid-server" "$(scope_in "$FIXTURE")"
   reset_fixture; put apps/filesquid/target/debug/out "ignored"
@@ -276,7 +297,7 @@ test_hook_ignores_overrides() {
   fixture_must update-ref refs/remotes/origin/main HEAD
   put apps/imagesquid/src/main.ts "// changed"; printf 'README.md\n' >"$list"
   scope=$(cd "$FIXTURE" && CHANGED_SCOPE_FILES="$list" CHANGED_SCOPE_BASE=HEAD hook_scope --quiet)
-  assert_eq "hook ignores CHANGED_SCOPE_* overrides" "npm:apps/imagesquid" "$scope"
+  assert_eq "hook ignores CHANGED_SCOPE_* overrides" "$UI_SCOPE" "$scope"
   reset_fixture
 }
 
@@ -298,6 +319,24 @@ expect_valid() {
   local actual=no
   is_valid_scope "$2" && actual=yes
   assert_eq "scope grammar '$2'" "$1" "$actual"
+}
+
+# A --scope naming a package the hook does not test maps to the suite that guards it, and an
+# unknown package gives full, so no valid-looking scope can skip the npm checks.
+test_scope_normalisation() {
+  assert_eq "guarded package maps to its suite" "npm:apps/filesquid/ui" "$(scope_or_detect --scope npm:apps/imagesquid)"
+  assert_eq "guarded and tested packages dedupe" "npm:apps/filesquid/ui" \
+    "$(scope_or_detect --scope npm:apps/imagesquid,apps/filesquid/ui)"
+  assert_eq "rust token kept beside a mapped npm token" "rust:filesquid-c2pa npm:apps/filesquid/ui" \
+    "$(scope_or_detect --scope "rust:filesquid-c2pa npm:apps/imagesquid")"
+  assert_eq "unknown npm package runs full" full "$(scope_or_detect --scope npm:apps/other 2>/dev/null)"
+  assert_eq "tested package unchanged" "npm:apps/filesquid/ui" "$(scope_or_detect --scope npm:apps/filesquid/ui)"
+  assert_eq "rust-only scope unchanged" "rust:filesquid-api" "$(scope_or_detect --scope rust:filesquid-api)"
+  assert_eq "normalise is pure on docs" docs "$(normalise_scope docs)"
+  assert_eq "helper and hook library list the same tested packages" "$HOOK_NPM_PACKAGES" \
+    "$(sed -n 's/^NPM_PACKAGES="\(.*\)"$/\1/p' "$HELPER")"
+  assert_eq "helper and hook library list the same guarded packages" "$HOOK_GUARDED_PACKAGES" \
+    "$(sed -n 's/^GUARDED_PACKAGES="\(.*\)"$/\1/p' "$HELPER")"
 }
 
 test_scope_grammar() {
@@ -389,6 +428,7 @@ if ! make_fixture_repo; then
 fi
 write_metadata_fixture
 test_file_lists
+test_imagesquid_paths
 test_full_triggers
 test_script_split
 test_npm_manifests
@@ -398,6 +438,7 @@ test_fallbacks
 test_hook_ignores_overrides
 test_scope_parsers
 test_scope_grammar
+test_scope_normalisation
 test_lock_file_is_ignored
 test_lock_timeout
 test_real_workspace

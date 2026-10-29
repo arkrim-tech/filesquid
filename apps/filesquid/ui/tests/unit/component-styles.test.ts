@@ -21,14 +21,18 @@ const sources = readdirSync(dir)
 const ELEMENTS = [
   "fs-app-shell.ts",
   "fs-breadcrumb.ts",
+  "fs-details-panel.ts",
   "fs-file-browser.ts",
+  "fs-file-panel.ts",
   "fs-file-preview.ts",
   "fs-host-indicator.ts",
+  "fs-metadata-panel.ts",
   "fs-monitor.ts",
   "fs-nav-tree.ts",
   "fs-ocfl-findings.ts",
   "fs-states.ts",
   "fs-theme-control.ts",
+  "fs-versions-panel.ts",
 ];
 /** The shared accessibility stylesheet. */
 const shared = sources.find((s) => s.name === "a11y-style.ts")?.css ?? "";

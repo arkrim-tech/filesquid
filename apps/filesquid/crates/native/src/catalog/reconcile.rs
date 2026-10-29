@@ -14,7 +14,7 @@
 //! `conflict` or the same no-op, never a change.
 
 use super::rows::sql;
-use super::{outbox, write};
+use super::{outbox, placement, write};
 use filesquid_api::canonical::{LibrarySnapshot, OperationRecord};
 use filesquid_api::journal::{JournalEntry, Outcome};
 use filesquid_api::library::CatalogError;
@@ -47,7 +47,9 @@ pub(crate) fn set_snapshot_version(
 /// whether anything changed: only a catalog behind the head is rebuilt, has its receipts
 /// restored and published intents cleared, and has `replay` (the journal entries the commits
 /// it missed wrote into their versions, with their pre-allocated IDs, so the host journal
-/// stores each once) pushed to its outbox. Database I/O.
+/// stores each once) pushed to its outbox. The reconcile's own entry counts the
+/// `unregistered` file objects of the folder the snapshot does not register, which stay
+/// unregistered and are never placed in a collection (ADR 041 Decision 6). Database I/O.
 ///
 /// # Errors
 /// [`CatalogError::Failed`] when the snapshot names another library or holds an entity of
@@ -57,6 +59,7 @@ pub(crate) fn reconcile(
     library_id: &LibraryId,
     snapshot: &LibrarySnapshot,
     replay: &[JournalEntry],
+    unregistered: u64,
 ) -> Result<bool, CatalogError> {
     let version = snapshot.version.to_string();
     let behind = snapshot_version(conn)?.as_deref() != Some(version.as_str());
@@ -75,12 +78,26 @@ pub(crate) fn reconcile(
     for replayed in replay {
         outbox::push(&tx, replayed)?;
     }
-    let entry = JournalEntry::new(RECONCILE_OPERATION, Outcome::Succeeded)
-        .target(library_id.as_str())
-        .target(version);
+    let entry = reconcile_entry(library_id, &version, unregistered);
     outbox::push(&tx, &entry)?;
     tx.commit().map_err(sql)?;
     Ok(true)
+}
+
+/// The journal entry of a reconcile of `library_id` to snapshot `version`, naming how many
+/// file objects the snapshot does not register when there are any. Pure.
+pub(crate) fn reconcile_entry(
+    library_id: &LibraryId,
+    version: &str,
+    unregistered: u64,
+) -> JournalEntry {
+    let entry = JournalEntry::new(RECONCILE_OPERATION, Outcome::Succeeded)
+        .target(library_id.as_str())
+        .target(version);
+    match unregistered {
+        0 => entry,
+        count => entry.target(format!("unregistered:{count}")),
+    }
 }
 
 /// Replace every organisation row with the snapshot's. Database I/O.
@@ -101,6 +118,7 @@ fn rebuild(
     tx.execute("UPDATE library SET revision = ?1", params![revision])
         .map_err(sql)?;
     set_snapshot_version(tx, &snapshot.version.to_string())?;
+    write::set_retention(tx, head.retention_days)?;
     write::index_folders(tx, library_id, &snapshot.folders)?;
     let files: Vec<_> = snapshot
         .files
@@ -110,6 +128,9 @@ fn rebuild(
     write::index_files(tx, library_id, &files)?;
     for file in &snapshot.files {
         write::set_file_state(tx, file.file.id().as_str(), &file.state)?;
+        if let (true, Some(path)) = (file.is_registered(), &file.path) {
+            placement::place(tx, file.file.id(), path)?;
+        }
     }
     rebuild_collections(tx, snapshot)
 }
@@ -163,6 +184,21 @@ fn restore_receipts(
         .map_err(sql)?;
     }
     Ok(())
+}
+
+/// Empty an index built from another folder that holds no snapshot: every organisation row,
+/// the library row, the receipts and the pending intents go (the journal outbox stays, to be
+/// forwarded), so the folder's own library entity is created afresh and nothing of the other
+/// folder is served. Database I/O.
+pub(crate) fn clear_index(conn: &mut Connection) -> Result<(), CatalogError> {
+    let tx = conn.transaction().map_err(sql)?;
+    tx.execute_batch(
+        "DELETE FROM virtual_members; DELETE FROM files; DELETE FROM collections;
+         DELETE FROM virtual_collections; DELETE FROM folders; DELETE FROM library;
+         DELETE FROM receipts; DELETE FROM pending_intents;",
+    )
+    .map_err(sql)?;
+    tx.commit().map_err(sql)
 }
 
 /// Forget the snapshot version the catalog claims to reflect: its library's OCFL root holds

@@ -67,6 +67,25 @@ async function call(method, route, body) {
   );
 }
 
+/** Most reads of a job by {@link finishedJob}, 50 ms apart. */
+const MAX_JOB_POLLS = 200;
+
+/**
+ * Read a job through the job route until it has finished (bounded by MAX_JOB_POLLS).
+ *
+ * @param id The job ID.
+ * @returns The last answer of `GET /api/v1/jobs/{job}`.
+ */
+async function finishedJob(id) {
+  let answer = null;
+  for (let poll = 0; poll < MAX_JOB_POLLS; poll += 1) {
+    answer = await call("GET", `/api/v1/jobs/${id}`, null);
+    if (["completed", "failed", "cancelled"].includes(answer.json?.state)) return answer;
+    await browser.pause(50);
+  }
+  throw new Error(`the job did not finish: ${JSON.stringify(answer?.json)}`);
+}
+
 /**
  * Assert an answer names no folder of this run: neither the run directory nor a location's
  * folder name.
@@ -116,8 +135,12 @@ describe("the library routes in a packaged window", () => {
       library_id: E2E_LIBRARY_ID,
     });
     expect(rebuilt.status).toBe(200);
-    expect(rebuilt.json.objects.length).toBe(opened.json.objects);
-    for (const answer of [opened, copied, rebuilt]) {
+    expect(rebuilt.json.outcome).toBe("pending");
+    expect(rebuilt.json.job.kind).toBe("library.rebuild");
+    const job = await finishedJob(rebuilt.json.job_id);
+    expect(job.json.state).toBe("completed");
+    expect(job.json.result.objects.length).toBe(opened.json.objects);
+    for (const answer of [opened, copied, rebuilt, job]) {
       expectNoPath(answer);
     }
   });
@@ -148,7 +171,7 @@ describe("the library routes in a packaged window", () => {
       consent: {
         library_id: COPY_LIBRARY_ID,
         object_ids: objects,
-        statement_id: "version_inventory_repair.v1",
+        statement_id: "version_inventory_repair.v2",
         confirmed: true,
       },
     });

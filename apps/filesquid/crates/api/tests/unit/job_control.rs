@@ -512,3 +512,123 @@ fn halting_checks_the_request_in_the_same_step() {
     assert!(matches!(halted, Halt::Halted(JobState::Pending)));
     assert!(jobs.job(&job.id).expect("job").is_paused());
 }
+
+#[test]
+fn the_view_carries_the_result_once_the_job_completes_and_null_otherwise() {
+    let rig = Rig::new();
+    let jobs = rig.jobs();
+    let plain = submit(&jobs, "op-plain");
+    let run = jobs.start(&plain.id, &plain.source).expect("start");
+    run.complete().expect("complete");
+    let view = serde_json::to_value(JobView::of(&jobs.job(&plain.id).expect("job"))).expect("json");
+    assert_eq!(
+        view["result"],
+        serde_json::Value::Null,
+        "a kind without one: {view}"
+    );
+    let job = submit(&jobs, "op-result");
+    let mut run = jobs.start(&job.id, &job.source).expect("start");
+    run.checkpoint_with_result("next=1", r#"{"objects":[1]}"#, 1, Some(2))
+        .expect("checkpoint");
+    let running = jobs.job(&job.id).expect("job");
+    assert_eq!(running.result.as_deref(), Some(r#"{"objects":[1]}"#));
+    assert_eq!(running.checkpoint.as_deref(), Some("next=1"));
+    assert_eq!(JobView::of(&running).result, None, "not before it finishes");
+    run.complete_with_result(r#"{"objects":[1,2]}"#)
+        .expect("complete");
+    let done = jobs.job(&job.id).expect("job");
+    assert_eq!(done.state, JobState::Completed);
+    assert_eq!(
+        JobView::of(&done).result,
+        Some(serde_json::json!({ "objects": [1, 2] }))
+    );
+}
+
+#[test]
+fn a_checkpoint_with_a_result_under_an_ended_lease_is_fenced_and_stores_nothing() {
+    let rig = Rig::new();
+    let jobs = rig.jobs();
+    let job = submit(&jobs, "op-1");
+    let mut run = jobs.start(&job.id, &job.source).expect("start");
+    rig.advance(TTL_MS + 1);
+    let refused = run
+        .checkpoint_with_result("next=1", "{}", 1, Some(2))
+        .expect_err("fenced");
+    assert_eq!(refused, JobError::Fenced);
+    let stored = jobs.job(&job.id).expect("job");
+    assert_eq!((stored.checkpoint, stored.result), (None, None));
+}
+
+#[test]
+fn completing_without_a_result_clears_a_partial_one() {
+    let rig = Rig::new();
+    let jobs = rig.jobs();
+    let job = submit(&jobs, "op-1");
+    let mut run = jobs.start(&job.id, &job.source).expect("start");
+    run.checkpoint_with_result("next=1", "{}", 1, Some(2))
+        .expect("checkpoint");
+    run.complete().expect("complete");
+    let done = jobs.job(&job.id).expect("job");
+    assert_eq!(done.result, None, "no stale partial result");
+    assert_eq!(JobView::of(&done).result, None);
+}
+
+#[test]
+fn a_result_past_its_bound_is_refused_and_stores_nothing() {
+    let rig = Rig::new();
+    let jobs = rig.jobs();
+    let job = submit(&jobs, "op-1");
+    let mut run = jobs.start(&job.id, &job.source).expect("start");
+    let huge = "x".repeat(filesquid_api::jobs::MAX_RESULT_BYTES + 1);
+    let refused = run
+        .checkpoint_with_result("next=1", &huge, 1, Some(2))
+        .expect_err("too large");
+    assert_eq!(refused, JobError::TooLarge);
+    let stored = jobs.job(&job.id).expect("job");
+    assert_eq!((stored.checkpoint, stored.result), (None, None));
+}
+
+#[test]
+fn a_final_result_past_its_bound_is_refused_and_stores_nothing() {
+    let rig = Rig::new();
+    let jobs = rig.jobs();
+    let job = submit(&jobs, "op-1");
+    let run = jobs.start(&job.id, &job.source).expect("start");
+    let huge = "x".repeat(filesquid_api::jobs::MAX_RESULT_BYTES + 1);
+    let refused = run.complete_with_result(&huge).expect_err("too large");
+    assert_eq!(refused, JobError::TooLarge);
+    let stored = jobs.job(&job.id).expect("job");
+    assert_eq!((stored.state, stored.result), (JobState::Running, None));
+}
+
+#[tokio::test]
+async fn the_summary_view_and_the_job_update_event_carry_no_result() {
+    let rig = Rig::new();
+    let jobs = rig.jobs();
+    let mut events = rig.events.subscription().expect("slot");
+    let job = submit(&jobs, "op-1");
+    let run = jobs.start(&job.id, &job.source).expect("start");
+    run.complete_with_result(r#"{"objects":[]}"#)
+        .expect("complete");
+    let done = jobs.job(&job.id).expect("job");
+    assert!(
+        JobView::of(&done).result.is_some(),
+        "the job route answers it"
+    );
+    assert_eq!(JobView::summary(&done).result, None);
+    let mut completed = None;
+    for _ in 0..20 {
+        let next = tokio::time::timeout(std::time::Duration::from_secs(5), events.next());
+        let event = next.await.expect("an event within 5 s").expect("event");
+        if event.topic == topic::JOB_UPDATE && event.data["state"] == "completed" {
+            completed = Some(event);
+            break;
+        }
+    }
+    let completed = completed.expect("the completion's job.update event");
+    assert_eq!(
+        completed.data["result"],
+        serde_json::Value::Null,
+        "events carry no result"
+    );
+}

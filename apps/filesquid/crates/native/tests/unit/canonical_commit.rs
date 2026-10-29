@@ -7,6 +7,7 @@
 #[path = "../support/catalog_fixture.rs"]
 mod catalog_fixture;
 
+use catalog_fixture::library_ocfl_root;
 use catalog_fixture::{all_entries, catalog_file, temp_root, Fixture};
 use filesquid_api::canonical::{read_snapshot, OwnerReadable, SNAPSHOT_ROOT};
 use filesquid_api::journal::{JournalEntry, JournalStore, MemoryJournal, Outcome};
@@ -18,7 +19,7 @@ use filesquid_api::metrics::Metrics;
 use filesquid_api::operation::OperationId;
 use filesquid_api::EventBus;
 use filesquid_core::{CollectionId, File, FileId, Folder, FolderId, LibraryId};
-use filesquid_native::{library_ocfl_root, CommitProbe, SqliteCatalog};
+use filesquid_native::{CommitProbe, SqliteCatalog};
 use filesquid_ocfl::storage::{complete_immediately, FsBackend};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -263,13 +264,15 @@ fn an_unpublished_version_left_by_a_crash_is_ignored_and_replaced() {
 }
 
 #[test]
-fn every_library_keeps_its_ocfl_root_beside_its_catalog_file() {
+fn every_library_keeps_its_ocfl_root_in_its_own_folder_and_only_its_index_here() {
     let fx = Fixture::new("ocfl-layout");
     let lib = fx.create_library("Family archive");
     let ocfl = library_ocfl_root(&fx.root, &lib).unwrap();
     assert!(ocfl.join("0=ocfl_1.1").exists());
     assert!(ocfl.join(SNAPSHOT_ROOT).join("0=ocfl_object_1.1").exists());
     assert!(catalog_file(&fx.root, &lib).exists());
+    let retired = fx.root.join(format!("{}.ocfl", lib.as_str()));
+    assert!(!retired.exists(), "no in-app OCFL root (ADR 041)");
     let text = serde_json::to_string(&all_entries(fx.journal.as_ref())).unwrap();
     let escaped = serde_json::to_string(&fx.root.to_string_lossy()).unwrap();
     assert!(!text.contains(escaped.trim_matches('"')), "{text}");
@@ -287,27 +290,12 @@ fn a_library_directory_that_is_a_symbolic_link_is_refused() {
         filesquid_native::WORK_DIR_SUFFIX
     ));
     std::os::unix::fs::symlink(&outside, &work).expect("link");
-    let create = filesquid_api::library::CatalogCommit {
-        operation_id: OperationId::new("op-create").unwrap(),
-        library_id: lib.clone(),
-        expected_revision: filesquid_api::operation::ExpectedRevision::new(
-            filesquid_api::library::NEW_LIBRARY_REVISION,
-        )
-        .unwrap(),
-        changes: vec![filesquid_api::library::CatalogChange::CreateLibrary(
-            filesquid_api::library::LibraryRecord {
-                library: filesquid_core::Library::new(
-                    lib.clone(),
-                    filesquid_core::RepositoryId::new("repo-1").unwrap(),
-                ),
-                name: "Family archive".into(),
-            },
-        )],
-        journal: JournalEntry::new("library.create", Outcome::Succeeded),
-        created_id: None,
-        deletion: None,
-    };
-    assert!(fx.catalog.commit(create).is_err());
+    let folder = fx.folder_of(&lib);
+    std::fs::create_dir_all(&folder).expect("folder");
+    assert!(
+        fx.attach(&lib, &folder).is_err(),
+        "the linked staging is refused"
+    );
     assert!(
         std::fs::read_dir(&outside).unwrap().next().is_none(),
         "nothing written outside"

@@ -39,6 +39,11 @@ pub struct LibraryState {
     pub record: LibraryRecord,
     /// Opaque revision token; the expected revision of the next command.
     pub revision: String,
+    /// The library's own retention period of deleted files, in days, when the owner set one;
+    /// the installation default ([`crate::library::RECOVERABLE_DAYS`]) applies otherwise
+    /// (ADR 041 Decision 10). It is kept in the library's collection snapshot.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retention_days: Option<u32>,
 }
 
 /// A file with its hide and delete state.
@@ -84,7 +89,9 @@ pub enum FileScope {
         /// The virtual collection.
         virtual_collection_id: VirtualCollectionId,
     },
-    /// Files whose collection was removed (`is:unfiled` of F-063).
+    /// Files that are not deleted and whose collection was removed (`is:unfiled` of F-063).
+    /// A collection's deletion deletes its files in place (ADR 041 Decision 8), so they show
+    /// in the deleted view of their library, never here.
     Unfiled,
 }
 
@@ -99,6 +106,11 @@ pub struct FileListing {
     pub visibility: VisibilityFilter,
 }
 
+/// The failure detail of a commit that removes a collection still holding a file that is not
+/// deleted without deleting its files first ([`CatalogChange::RemoveCollection`]).
+pub const COLLECTION_HOLDS_FILES: &str =
+    "a removed collection still holds files that are not deleted";
+
 /// One change of a [`CatalogCommit`]. A host applies all of a commit's changes or none.
 /// [`CatalogChange::CreateLibrary`] may appear only as the first change of a commit, at
 /// most once, and only for the commit's own library.
@@ -108,8 +120,22 @@ pub enum CatalogChange {
     CreateLibrary(LibraryRecord),
     /// Store a collection, replacing one with the same identifier.
     PutCollection(Collection),
-    /// Remove a collection record; its files stay (they become unfiled).
+    /// Remove a collection record. Its files stay in place, deleted by the
+    /// [`CatalogChange::DeleteCollectionFiles`] the same commit carries before it; a host
+    /// refuses the commit ([`COLLECTION_HOLDS_FILES`]) when the collection still holds a file
+    /// that is not deleted.
     RemoveCollection(CollectionId),
+    /// Mark every file whose home is the collection and that is not already deleted as
+    /// recoverably deleted with `deletion`; a file already deleted keeps its earlier times.
+    /// Nothing is moved: each file keeps its home collection identifier and logical path
+    /// (owner decision 2026-10-22, ADR 041 Decision 8). Only the catalog knows which files
+    /// these are, so a host adds their snapshot entities to the commit's version.
+    DeleteCollectionFiles {
+        /// The collection whose files are deleted.
+        collection_id: CollectionId,
+        /// The deletion record of the files it newly deletes.
+        deletion: Deletion,
+    },
     /// Store a virtual collection, replacing one with the same identifier.
     PutVirtualCollection(VirtualCollection),
     /// Remove a virtual collection and its memberships; the files stay.

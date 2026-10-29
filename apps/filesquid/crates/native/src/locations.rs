@@ -174,6 +174,14 @@ impl HostLocations {
         })
     }
 
+    /// An opaque identity of the folder registered as `location_id`: the digest of its
+    /// canonical path, never the path. Two registrations of one folder share it; a moved or
+    /// copied library folder has another, so the catalog rebuilds its index (Task DE-1.7).
+    pub fn identity_of(&self, location_id: &str) -> Option<String> {
+        self.folder_of(location_id)
+            .map(|folder| folder_digest(&folder))
+    }
+
     /// The canonical folder of `location_id`, if registered.
     fn folder_of(&self, location_id: &str) -> Option<PathBuf> {
         let locations = self.locations.lock().ok()?;

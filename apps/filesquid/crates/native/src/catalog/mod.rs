@@ -1,7 +1,19 @@
-//! The per-library SQLite catalog (Task DE-0.2): the desktop's native storage behind the
-//! `filesquid_api::library::LibraryCatalog` port
+//! The per-library SQLite catalog index (Tasks DE-0.2, DE-1.7): the desktop's native storage
+//! behind the `filesquid_api::library::LibraryCatalog` port
 //! ([ADR 005](../../../../../../resources/architecture/005-sqlite-local-postgres-hosted.md),
-//! [ADR 030](../../../../../../resources/architecture/030-filesquid-api-and-transports.md)).
+//! [ADR 030](../../../../../../resources/architecture/030-filesquid-api-and-transports.md),
+//! [ADR 041](../../../../../../resources/architecture/041-owner-folder-libraries-and-home-collections.md)).
+//!
+//! Every library lives in a folder the owner chose; the catalog directory keeps only each
+//! library's rebuildable index. A library is served once the host attaches its folder
+//! ([`SqliteCatalog::attach`]): its index is opened, created or rebuilt from the folder's
+//! collection snapshot when it is missing, was built from another copy of the folder or is
+//! behind the snapshot head, and a folder without a snapshot gets its library entity. A
+//! library command never creates a library: that is the library routes' create in a chosen
+//! folder (API-S-025), so a `CreateLibrary` commit is refused. Imports register each file in
+//! its home collection at its collection logical path ([`SqliteCatalog::register_file`]), and
+//! the navigation and listing routes read the folders and files of a collection from the
+//! index ([`SqliteCatalog::subfolders`], [`SqliteCatalog::scope_entries`]).
 //!
 //! `filesquid-api` decides what a library command or query means ([`LibraryService`]); this
 //! module only stores it. Each library has its own SQLite file, `<root>/<library-id>.sqlite`
@@ -18,28 +30,33 @@
 //! nothing is dropped.
 //!
 //! The catalog is an index, never the only copy of accepted data: committed state is
-//! canonical in the library's OCFL objects, and the catalog is rebuilt from them (DE-0.3,
-//! DE-1.1). Copying a live catalog file is not a supported backup; [`SqliteCatalog::backup`]
+//! canonical in the library's OCFL objects in its folder, and the catalog is rebuilt from
+//! them (DE-0.3, DE-1.7). Copying a live catalog file is not a supported backup; [`SqliteCatalog::backup`]
 //! writes a consistent copy with SQLite's `VACUUM INTO`. No method answers a filesystem path
 //! or SQL to the API, and no error it returns names a path.
 //!
 //! [`LibraryService`]: filesquid_api::library::LibraryService
 
+mod attach;
 mod canonical;
 mod history;
 mod intent;
 mod outbox;
+mod placement;
 mod project;
 mod provenance;
 mod reconcile;
+mod register;
 mod rows;
 mod schema;
 mod write;
 
-pub use canonical::{library_ocfl_root, OCFL_ROOT_SUFFIX, WORK_DIR_SUFFIX};
+pub use attach::{AttachReport, LibraryFolder, DEFAULT_LIBRARY_NAME};
+pub use canonical::WORK_DIR_SUFFIX;
 pub use intent::{intent_entry, PendingIntent, INTENT_RECORDED_OPERATION};
 pub use provenance::{CatalogRoots, HostRoots, LibraryBackfill, MAX_BACKFILL_RUNS};
 pub use reconcile::RECONCILE_OPERATION;
+pub use register::{RegisterFile, Registration, REGISTER_OPERATION};
 
 use filesquid_api::canonical::{operation_kind, OperationRecord, SnapshotKey};
 use filesquid_api::history::ProvenanceContext;
@@ -69,7 +86,7 @@ pub const CATALOG_FILE_EXTENSION: &str = "sqlite";
 
 /// Version of the catalog schema this host writes (`PRAGMA user_version`). A file with a
 /// newer version is refused rather than misread.
-pub const CATALOG_SCHEMA_VERSION: i64 = 2;
+pub const CATALOG_SCHEMA_VERSION: i64 = 3;
 
 /// Most library catalogs one catalog directory may hold; opening more fails (AGENTS.md §22).
 pub const MAX_LIBRARIES: usize = 256;
@@ -122,11 +139,13 @@ pub struct NoProbe;
 
 impl CommitProbe for NoProbe {}
 
-/// One open library: its catalog file and its canonical OCFL storage.
+/// One attached library: its catalog file, its canonical OCFL storage in the owner's folder
+/// and the identity of that folder.
 struct OpenLibrary {
     id: LibraryId,
     conn: Connection,
     canonical: canonical::CanonicalRoot,
+    identity: String,
 }
 
 /// The library catalogs of one catalog directory, one SQLite file per library. One mutex
@@ -148,18 +167,17 @@ impl std::fmt::Debug for SqliteCatalog {
 }
 
 impl SqliteCatalog {
-    /// Open the catalog directory `root` (created owner-only if missing): every library that
-    /// has a catalog file or an OCFL root in it is opened, its catalog migrated to
-    /// [`CATALOG_SCHEMA_VERSION`] and reconciled with its snapshot head (rebuilt from it when
-    /// behind or missing); then journal entries a crash left in the outboxes are forwarded to
-    /// `journal`, the host's activity journal store. A catalog file without a library row and
-    /// without a snapshot (a create that never committed), or whose row names another library
-    /// than its file name, is left closed. Filesystem and database I/O.
+    /// Open the catalog directory `root` (created owner-only if missing) serving no library
+    /// yet: each library is served once the host attaches the folder the owner chose for it
+    /// ([`Self::attach`]). Journal entries a crash left in the outboxes of the catalog files
+    /// already in `root` are forwarded to `journal`, the host's activity journal store, now
+    /// (a file that cannot be opened keeps them for its library's attach). A retired in-app
+    /// OCFL root (`<library-id>.ocfl/`) in `root` is never opened. Filesystem and database
+    /// I/O.
     ///
     /// # Errors
-    /// [`CatalogError::Unavailable`] when the directory or a file cannot be opened;
-    /// [`CatalogError::Failed`] when it holds more than [`MAX_LIBRARIES`] catalogs or a file's
-    /// schema is newer than this host.
+    /// [`CatalogError::Unavailable`] when the directory cannot be created or read;
+    /// [`CatalogError::Failed`] when it holds more than [`MAX_LIBRARIES`] catalogs.
     pub fn open(root: &Path, journal: Arc<dyn JournalStore>) -> Result<Self, CatalogError> {
         Self::open_with_probe(root, journal, Arc::new(NoProbe))
     }
@@ -175,16 +193,15 @@ impl SqliteCatalog {
         probe: Arc<dyn CommitProbe>,
     ) -> Result<Self, CatalogError> {
         create_root(root)?;
-        let libraries = open_existing(root)?;
         let catalog = Self {
             root: root.to_path_buf(),
             journal,
             probe,
             provenance: None,
             failures: None,
-            libraries: Mutex::new(libraries),
+            libraries: Mutex::new(BTreeMap::new()),
         };
-        catalog.forward_all()?;
+        catalog.forward_existing()?;
         Ok(catalog)
     }
 
@@ -234,6 +251,24 @@ impl SqliteCatalog {
         self.write_journaled(library_id, journal, keys, |tx| {
             write::index_files(tx, library_id, files)
         })
+    }
+
+    /// Remove the pending intent of `operation_id` from `library_id`'s catalog: the import
+    /// job that recorded it before committing its first file has finished (DE-S-010). A
+    /// missing intent is no error. Database I/O.
+    ///
+    /// # Errors
+    /// [`CatalogError::Failed`] for an unknown library or a database failure.
+    pub fn clear_intent(
+        &self,
+        library_id: &LibraryId,
+        operation_id: &OperationId,
+    ) -> Result<(), CatalogError> {
+        let libraries = self.lock()?;
+        intent::discard(
+            &open_library(&libraries, library_id)?.conn,
+            operation_id.as_str(),
+        )
     }
 
     /// Store `folders` in `library_id`'s catalog with `journal` in the same transaction, like
@@ -342,7 +377,14 @@ impl SqliteCatalog {
         let refused = |err| self.journal_refused_refresh(library_id, &journal, err);
         let mut libraries = self.lock().map_err(refused)?;
         let library = open_library_mut(&mut libraries, library_id).map_err(refused)?;
-        let result = self.write_indexed(library, library_id, &journal, keys, write);
+        let result = self.write_indexed(
+            &mut library.conn,
+            &library.canonical,
+            library_id,
+            &journal,
+            keys,
+            write,
+        );
         if let Err(err) = &result {
             journal_failed_refresh(&mut library.conn, library_id, &journal, err);
         }
@@ -385,20 +427,19 @@ impl SqliteCatalog {
     /// filesystem I/O.
     fn write_indexed(
         &self,
-        library: &mut OpenLibrary,
+        conn: &mut Connection,
+        canonical: &canonical::CanonicalRoot,
         library_id: &LibraryId,
         journal: &JournalEntry,
         keys: Vec<SnapshotKey>,
         write: impl FnOnce(&Transaction<'_>) -> Result<(), CatalogError>,
     ) -> Result<(), CatalogError> {
-        let tx = library.conn.transaction().map_err(sql)?;
+        let tx = conn.transaction().map_err(sql)?;
         write(&tx)?;
         let delta = write::delta_of_keys(&tx, library_id, keys)?;
-        let record = index_record(&tx, &journal.operation)?;
+        let record = index_record(&tx, journal)?;
         let plan = history::plan_commit(self.history().as_ref(), &record, journal);
-        let published = library
-            .canonical
-            .commit(&delta, plan.meta(), plan.bound())?;
+        let published = canonical.commit(&delta, plan.meta(), plan.bound())?;
         let entries = match &published {
             Some(published) => plan.published(published),
             None => Vec::new(),
@@ -412,12 +453,28 @@ impl SqliteCatalog {
         tx.commit().map_err(sql)
     }
 
-    /// Forward every library's outbox (at open). Database and journal-store I/O.
-    fn forward_all(&self) -> Result<(), CatalogError> {
-        let libraries = self.lock()?;
-        libraries
-            .values()
-            .for_each(|library| self.forward_logged(&library.conn));
+    /// Forward the outbox of every catalog file already in the catalog directory (at open),
+    /// at most [`MAX_LIBRARIES`]. A file that cannot be opened is logged with its error code
+    /// and keeps its entries until its library is attached. Filesystem, database and
+    /// journal-store I/O.
+    fn forward_existing(&self) -> Result<(), CatalogError> {
+        let ids = library_ids(&self.root)?;
+        if ids.len() > MAX_LIBRARIES {
+            return Err(failed(format!(
+                "catalog directory holds more than {MAX_LIBRARIES} libraries"
+            )));
+        }
+        for id in ids.values() {
+            match schema::open_catalog_db(&schema::file_path(&self.root, id)?) {
+                Ok(conn) => self.forward_logged(&conn),
+                Err(err) => tracing::warn!(
+                    target: LOG_TARGET,
+                    operation = "library.catalog.journal_forward",
+                    error_code = error_code(&err),
+                    "a catalog's journal outbox waits for its library to be attached"
+                ),
+            }
+        }
         Ok(())
     }
 
@@ -432,63 +489,6 @@ impl SqliteCatalog {
                 "journal outbox kept for the next forward"
             );
         }
-    }
-
-    /// Create `commit`'s library: its catalog file and OCFL root, then apply the commit there.
-    /// When the commit fails before anything could be published, the files and directories
-    /// this call created are removed; otherwise they stay for reconcile. Filesystem and
-    /// database I/O.
-    fn create(
-        &self,
-        libraries: &mut BTreeMap<String, OpenLibrary>,
-        commit: &CatalogCommit,
-    ) -> Result<CommitReceipt, CatalogError> {
-        if libraries.len() >= MAX_LIBRARIES {
-            return Err(failed(format!(
-                "a catalog directory holds at most {MAX_LIBRARIES} libraries"
-            )));
-        }
-        let id = commit.library_id.clone();
-        let path = schema::file_path(&self.root, &id)?;
-        let existed = path.symlink_metadata().is_ok()
-            || canonical::library_ocfl_root(&self.root, &id)?
-                .symlink_metadata()
-                .is_ok();
-        match self.create_files(&path, commit) {
-            Ok((conn, canonical, receipt)) => {
-                self.forward_logged(&conn);
-                libraries.insert(
-                    id.as_str().to_string(),
-                    OpenLibrary {
-                        id,
-                        conn,
-                        canonical,
-                    },
-                );
-                Ok(receipt)
-            }
-            Err(stopped) => {
-                if !existed && !stopped.keep_intent {
-                    remove_catalog_file(&path);
-                    canonical::remove_canonical_dirs(&self.root, &id);
-                }
-                Err(stopped.error)
-            }
-        }
-    }
-
-    /// Open the new library's catalog file and OCFL root and apply `commit`. Filesystem and
-    /// database I/O.
-    fn create_files(
-        &self,
-        path: &Path,
-        commit: &CatalogCommit,
-    ) -> Result<(Connection, canonical::CanonicalRoot, CommitReceipt), write::Stopped> {
-        let mut conn = schema::open_catalog_db(path).map_err(write::Stopped::discard)?;
-        let canonical = canonical::CanonicalRoot::open(&self.root, &commit.library_id, true)
-            .map_err(write::Stopped::discard)?;
-        let receipt = write::apply_commit(&mut conn, commit, true, &self.canonical(&canonical))?;
-        Ok((conn, canonical, receipt))
     }
 
     /// The canonical side of a commit to `root`, with this catalog's probe.
@@ -559,18 +559,24 @@ fn open_library_mut<'a>(
         .ok_or_else(|| failed("unknown library"))
 }
 
-/// The operation record of an index write journaled as `operation`: a fresh operation ID at
-/// the current revision.
-/// Database I/O.
-fn index_record(tx: &Transaction<'_>, operation: &str) -> Result<OperationRecord, CatalogError> {
-    let operation_id = mint_uuid_v4()
-        .map_err(|_| CatalogError::Unavailable("random source unavailable".into()))?;
+/// The operation record of an index write journaled as `journal`: the operation ID its entry
+/// names (an import's registrations share the import's), or a fresh one, at the current
+/// revision. Database I/O.
+fn index_record(
+    tx: &Transaction<'_>,
+    journal: &JournalEntry,
+) -> Result<OperationRecord, CatalogError> {
+    let operation_id = match &journal.operation_id {
+        Some(named) => named.clone(),
+        None => mint_uuid_v4()
+            .map_err(|_| CatalogError::Unavailable("random source unavailable".into()))?,
+    };
     let revision = rows::library(tx)?
         .map(|(_, revision, _)| revision.to_string())
         .ok_or_else(|| failed("unknown library"))?;
     Ok(OperationRecord {
         operation_id,
-        kind: Some(operation_kind(operation).as_str().to_string()),
+        kind: Some(operation_kind(&journal.operation).as_str().to_string()),
         revision,
         created_id: None,
         deletion: None,
@@ -637,70 +643,26 @@ fn create_root(root: &Path) -> Result<(), CatalogError> {
     Ok(())
 }
 
-/// The libraries of the catalog directory `root`, at most [`MAX_LIBRARIES`]: each one with a
-/// catalog file or an OCFL root. Other files are ignored. Filesystem and database I/O.
-fn open_existing(root: &Path) -> Result<BTreeMap<String, OpenLibrary>, CatalogError> {
-    let ids = library_ids(root)?;
-    if ids.len() > MAX_LIBRARIES {
-        return Err(failed(format!(
-            "catalog directory holds more than {MAX_LIBRARIES} libraries"
-        )));
-    }
-    let mut libraries = BTreeMap::new();
-    for (key, id) in ids {
-        if let Some(library) = open_one(root, id)? {
-            libraries.insert(key, library);
-        }
-    }
-    Ok(libraries)
-}
-
-/// Open the library `id`: its catalog file (created when only its OCFL root exists) and its
-/// canonical storage, reconciled with its snapshot. `None` when it is not served (see
-/// [`SqliteCatalog::open`]); a library whose snapshot cannot be read is not served either,
-/// and the failure is logged as a warning (which the journal layer journals).
-/// Filesystem and database I/O.
-fn open_one(root: &Path, id: LibraryId) -> Result<Option<OpenLibrary>, CatalogError> {
-    let mut conn = schema::open_catalog_db(&schema::file_path(root, &id)?)?;
-    let has_root = canonical::library_ocfl_root(root, &id)?.is_dir();
-    if names_other_library(&conn, &id)? || (!has_root && !serves(&conn, &id)?) {
-        return Ok(None);
-    }
-    let canonical = canonical::CanonicalRoot::open(root, &id, true)?;
-    if let Err(err) = reconcile_library(&mut conn, &canonical, &id) {
-        tracing::warn!(
-            target: LOG_TARGET,
-            operation = reconcile::RECONCILE_OPERATION,
-            error_code = error_code(&err),
-            "a library could not be reconciled with its snapshot; it is not served"
-        );
-        return Ok(None);
-    }
-    let served = serves(&conn, &id)?;
-    Ok(served.then_some(OpenLibrary {
-        id,
-        conn,
-        canonical,
-    }))
-}
-
 /// Reconcile the catalog in `conn` with the snapshot head of `canonical`, if it has one,
-/// replaying the journal entries of the versions the catalog missed. Filesystem and database
-/// I/O.
+/// replaying the journal entries of the versions the catalog missed and counting the folder's
+/// file objects the snapshot does not register; answer how many when it rebuilt the index, or
+/// `None` when the index already reflected the head. Filesystem and database I/O.
 fn reconcile_library(
     conn: &mut Connection,
     canonical: &canonical::CanonicalRoot,
     id: &LibraryId,
-) -> Result<(), CatalogError> {
+) -> Result<Option<u64>, CatalogError> {
     let Some(snapshot) = canonical.read()? else {
-        return forget_missing_snapshot(conn, id);
+        return forget_missing_snapshot(conn, id).map(|_| None);
     };
     let seen = reconcile::snapshot_version(conn)?;
-    let replay = match seen.as_deref() == Some(snapshot.version.to_string().as_str()) {
-        true => Vec::new(),
-        false => canonical.read_journal(seen.as_deref())?,
-    };
-    reconcile::reconcile(conn, id, &snapshot, &replay).map(drop)
+    if seen.as_deref() == Some(snapshot.version.to_string().as_str()) {
+        return Ok(None);
+    }
+    let replay = canonical.read_journal(seen.as_deref())?;
+    let unregistered = canonical.unregistered(Some(&snapshot))?;
+    reconcile::reconcile(conn, id, &snapshot, &replay, unregistered)?;
+    Ok(Some(unregistered))
 }
 
 /// Forget the snapshot version of a catalog whose OCFL root holds no snapshot, and log it as a
@@ -738,13 +700,8 @@ fn names_other_library(conn: &Connection, id: &LibraryId) -> Result<bool, Catalo
     Ok(true)
 }
 
-/// Whether the catalog in `conn` holds a library row (the create committed). Database I/O.
-fn serves(conn: &Connection, id: &LibraryId) -> Result<bool, CatalogError> {
-    Ok(rows::library(conn)?.is_some_and(|(record, _, _)| record.library.id() == id))
-}
-
-/// The libraries that have a catalog file or an OCFL root in `root`, by identifier.
-/// Filesystem I/O.
+/// The libraries that have a catalog file in `root`, by identifier. Other names, a retired
+/// in-app OCFL root among them, are ignored. Filesystem I/O.
 fn library_ids(root: &Path) -> Result<BTreeMap<String, LibraryId>, CatalogError> {
     let unavailable =
         |e: std::io::Error| CatalogError::Unavailable(format!("read catalog directory: {e}"));
@@ -752,8 +709,7 @@ fn library_ids(root: &Path) -> Result<BTreeMap<String, LibraryId>, CatalogError>
     for entry in std::fs::read_dir(root).map_err(unavailable)? {
         let name = entry.map_err(unavailable)?.file_name();
         let name = name.to_string_lossy();
-        let id = schema::library_of(&name).or_else(|| canonical::library_of_root(&name));
-        if let Some(id) = id {
+        if let Some(id) = schema::library_of(&name) {
             ids.insert(id.as_str().to_string(), id);
         }
     }
@@ -816,12 +772,14 @@ impl LibraryCatalog for SqliteCatalog {
         let Some(library) = libraries.get(library_id.as_str()) else {
             return Ok(None);
         };
-        Ok(
-            rows::library(&library.conn)?.map(|(record, revision, _)| LibraryState {
-                record,
-                revision: revision.to_string(),
-            }),
-        )
+        let Some((record, revision, _)) = rows::library(&library.conn)? else {
+            return Ok(None);
+        };
+        Ok(Some(LibraryState {
+            record,
+            revision: revision.to_string(),
+            retention_days: rows::retention_days(&library.conn)?,
+        }))
     }
 
     fn libraries(
@@ -924,22 +882,23 @@ impl LibraryCatalog for SqliteCatalog {
         }
     }
 
-    /// Answer a stored receipt of the operation ID from any library first, then create the
-    /// library's file or check that the library exists, and apply the commit in one
-    /// transaction of its file.
+    /// Answer a stored receipt of the operation ID from any library first, then check that the
+    /// library is attached, and apply the commit in one transaction of its file. A commit that
+    /// creates a library is refused: a library is created only in a folder the owner chose,
+    /// by the library routes (ADR 041 Decision 1).
     fn commit(&self, commit: CatalogCommit) -> Result<CommitReceipt, CatalogError> {
         let mut libraries = self.lock()?;
         let op = commit.operation_id.as_str();
         if let Some(done) = find_in(&libraries, |id, conn| rows::receipt(conn, id, op))? {
             return Ok(done);
         }
-        let creates = write::creates_library(&commit)?;
-        let present = libraries.contains_key(commit.library_id.as_str());
-        if creates == present {
-            return Err(CatalogError::Conflict);
+        if write::creates_library(&commit)? {
+            return Err(failed(
+                "library_needs_folder: a library is created in a folder the owner chose",
+            ));
         }
-        if creates {
-            return self.create(&mut libraries, &commit);
+        if !libraries.contains_key(commit.library_id.as_str()) {
+            return Err(CatalogError::Conflict);
         }
         let library = open_library_mut(&mut libraries, &commit.library_id)?;
         let canonical = self.canonical(&library.canonical);

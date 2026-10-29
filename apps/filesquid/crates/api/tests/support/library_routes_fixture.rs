@@ -13,10 +13,11 @@
 use axum::body::Body;
 use axum::http::{HeaderMap, Method, Request, StatusCode};
 use filesquid_api::auth::{Authoriser, LaunchToken};
+use filesquid_api::jobs::{Jobs, MemoryJobStore};
 use filesquid_api::journal::{JournalEntry, JournalQuery, JournalStore, MemoryJournal, MAX_PAGE};
 use filesquid_api::local_library::{
     LibraryCommands, LibraryLocations, LibraryRoot, LocalLibraryService, MemoryRepairLedger,
-    CONSENT_STATEMENT_ID,
+    RebuildRunner, CONSENT_STATEMENT_ID, REBUILD_JOB_KIND,
 };
 use filesquid_api::monitor::{Monitor, MonitorConfig, StaticHostChecks};
 use filesquid_api::{router, ApiState};
@@ -45,6 +46,9 @@ const LEASES: LeaseConfig = LeaseConfig {
 
 /// Upper bound on journal pages read by [`LibraryRig::journal`] (AGENTS.md §22).
 const MAX_JOURNAL_PAGES: usize = 100;
+
+/// Upper bound on job reads by [`LibraryRig::finished_job`] (AGENTS.md §22).
+const MAX_JOB_POLLS: usize = 500;
 
 /// Upper bound on directories walked by [`files_under`] (AGENTS.md §22).
 const MAX_WALK: usize = 10_000;
@@ -218,8 +222,24 @@ impl Drop for LibraryRig {
 }
 
 impl LibraryRig {
-    /// A rig on `mount` with no location registered.
+    /// A rig on `mount` with no location registered, whose job service runs rebuilds.
     pub fn new(mount: Mount) -> Self {
+        let rig = Self::without_rebuild_runner(mount);
+        let runner = RebuildRunner::new(rig.jobs(), rig.commands.clone(), "owner");
+        assert!(rig
+            .state
+            .install_job_runner(REBUILD_JOB_KIND, Arc::new(runner)));
+        rig
+    }
+
+    /// The job service installed in the rig's state.
+    pub fn jobs(&self) -> Jobs {
+        self.state.jobs().expect("jobs").as_ref().clone()
+    }
+
+    /// A rig on `mount` with a job service but no runner for rebuilds: a submitted rebuild
+    /// stays pending.
+    pub fn without_rebuild_runner(mount: Mount) -> Self {
         let (authoriser, token) = match mount {
             Mount::Desktop => {
                 let token = LaunchToken::generate().expect("random token");
@@ -252,6 +272,14 @@ impl LibraryRig {
         let service = LocalLibraryService::new(monitor.journal(), ledger.clone());
         let commands = Arc::new(LibraryCommands::new(service, locations.clone()));
         assert!(state.install_libraries(commands.clone()));
+        let jobs = Jobs::new(
+            Arc::new(MemoryJobStore::new()),
+            monitor.journal(),
+            monitor.registry().clone(),
+            "launch",
+        )
+        .with_events(state.events.clone());
+        assert!(state.install_jobs(Arc::new(jobs)));
         Self {
             dir,
             clock,
@@ -316,6 +344,23 @@ impl LibraryRig {
     pub async fn get(&self, uri: &str) -> Answer {
         let bearer = format!("Bearer {}", self.token);
         self.send(Method::GET, uri, Some(&bearer), None).await
+    }
+
+    /// Read job `id` through the job route until it has finished (at most
+    /// [`MAX_JOB_POLLS`] reads, 10 ms apart); answer its last view.
+    pub async fn finished_job(&self, id: &str) -> Value {
+        let mut view = Value::Null;
+        for _ in 0..MAX_JOB_POLLS {
+            let answer = self.get(&format!("/api/v1/jobs/{id}")).await;
+            assert_eq!(answer.status, StatusCode::OK, "{}", answer.text());
+            view = answer.json();
+            let state = view["state"].as_str().unwrap_or_default();
+            if ["completed", "failed", "cancelled"].contains(&state) {
+                return view;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        panic!("the job did not finish: {view}");
     }
 
     /// Create a library through the route on a new location `name`; answer its library ID

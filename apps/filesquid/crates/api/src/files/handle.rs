@@ -7,6 +7,7 @@ use super::download::Download;
 use super::drive_facts::{CollectionHistorySizeView, FactsAnswer};
 use super::error::FileError;
 use super::nodes::ScopeObject;
+use super::scope_listing::{ScopeAfter, ScopeListing, ScopePage};
 use super::service::{ContentAnswer, ContentRequest, FileService};
 use super::statements::{
     FactsView, FileRecordQuery, MetadataCommitView, NamespacesView, RegisterNamespaceRequest,
@@ -55,6 +56,23 @@ pub trait FileOperations: Send + Sync {
 
     /// The object that holds the files of `scope`, or `None`. May block.
     fn scope_object(&self, scope: &FolderScope) -> Option<ScopeObject>;
+
+    /// One page of a scope's folder from the host's index of registered files, or `None`
+    /// when the host keeps none for `scope`. May block.
+    ///
+    /// # Errors
+    /// As the host's index answers.
+    fn scope_page(
+        &self,
+        scope: &FolderScope,
+        folder: &str,
+        after: Option<&ScopeAfter>,
+        limit: usize,
+    ) -> Result<Option<ScopePage>, FileError>;
+
+    /// The listing page of a scope's folder that the index answered, each file read from its
+    /// own object.
+    fn scope_listing(&self, listing: ScopeListing) -> FileFuture<'_, FolderPageView>;
 
     /// `not_found` unless `target` names a file of an existing version.
     fn check_target(&self, target: ContentTarget) -> FileFuture<'_, ()>;
@@ -210,6 +228,20 @@ where
 
     fn scope_object(&self, scope: &FolderScope) -> Option<ScopeObject> {
         FileService::scope_object(self, scope)
+    }
+
+    fn scope_page(
+        &self,
+        scope: &FolderScope,
+        folder: &str,
+        after: Option<&ScopeAfter>,
+        limit: usize,
+    ) -> Result<Option<ScopePage>, FileError> {
+        FileService::scope_page(self, scope, folder, after, limit)
+    }
+
+    fn scope_listing(&self, listing: ScopeListing) -> FileFuture<'_, FolderPageView> {
+        Box::pin(self.scope_listing(listing))
     }
 
     fn check_target(&self, target: ContentTarget) -> FileFuture<'_, ()> {
