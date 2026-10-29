@@ -193,23 +193,31 @@ fn json_body(body: Value) -> SampleBody {
     Some(("application/json", body.to_string().into_bytes()))
 }
 
-/// The sample envelope of a command with `scope`, expecting `revision`.
-fn envelope(scope: &str, revision: &str) -> CommandEnvelope {
+/// The sample envelope of the command of `route` with `scope`, expecting `revision`; each
+/// route has its own operation ID, so one sample never replays or reuses another's.
+fn envelope(route: &str, scope: &str, revision: &str) -> CommandEnvelope {
     CommandEnvelope::new(
-        operation(),
+        operation_of(route),
         ExpectedRevision::new(revision).expect("revision"),
         OperationScope::new(scope).expect("scope"),
     )
 }
 
-/// The sample operation ID.
-fn operation() -> OperationId {
-    OperationId::new("contract-library-command").expect("operation")
+/// The sample operation ID of `route`.
+fn operation_of(route: &str) -> OperationId {
+    let last = route.rsplit('/').next().unwrap_or("command");
+    OperationId::new(format!("contract-library-{last}")).expect("operation")
 }
 
-/// The sample command body `{envelope, input}` with `scope`, expecting `revision`.
-fn command_body(scope: &str, revision: &str, input: Value) -> Value {
-    json!({ "envelope": to_value(envelope(scope, revision)), "input": input })
+/// The sample operation ID of the schema samples.
+fn operation() -> OperationId {
+    operation_of("sample")
+}
+
+/// The sample command body `{envelope, input}` of `route` with `scope`, expecting
+/// `revision`.
+fn command_body(route: &str, scope: &str, revision: &str, input: Value) -> Value {
+    json!({ "envelope": to_value(envelope(route, scope, revision)), "input": input })
 }
 
 /// The sample library at its initial revision.
@@ -228,22 +236,25 @@ pub fn sample(method: &Method, path: &str) -> Option<(String, SampleBody)> {
     let library_scope = format!("library:{LIBRARY}");
     let body = match (method.as_str(), path) {
         ("POST", "/api/v1/libraries") => command_body(
+            path,
             &format!("location:{NEW}"),
             "0",
             json!({ "location_id": NEW }),
         ),
         ("POST", "/api/v1/libraries/openings") => command_body(
+            path,
             &format!("location:{SAMPLE}"),
             "0",
             json!({ "location_id": SAMPLE, "library_id": LIBRARY }),
         ),
         ("POST", "/api/v1/libraries/snapshot-copies") => command_body(
+            path,
             &library_scope,
             "1",
             json!({ "library_id": LIBRARY, "destination_location_id": COPY }),
         ),
         ("POST", "/api/v1/libraries/rebuilds") => {
-            command_body(&library_scope, "1", json!({ "library_id": LIBRARY }))
+            command_body(path, &library_scope, "1", json!({ "library_id": LIBRARY }))
         }
         ("POST", "/api/v1/libraries/location-choices") => json!({ "purpose": "create" }),
         ("POST", "/api/v1/imports") => serde_json::to_value(import_request()).expect("json"),
@@ -425,7 +436,7 @@ pub fn samples() -> Vec<(&'static str, Vec<Value>)> {
         (
             "LibraryLocationCommand",
             vec![to_value(Command {
-                envelope: envelope("location:loc-sample", "0"),
+                envelope: envelope("sample", "location:loc-sample", "0"),
                 input: LocationRequest {
                     location_id: SAMPLE.to_string(),
                     library_id: Some(library()),
@@ -435,7 +446,7 @@ pub fn samples() -> Vec<(&'static str, Vec<Value>)> {
         (
             "SnapshotCopyCommand",
             vec![to_value(Command {
-                envelope: envelope(&format!("library:{LIBRARY}"), "1"),
+                envelope: envelope("sample", &format!("library:{LIBRARY}"), "1"),
                 input: SnapshotCopyRequest {
                     library_id: library(),
                     destination_location_id: COPY.to_string(),
@@ -445,7 +456,7 @@ pub fn samples() -> Vec<(&'static str, Vec<Value>)> {
         (
             "RebuildLibraryCommand",
             vec![to_value(Command {
-                envelope: envelope(&format!("library:{LIBRARY}"), "1"),
+                envelope: envelope("sample", &format!("library:{LIBRARY}"), "1"),
                 input: LibraryRequest {
                     library_id: library(),
                 },
