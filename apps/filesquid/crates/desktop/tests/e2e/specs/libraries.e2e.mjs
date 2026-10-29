@@ -171,7 +171,7 @@ describe("the library routes in a packaged window", () => {
       consent: {
         library_id: COPY_LIBRARY_ID,
         object_ids: objects,
-        statement_id: "version_inventory_repair.v1",
+        statement_id: "version_inventory_repair.v2",
         confirmed: true,
       },
     });

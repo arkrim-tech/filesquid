@@ -34,13 +34,14 @@ const MAX_OBJECT_ID_BYTES: usize = 1024;
 
 /// Identifier of the consent statement below. A consent that names another statement was
 /// given to different words and is refused.
-pub const CONSENT_STATEMENT_ID: &str = "version_inventory_repair.v1";
+pub const CONSENT_STATEMENT_ID: &str = "version_inventory_repair.v2";
 
 /// What the owner consents to, in the internal vocabulary; the UI shows its own label-table
 /// wording of the same statement, naming the objects.
 pub const CONSENT_STATEMENT: &str = "For each object named, one version inventory and its \
      sidecar, copies of the root inventory, will be added to the object's latest version \
-     directory; nothing else changes.";
+     directory, and a new version recording the repair will be committed to each object's \
+     history (API-S-028); no file content changes.";
 
 /// The owner's consent from the UI-1.1 dialog.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
