@@ -14,6 +14,12 @@
  * the only side effect it performs itself (the clipboard), named so at the call site. Muted text
  * is drawn only on the card surface: a hovered row turns its label to the secondary colour,
  * because muted text on `--fs-surface-raised` has no listed exemption (SRS-UI-007, UI-S-015).
+ *
+ * A tab may extend the rows (UI-F2.4, the Description tab of mockup 28): a row's label can be
+ * a mono property key in the owner or extracted tone (`PropertyRow.labelStyle`), a tab can
+ * give each row a source chip (`rowChip`) and action buttons before copy (`rowActions`), an
+ * element below the rows (`afterRows`, the Add property button), an empty state for a record
+ * with no rows (`emptyState`), and leave the footer out.
  */
 import { formatLabel, type LabelTable } from "../theme/labels";
 import { ApiError } from "../api/client";
@@ -37,8 +43,8 @@ export interface PropertyTableOptions {
   readonly loadingText: string;
   /** The error title ("Could not load the file info"). */
   readonly errorTitle: string;
-  /** The footer line. */
-  readonly footer: string;
+  /** The footer line; no footer when absent. */
+  readonly footer?: string;
   /** The count eyebrow for `shown` of `total` rows. */
   readonly countText: (shown: number, total: number) => string;
   /** The no-match title for the filter word. */
@@ -49,15 +55,34 @@ export interface PropertyTableOptions {
   readonly online?: () => boolean;
   /** Told each time what the table shows changes. */
   readonly onState?: (state: PropertyTableState) => void;
+  /** A chip at a row's top right (the source of a value), when the tab has one. */
+  readonly rowChip?: (row: PropertyRow) => RowChip | undefined;
+  /** Action buttons shown before a row's copy button, when the tab has any. */
+  readonly rowActions?: (row: PropertyRow) => HTMLButtonElement[];
+  /** The element below the rows (the Add property button), built on each render. */
+  readonly afterRows?: () => HTMLElement;
+  /** The state shown for a record with no rows, built on each render; none when absent. */
+  readonly emptyState?: () => HTMLElement;
+}
+
+/** A row's chip: its words and its tone. */
+export interface RowChip {
+  /** The chip's text, from the label table. */
+  readonly text: string;
+  /** `ok` on the active tint, `muted` on the raised surface. */
+  readonly tone: "ok" | "muted";
 }
 
 /** What the table shows. */
-export type PropertyTableState = "idle" | "loading" | "ready" | "no-match" | "error";
+export type PropertyTableState = "idle" | "loading" | "ready" | "no-match" | "error" | "empty";
 
 /**
  * The stylesheet of the table and of the panel states (UI-S-024): the 32 px filter of mockup
- * 35 with its search icon, the count eyebrow, 44 px rows, the 16 px copy icon in
- * `--fs-icon-muted` (`--fs-icon` on hover and focus), the placeholder bars on `--fs-outline`,
+ * 35 with its search icon, the count eyebrow, 44 px rows whose chip and action buttons sit in
+ * the flow beside the key, and whose action buttons sit at the bottom right over space the
+ * value reserves (`--fs-row-actions`, set per row), so a long key or value wraps instead of
+ * running under them, the 16 px copy icon in `--fs-icon-muted` (`--fs-icon` on hover and
+ * focus), the placeholder bars on `--fs-outline`,
  * the centred states (14 px 600 title, 13 px secondary detail, 13 px mono code, 36 px buttons)
  * and the 44 px footer line above a 1 px `--fs-outline` border. Content sits 20 px from the panel
  * edges: a 16 px padding and a 4 px inset.
@@ -75,16 +100,27 @@ const STYLE = `
   .count.busy { font-weight: 500; text-transform: none; }
   .body { flex: 1 1 auto; min-block-size: 0; }
   dl.rows { margin: 0; padding: 0; }
-  .row { position: relative; box-sizing: border-box; min-block-size: 2.75rem; padding: var(--fs-space-1) var(--fs-space-5) var(--fs-space-1) var(--fs-space-3); }
+  .row { --fs-row-actions: 0; position: relative; box-sizing: border-box; min-block-size: 2.75rem; padding: var(--fs-space-1) var(--fs-space-3); }
   .row::after { content: ""; position: absolute; inset-inline: 20px; inset-block-end: 0; border-block-end: 1px solid var(--fs-outline); }
   .row:hover, .row:focus-within { background: var(--fs-surface-raised); }
   .row dt, .row dd { margin: 0 var(--fs-space-1); font-size: var(--fs-font-size-small); line-height: 1.3; overflow-wrap: anywhere; }
-  .row dt { color: var(--fs-on-surface-muted); }
+  .row dt { display: flex; align-items: start; justify-content: space-between; gap: var(--fs-space-2); color: var(--fs-on-surface-muted); }
+  .row dt .label, .row dt .key { flex: 1 1 auto; min-width: 0; }
+  .row dd .value { display: block; padding-inline-end: var(--fs-row-actions); }
   .row:hover dt, .row:focus-within dt { color: var(--fs-on-surface-variant); }
   .row dd { color: var(--fs-on-surface); }
+  .row dt .key { font-family: var(--fs-font-mono); font-weight: 500; }
+  .row dt .key-owner, .row:hover dt .key-owner, .row:focus-within dt .key-owner { color: var(--fs-primary); }
+  .row dt .key-extracted, .row:hover dt .key-extracted, .row:focus-within dt .key-extracted { color: var(--fs-on-surface-variant); }
+  .row dt .chip.source { flex: 0 0 auto; align-self: start; position: relative; inset-block-start: 2px; border-radius: var(--fs-radius-chip); line-height: 1.6; }
   .mono { font-family: var(--fs-font-mono); }
-  .copy { position: absolute; inset-inline-end: 16px; inset-block-end: 0; display: inline-flex; align-items: center; justify-content: center; inline-size: 1.5rem; block-size: 1.5rem; padding: 0; border: 0; border-radius: var(--fs-radius-item); background: none; color: var(--fs-icon-muted); cursor: pointer; }
-  .copy:hover, .copy:focus-visible, .row:hover .copy { color: var(--fs-icon); }
+  .actions { position: absolute; inset-inline-end: 20px; inset-block-end: 0; display: inline-flex; align-items: center; gap: 0; }
+  .actions .button-icon { opacity: 0; transition: opacity var(--fs-motion-duration); }
+  .row:hover .actions .button-icon, .row:focus-within .actions .button-icon, .actions .button-icon:focus-visible { opacity: 1; }
+  .button-icon, .copy { display: inline-flex; align-items: center; justify-content: center; inline-size: 1.5rem; block-size: 1.5rem; padding: 0; border: 0; border-radius: var(--fs-radius-item); background: none; color: var(--fs-icon-muted); cursor: pointer; }
+  .button-icon:hover, .button-icon:focus-visible, .copy:hover, .copy:focus-visible, .row:hover .copy { color: var(--fs-icon); }
+  .body > .after-rows { margin: var(--fs-space-2) var(--fs-space-3) var(--fs-space-3); padding: 0 var(--fs-space-1); }
+  .state.empty .button { margin-block-start: var(--fs-space-3); }
   .placeholder { display: grid; gap: var(--fs-space-2); box-sizing: border-box; min-block-size: 2.75rem; margin: 0 var(--fs-space-3); padding: var(--fs-space-2) var(--fs-space-1); border-block-end: 1px solid var(--fs-outline); }
   .bar { display: block; block-size: 0.5625rem; border-radius: var(--fs-radius-pill); background: var(--fs-outline); }
   .bar.wide { block-size: 0.6875rem; }
@@ -214,8 +250,8 @@ export class PropertyTable {
     this.body = node("div", "body");
     this.announcer = node("p", "announce");
     this.announcer.setAttribute("role", "status");
-    const footer = node("p", "footer", options.footer);
-    this.element.append(wrap, this.count, this.body, this.announcer, footer);
+    this.element.append(wrap, this.count, this.body, this.announcer);
+    if (options.footer !== undefined) this.element.append(node("p", "footer", options.footer));
     this.clear();
   }
 
@@ -281,6 +317,14 @@ export class PropertyTable {
     this.count.classList.remove("busy");
     this.body.removeAttribute("aria-busy");
     this.count.textContent = this.options.countText(shown.length, this.all.length);
+    const empty = this.all.length === 0 ? this.options.emptyState?.() : undefined;
+    if (empty) {
+      empty.classList.add("empty");
+      this.filter.disabled = true;
+      this.body.replaceChildren(empty);
+      this.setState("empty");
+      return;
+    }
     if (shown.length === 0 && word !== "") {
       this.body.replaceChildren(this.noMatch(word));
       this.setState("no-match");
@@ -288,7 +332,9 @@ export class PropertyTable {
     }
     const list = node("dl", "rows");
     list.append(...shown.map((row) => this.row(row)));
-    this.body.replaceChildren(list);
+    const after = this.options.afterRows?.();
+    if (after) after.classList.add("after-rows");
+    this.body.replaceChildren(list, ...(after ? [after] : []));
     this.setState("ready");
   }
 
@@ -298,11 +344,37 @@ export class PropertyTable {
     this.options.onState?.(state);
   }
 
-  /** One row: the label over the value, and its copy button. */
+  /** One row: the label (and chip) over the value, with its actions and copy button. */
   private row(row: PropertyRow): HTMLElement {
     const element = node("div", "row");
     element.dataset.key = row.key;
     const value = node("span", row.mono ? "value mono" : "value", row.value);
+    const actions = node("span", "actions");
+    for (const action of this.options.rowActions?.(row) ?? []) {
+      action.classList.add("button-icon");
+      actions.append(action);
+    }
+    actions.append(this.copyButton(row));
+    // The value keeps clear of the buttons: 1.5rem each, set as a token-named property.
+    element.style.setProperty("--fs-row-actions", `${actions.childElementCount * 1.5}rem`);
+    const dd = node("dd", "");
+    dd.append(value, actions);
+    element.append(this.term(row), dd);
+    return element;
+  }
+
+  /** The row's term: a plain label, or a mono key in its tone, and the chip when there is one. */
+  private term(row: PropertyRow): HTMLElement {
+    const dt = node("dt", "");
+    const label = node("span", row.labelStyle ? `key key-${row.labelStyle}` : "label", row.label);
+    dt.append(label);
+    const chip = this.options.rowChip?.(row);
+    if (chip) dt.append(node("span", `chip source ${chip.tone}`, chip.text));
+    return dt;
+  }
+
+  /** The row's copy button, named by its property. */
+  private copyButton(row: PropertyRow): HTMLButtonElement {
     const copy = node("button", "copy");
     copy.type = "button";
     copy.setAttribute(
@@ -311,10 +383,7 @@ export class PropertyTable {
     );
     copy.append(icon("copy", 16));
     copy.addEventListener("click", () => void this.copyToClipboard(row));
-    const dd = node("dd", "");
-    dd.append(value, copy);
-    element.append(node("dt", "", row.label), dd);
-    return element;
+    return copy;
   }
 
   /** Put a row's whole value on the clipboard and announce it. Side effect: the clipboard. */

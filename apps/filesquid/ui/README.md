@@ -162,15 +162,18 @@ shell.append(browser);
 import {
   ClientFileSource,
   ClientHistorySource,
+  ClientMetadataSource,
   defineElements,
   panelSource,
   type FsDetailsPanel,
   type FsFilePanel,
+  type FsMetadataPanel,
   type FsVersionsPanel,
 } from "@filesquid/ui";
 
 defineElements();
 const source = panelSource(new ClientFileSource(client), new ClientHistorySource(client));
+const metadata = new ClientMetadataSource(client);
 const panel = document.createElement("fs-file-panel") as FsFilePanel;
 panel.slot = "panel";
 panel.configure({ labels });
@@ -178,6 +181,11 @@ panel.registerTab("details", labels.filePanelInfo, () => {
   const details = document.createElement("fs-details-panel") as FsDetailsPanel;
   details.configure({ labels, source }); // File info
   return details;
+});
+panel.registerTab("description", labels.filePanelDescription, () => {
+  const description = document.createElement("fs-metadata-panel") as FsMetadataPanel;
+  description.configure({ labels, source: metadata }); // Description
+  return description;
 });
 panel.setVersions(() => {
   const versions = document.createElement("fs-versions-panel") as FsVersionsPanel;
@@ -188,12 +196,13 @@ panel.fileRef = file; // only the panel shown reads it
 shell.append(panel);
 ```
 
-`bindFilesRoute(shell, { labels, source, history })` does exactly this for the open file.
+`bindFilesRoute(shell, { labels, source, history, metadata })` does exactly this for the open file (without `metadata` the panel has no Description tab).
 
 - **File info** (`<fs-details-panel>`, the Details panel): storage facts only, from `GET files/details` and `GET files/versions`: original file name, extension, MIME type, size in bytes, the SHA-256 and content digests and other fixity values (shortened, mono, copy puts the whole value on the clipboard), the OCFL object and "v{n} of {total} · {time} UTC". The stored name, the logical path and any content location are never shown. The shared property table (`PropertyTable`: filter, count eyebrow, rows, loading, no-match and error states, footer) is the one UI-F2.15 reuses for Description and Provenance.
 - **Versions** (`<fs-versions-panel>`): Back, the version count, "History {size} · newest first" (`GET files/history-size`), one row per version that changed the file, newest first (`GET files/history`), with its chip, label or "No label", "{relative time} · {size}" ("Removed" for a version that removed the file) and the Current chip on the current version; every other version that holds the file has a menu with **Restore as new version**, which opens the dialog of mockup 27 and publishes one version through `FileSource.restore` (`POST files/restorations`, a command whose expected revision is the object's head as the view last read it, with the optional label; a head moved meanwhile is refused as `conflict` and the dialog says so). No delete, expiry or thinning control exists. UI-F2.11 adds Download this version and Edit label to the menu.
-- **Events** (bubbling, composed): `fs-file-panel-close`, `fs-versions-close`, and `fs-files-change` (`detail.operation` `restore`) after a restore, on which the files route reloads the browser (`FsFileBrowser.reload()`).
-- **Reads.** `HistorySource` (`ClientHistorySource` over `FileSquidClient`; `MemoryFileSource` answers it too) reads `files/history`, `files/versions` and `files/history-size`; the panels never fetch by themselves.
+- **Description** (`<fs-metadata-panel>`, the Metadata panel; Task UI-F2.4, [UI-S-022, UI-S-031](./resources/srs.md), [MD-S-011](../crates/metadata/resources/srs.md); mockups [28](../../../resources/ui-mockups/v3/28-panel-metadata.svg) and [29](../../../resources/ui-mockups/v3/29-metadata-add-property.svg); walkthrough: [Task-UI-F2.4-Walkthrough.md](./resources/tasks/Task-UI-F2.4-Walkthrough.md)): the file's `dcterms:`, `schema:` and registered-namespace statements from `GET files/metadata` (API-S-035), one row per statement keyed by its CURIE, an owner-asserted value in the owner tone with the chip "You" and edit and remove, a value read from the file in the extracted tone with the chip "File" and copy only; `exif:` statements are not listed here: they become the File info tab's technical rows when UI-F2.15 adds them. **Add property** opens the dialog of mockup 29: as the owner types, the 52 file-scoped `/terms/` names are matched locally (`DCTERMS_FILE_TERMS`, each with its definition from the label table) and `GET files/metadata/terms` is asked for the typed name, so the groups follow the API's add order: Dublin Core terms, the Schema.org suggestion ("Added only after you confirm."), registered namespaces (`GET files/metadata/namespaces`, read once per library), and "Key in a custom namespace…" when the library declares one. The count eyebrow reads "Dublin Core and Schema.org · {count}", or "Dublin Core, Schema.org and extensions · {count}" once a registered or custom row is listed. A set is one `PUT files/metadata/statements`, a removal one `POST files/metadata/removals` (plain bodies, as the contract defines them today); each commits one OCFL version, which the panel announces, reports as `fs-files-change` (`detail.operation` `metadata.set` or `metadata.remove`) and lists again from the new version. A 400 is worded as a refused property or value, a 404 as a property no longer in the record, a 409 as a conflict, in the dialog or the status region.
+- **Events** (bubbling, composed): `fs-file-panel-close`, `fs-versions-close`, and `fs-files-change` (`detail.operation` `restore`, `metadata.set` or `metadata.remove`) after a commit, on which the files route reloads the browser (`FsFileBrowser.reload()`).
+- **Reads.** `HistorySource` (`ClientHistorySource` over `FileSquidClient`; `MemoryFileSource` answers it too) reads `files/history`, `files/versions` and `files/history-size`; `MetadataSource` (`ClientMetadataSource`) reads and writes the metadata property routes; the panels never fetch by themselves.
 
 The element lists one object's logical tree because that is what the file routes (API-F1.3) answer; the navigation node handles (UI-F2.1b) name collections and folders that span many objects, so opening the browser from the tree waits for a file listing by navigation node (the library-level file views of API-S-019), which UI-F2.8 builds on.
 

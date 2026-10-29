@@ -69,6 +69,78 @@ Feature: Media metadata inspection, correction and privacy exports
     When I share a file shown as "Holiday 2023.jpg"
     Then the shared file should be named "Holiday 2023.jpg"
 
+  # Task UI-F2.4: the Description tab of the file panel (UI-S-022, UI-S-031 mockups 28, 29
+  # and 25; API-S-035; MD-S-011): the dcterms and schema statements as rows keyed by their
+  # CURIE, extracted versus owner-asserted values, Add property, edit and remove
+  Scenario: The Description tab lists descriptive statements keyed by their CURIE
+    Given a file with populated dcterms:, schema: and exif: statements
+    When I open the file's Description tab
+    Then I should see one row per dcterms: and schema: statement, keyed by its CURIE with the prefix
+    And the exif: statements should be left to the File info tab's technical rows
+    And the count should read "Dublin Core and Schema.org" with the number of rows
+
+  Scenario: Owner values and extracted values are told apart
+    Given a file whose dcterms:title the owner asserted and whose dcterms:created was extracted from the file
+    When I open the file's Description tab
+    Then the owner value should carry the chip "You" and offer edit and remove
+    And the extracted value should carry the chip "File" and offer copy only
+
+  Scenario: Adding a property offers Dublin Core first, then Schema.org, then registered namespaces
+    Given the library has registered an extension namespace and declared a custom namespace
+    When I choose Add property and type "righ"
+    Then I should see the Dublin Core terms that match, each with its definition
+    And then the Schema.org suggestion, marked as added only after I confirm
+    And then the registered namespaces that accept the name
+    And a key in a custom namespace should be offered only because a custom namespace is declared
+
+  Scenario: Adding a property commits one version and lists the new row
+    Given I have chosen dcterms:rightsHolder in the Add property dialog
+    When I enter a value and confirm
+    Then one statement should be set in one new version of the file's record
+    And the Description tab should list the new row and announce the version
+
+  Scenario: Editing or removing an owner value commits one version
+    Given an owner-asserted dcterms:title
+    When I edit its value, or remove it
+    Then one statement should be replaced or removed in one new version of the file's record
+    And the Description tab should list again from the new version
+
+  Scenario: A refused statement leaves the dialog open with the reason
+    Given I confirm a value for a property the register does not know
+    When the API refuses the statement
+    Then the dialog should stay open and show why
+    And nothing should be changed
+
+  Scenario: The Description tab of a file without descriptive statements is empty
+    Given a file whose record holds no descriptive statement
+    When I open its Description tab
+    Then I should see "No description yet" with a hint and Add property
+    And the count should read "0 properties"
+
+  Scenario: The Description tab shows placeholder rows while statements load
+    Given a file whose statements have not yet been answered
+    When I open its Description tab
+    Then I should see placeholder rows and "Loading description…"
+    And the filter should be disabled until the rows arrive
+
+  Scenario: A filter word that matches no property offers Clear filter
+    Given the Description tab lists a file's statements
+    When I filter with a word that matches no property or value
+    Then I should see that no properties match the word
+    And Clear filter should show every row again
+
+  Scenario: A refused statements read shows the reason, the code and Try again
+    Given the API refuses the statements read with an error code
+    When I open the file's Description tab
+    Then I should see "Could not load the description" with the reason, "Nothing was changed." and that code
+    And Try again should read the statements again
+
+  Scenario: A statements read that fails without an answer shows the reason and Try again
+    Given the statements read fails before the API answers
+    When I open the file's Description tab
+    Then I should see "Could not load the description" with the reason and "Nothing was changed." and no code
+    And Try again should read the statements again
+
   # Source
   # - srs.md SRS-F-046
   # - prd.md F-046

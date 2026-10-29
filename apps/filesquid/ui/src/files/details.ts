@@ -22,6 +22,12 @@ export interface PropertyRow {
   readonly copy?: string;
   /** True for identifiers, codes, digests and extensions, set in the mono face. */
   readonly mono?: boolean;
+  /**
+   * A label that is a property key (a CURIE), set in the mono face: `owner` in `--fs-primary`
+   * for an owner-asserted value, `extracted` in the secondary colour for a value read from
+   * the file (UI-S-031 mockup 28). A plain label when absent.
+   */
+  readonly labelStyle?: "owner" | "extracted";
 }
 
 /** Most fixity algorithms shown besides the content digest. */
