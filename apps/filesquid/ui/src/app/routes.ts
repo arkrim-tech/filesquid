@@ -15,6 +15,7 @@ import type { FsNavigationView, NavigationViewOptions } from "../components/fs-n
 import type { FsSettings, SettingsOptions } from "../components/fs-settings";
 import { locationHash, parseLocationHash, type FileLocation } from "../files/model";
 import type { HistorySource } from "../files/history-source";
+import type { DownloadSource } from "../files/download-source";
 import type { MetadataSource } from "../files/metadata-source";
 import { bindFilePanel, removeFilePanel } from "./file-panel-route";
 
@@ -223,11 +224,14 @@ function createNavigationView(shell: HTMLElement, options: NavigationRouteOption
 
 /**
  * What the files route needs: the labels and the file source of the browser, and the history
- * source of the file panel (UI-F2.3); without it the route mounts no file panel.
+ * and download sources of the file panel (UI-F2.3, UI-F2.11); without both the route mounts no
+ * file panel.
  */
 export interface FilesRouteOptions extends Pick<FileBrowserOptions, "labels" | "source"> {
   /** Reads histories, versions and history sizes for the file panel. */
   readonly history?: HistorySource;
+  /** Reads the whole file of one version for the file panel's Download this version. */
+  readonly download?: DownloadSource;
   /** Reads and writes statements for the file panel's Description tab (UI-F2.4). */
   readonly metadata?: MetadataSource;
 }
@@ -281,7 +285,8 @@ function createFileBrowser(
 ): FsFileBrowser {
   const browser = document.createElement("fs-file-browser") as FsFileBrowser;
   browser.configure({ labels: options.labels, source: options.source, href: locationHash });
-  if (options.history) bindFilePanel(shell, browser, { ...options, history: options.history });
+  const { history, download } = options;
+  if (history && download) bindFilePanel(shell, browser, { ...options, history, download });
   browser.addEventListener("fs-location-change", (event) => {
     const { location } = (event as CustomEvent<{ location: FileLocation }>).detail;
     const hash = locationHash(location);

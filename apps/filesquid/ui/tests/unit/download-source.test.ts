@@ -38,11 +38,15 @@ function blobBytes(blob: Blob): Promise<Uint8Array> {
 /** A client over `bytes`: details report its length, download and ranged reads serve it. */
 function clientOver(bytes: Uint8Array) {
   const request = vi.fn(async () => ({ size: bytes.byteLength }));
-  const read = vi.fn(async (_path: string, options: { range?: { start: number; end?: number } }) => {
-    const range = options.range;
-    const part = range ? bytes.slice(range.start, (range.end ?? bytes.byteLength - 1) + 1) : bytes;
-    return { response: new Response(part), partial: range !== undefined };
-  });
+  const read = vi.fn(
+    async (_path: string, options: { range?: { start: number; end?: number } }) => {
+      const range = options.range;
+      const part = range
+        ? bytes.slice(range.start, (range.end ?? bytes.byteLength - 1) + 1)
+        : bytes;
+      return { response: new Response(part as BodyInit), partial: range !== undefined };
+    },
+  );
   return { request, read } as unknown as DownloadClient & {
     request: typeof request;
     read: typeof read;

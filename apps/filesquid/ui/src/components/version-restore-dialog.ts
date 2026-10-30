@@ -7,6 +7,10 @@
  * returns typed references, so the Versions panel never queries it by selector; the panel
  * performs the restore. {@link labelProblem} checks a typed label as the route does.
  *
+ * The head, the footer and the part references are shared with the Edit label dialog
+ * (`version-label-dialog.ts`, UI-F2.11): {@link DialogParts}, {@link dialogHead} and
+ * {@link dialogActions}.
+ *
  * The dialog sits on `--fs-surface-overlay`, so it draws no muted, placeholder or error text
  * there except the refusal message (on the card-coloured message box); the active text is drawn
  * only on the active tint, the one surface its listed exemption covers (SRS-UI-007, UI-S-015).
@@ -34,23 +38,26 @@ export interface RestoreDialogParams {
   readonly locale: string;
 }
 
-/** References into a built dialog. */
-export interface RestoreDialog {
+/** References into a built version dialog, shared by Restore and Edit label. */
+export interface DialogParts {
   /** The scrim that holds the dialog; append it to the panel's shadow root. */
   readonly scrim: HTMLElement;
   /** The dialog. */
   readonly dialog: HTMLElement;
-  /** The optional label field. */
+  /** The label field. */
   readonly input: HTMLInputElement;
   /** The close button in the head. */
   readonly close: HTMLButtonElement;
   /** Cancel. */
   readonly cancel: HTMLButtonElement;
-  /** Restore. */
-  readonly restore: HTMLButtonElement;
-  /** The message line for a refused label or restore. */
+  /** The dialog's one filled primary button (Restore, or Save). */
+  readonly submit: HTMLButtonElement;
+  /** The message line for a refused label or a refused write. */
   readonly error: HTMLElement;
 }
+
+/** References into a built restore dialog. */
+export type RestoreDialog = DialogParts;
 
 /** The dialog's own rules on top of `CONTROL_STYLE`'s `.scrim`, `.dialog` and buttons. */
 const STYLE = `
@@ -73,17 +80,17 @@ const STYLE = `
   .label-input { display: block; box-sizing: border-box; inline-size: calc(100% - 2 * var(--fs-space-1)); }
   .error { margin-block: var(--fs-space-2) 0; padding: var(--fs-space-2); border-radius: var(--fs-radius-item); background: var(--fs-surface-card); color: var(--fs-error); font-size: var(--fs-font-size-small); }
   .error:empty { display: none; }
-  .keep { margin-block: var(--fs-space-3) var(--fs-space-2); font-size: var(--fs-font-size-small); color: var(--fs-on-surface-variant); }
+  .keep, .help { margin-block: var(--fs-space-3) var(--fs-space-2); font-size: var(--fs-font-size-small); color: var(--fs-on-surface-variant); }
   .restore-dialog .dialog-actions { padding: var(--fs-space-3) var(--fs-space-4); }
   .restore-dialog .dialog-actions .button { margin-inline: 0; }
-  .restore-dialog .dialog-actions .restore { margin-inline-end: var(--fs-space-1); }
+  .restore-dialog .dialog-actions .primary { margin-inline-end: var(--fs-space-1); }
 `;
 
 /** CSS text of the restore dialog. */
 export const RESTORE_DIALOG_STYLE = STYLE;
 
 /** Create an element with a class and optional text. */
-function node<K extends keyof HTMLElementTagNameMap>(
+export function node<K extends keyof HTMLElementTagNameMap>(
   tag: K,
   className: string,
   text?: string,
@@ -134,36 +141,58 @@ function changeBox(params: RestoreDialogParams): HTMLElement {
   return box;
 }
 
-/** The head: the title and the close button. */
-function head(
+/**
+ * The head of a version dialog: the title and the close button.
+ *
+ * @param labels The active label table.
+ * @param title The title text.
+ * @param id The title's id, which the dialog's `aria-labelledby` names.
+ * @returns The head element and its close button.
+ */
+export function dialogHead(
   labels: LabelTable,
-  version: string,
+  title: string,
+  id: string,
 ): { element: HTMLElement; close: HTMLButtonElement } {
   const element = node("div", "restore-head");
-  const title = node("h2", "dialog-title", formatLabel(labels.versionsRestoreTitle, { version }));
-  title.id = "restore-title";
+  const heading = node("h2", "dialog-title", title);
+  heading.id = id;
   const close = node("button", "icon-button close");
   close.type = "button";
   close.setAttribute("aria-label", labels.versionsDialogClose);
   close.append(icon("close", 20));
-  element.append(title, close);
+  element.append(heading, close);
   return { element, close };
 }
 
-/** The footer: Cancel and Restore. */
-function actions(labels: LabelTable): {
+/**
+ * The footer of a version dialog: Cancel and the one filled primary button.
+ *
+ * @param labels The active label table.
+ * @param submitText The primary button's text.
+ * @param submitClass The primary button's own class (`restore`, `save`).
+ * @param submitIcon An icon before the text, or none.
+ * @returns The footer and its two buttons.
+ */
+export function dialogActions(
+  labels: LabelTable,
+  submitText: string,
+  submitClass: string,
+  submitIcon?: Parameters<typeof icon>[0],
+): {
   element: HTMLElement;
   cancel: HTMLButtonElement;
-  restore: HTMLButtonElement;
+  submit: HTMLButtonElement;
 } {
   const element = node("div", "dialog-actions");
   const cancel = node("button", "button secondary large cancel", labels.fileCancel);
   cancel.type = "button";
-  const restore = node("button", "button primary large restore");
-  restore.type = "submit";
-  restore.append(icon("history"), document.createTextNode(labels.versionsRestore));
-  element.append(cancel, restore);
-  return { element, cancel, restore };
+  const submit = node("button", `button primary large ${submitClass}`);
+  submit.type = "submit";
+  if (submitIcon) submit.append(icon(submitIcon));
+  submit.append(document.createTextNode(submitText));
+  element.append(cancel, submit);
+  return { element, cancel, submit };
 }
 
 /**
@@ -174,7 +203,11 @@ function actions(labels: LabelTable): {
  */
 export function buildRestoreDialog(params: RestoreDialogParams): RestoreDialog {
   const { labels, file, next, later } = params;
-  const top = head(labels, params.row.version);
+  const top = dialogHead(
+    labels,
+    formatLabel(labels.versionsRestoreTitle, { version: params.row.version }),
+    "restore-title",
+  );
   const name = node("p", "file-name", file.display_name);
   name.id = "restore-file";
   const field = node(
@@ -189,7 +222,7 @@ export function buildRestoreDialog(params: RestoreDialogParams): RestoreDialog {
   input.autocomplete = "off";
   const error = node("p", "error");
   error.setAttribute("role", "alert");
-  const buttons = actions(labels);
+  const buttons = dialogActions(labels, labels.versionsRestore, "restore", "history");
   const dialog = node("form", "dialog restore-dialog");
   dialog.noValidate = true;
   dialog.setAttribute("role", "dialog");

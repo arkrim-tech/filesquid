@@ -5,6 +5,7 @@
  * for a gate, and every restore is recorded.
  */
 import { ApiError } from "../../src/api/client";
+import { validLabel } from "../../src/files/model";
 import type { FileCommit, FileDetails, FileRef, ObjectRef } from "../../src/files/model";
 import type {
   FileHistory,
@@ -12,7 +13,7 @@ import type {
   FileHistorySize,
   ObjectVersions,
 } from "../../src/files/history-source";
-import type { RestoreOptions, SourceOptions } from "../../src/files/source";
+import type { RestoreOptions, SourceOptions, WriteOptions } from "../../src/files/source";
 
 /** The object of the fixture file. */
 export const PANEL_OBJECT = "urn:uuid:7f3c9a1e-0b2c-4d5e-8f90-a1b2c341d2b8";
@@ -79,18 +80,26 @@ export function gate(): Gate {
   return { wait, open: () => open() };
 }
 
-/** The panel's reads and restore over the fixture. */
+/** The methods a fake call can fail or wait on. */
+type StepName = "details" | "history" | "versions" | "size" | "restore" | "label" | "download";
+
+/** The panel's reads, restore, label edit and download over the fixture. */
 export class FakePanelSource {
   entries: FileHistoryEntry[] = panelEntries();
   head = "v7";
   bytes = 100_978_892;
   /** Failure of each method, when set. */
-  readonly failures: Partial<
-    Record<"details" | "history" | "versions" | "size" | "restore", unknown>
-  > = {};
+  readonly failures: Partial<Record<StepName, unknown>> = {};
   /** Gates each method waits on, when set. */
-  readonly gates: Partial<Record<"details" | "history" | "versions" | "size" | "restore", Gate>> =
-    {};
+  readonly gates: Partial<Record<StepName, Gate>> = {};
+  /** Every label edit, in order, with the revision it expected. */
+  readonly labelEdits: {
+    version: string;
+    label: string | null;
+    revision: string;
+  }[] = [];
+  /** Every download, in order: the file version asked for. */
+  readonly downloads: FileRef[] = [];
   /** Every restore, in order, with the revision it expected. */
   readonly restores: {
     object: ObjectRef;
@@ -100,7 +109,15 @@ export class FakePanelSource {
     label?: string;
   }[] = [];
   /** Calls per method. */
-  readonly calls = { details: 0, history: 0, versions: 0, size: 0, restore: 0 };
+  readonly calls: Record<StepName, number> = {
+    details: 0,
+    history: 0,
+    versions: 0,
+    size: 0,
+    restore: 0,
+    label: 0,
+    download: 0,
+  };
   /** When true, calls ignore their abort signal, as a host that answers anyway would. */
   ignoreAbort = false;
 
@@ -108,7 +125,7 @@ export class FakePanelSource {
    * Wait for the method's gate (an abort ends the wait at once, unless `ignoreAbort`), then
    * fail when a failure is set.
    */
-  private async step(name: keyof FakePanelSource["calls"], options?: SourceOptions): Promise<void> {
+  private async step(name: StepName, options?: SourceOptions): Promise<void> {
     this.calls[name] += 1;
     const signal = this.ignoreAbort ? undefined : options?.signal;
     await Promise.race([this.gates[name]?.wait, aborted(signal)]);
@@ -222,5 +239,49 @@ export class FakePanelSource {
     ];
     this.head = next;
     return { library_id: object.library_id, object_id: object.object_id, version: next, created };
+  }
+  /**
+   * Record a label edit as `PUT /api/v1/files/labels` answers it: an invalid label is
+   * `invalid_request`, a revision that is not the head `conflict`, an unknown version
+   * `not_found`, and a label that changes nothing `conflict`. Otherwise the version's label
+   * changes and the labels record is committed as the next version.
+   */
+  async setVersionLabel(
+    object: ObjectRef,
+    version: string,
+    label: string | null,
+    options: WriteOptions,
+  ): Promise<FileCommit> {
+    await this.step("label", options);
+    const route = "/api/v1/files/labels";
+    if (label !== null && !validLabel(label)) {
+      throw new ApiError(400, route, { code: "invalid_request" });
+    }
+    if (options.revision !== this.head) throw new ApiError(409, route, { code: "conflict" });
+    const at = this.entries.findIndex((e) => e.version.version === version);
+    const entry = this.entries[at];
+    if (!entry) throw new ApiError(404, route, { code: "not_found" });
+    if ((entry.version.label ?? null) === label) {
+      throw new ApiError(409, route, { code: "conflict" });
+    }
+    this.labelEdits.push({ version, label, revision: options.revision });
+    this.entries = this.entries.map((e, i) =>
+      i === at ? { ...e, version: { ...e.version, label } } : e,
+    );
+    const next = `v${Number(this.head.slice(1)) + 1}`;
+    this.head = next;
+    const created = "2026-10-16T13:00:00Z";
+    return { library_id: object.library_id, object_id: object.object_id, version: next, created };
+  }
+
+  /** The whole file of the version asked for; a version that removed the file is `not_found`. */
+  async readVersionFile(file: FileRef, options?: SourceOptions): Promise<Blob> {
+    await this.step("download", options);
+    this.downloads.push(file);
+    const entry = this.entries.find((e) => e.version.version === file.version);
+    if (!entry || entry.digest === null) {
+      throw new ApiError(404, "/api/v1/files/download", { code: "not_found" });
+    }
+    return new Blob([`bytes of ${file.version}`]);
   }
 }

@@ -111,17 +111,17 @@ describe("MemoryFileSource.setVersionLabel", () => {
     await expect(
       s.setVersionLabel(OBJECT, "v1", "Same", { revision: s.head }),
     ).rejects.toMatchObject({ status: 409, code: "conflict" });
-    await expect(
-      s.setVersionLabel(OBJECT, "v2", null, { revision: s.head }),
-    ).rejects.toMatchObject({ status: 409 });
+    await expect(s.setVersionLabel(OBJECT, "v2", null, { revision: s.head })).rejects.toMatchObject(
+      { status: 409 },
+    );
     expect(s.head).toBe("v2");
   });
 
   it("refuses a stale head as conflict and an invalid label as invalid_request", async () => {
     const s = memory();
-    await expect(
-      s.setVersionLabel(OBJECT, "v1", "x", { revision: "v0" }),
-    ).rejects.toMatchObject({ status: 409 });
+    await expect(s.setVersionLabel(OBJECT, "v1", "x", { revision: "v0" })).rejects.toMatchObject({
+      status: 409,
+    });
     for (const bad of ["", "   ", "a\u0007b", "x".repeat(513)]) {
       await expect(s.setVersionLabel(OBJECT, "v1", bad, { revision: "v1" })).rejects.toMatchObject({
         status: 400,
@@ -132,8 +132,8 @@ describe("MemoryFileSource.setVersionLabel", () => {
 
   it("answers not_found for a version that does not exist", async () => {
     const s = memory();
-    await expect(
-      s.setVersionLabel(OBJECT, "v9", "x", { revision: "v1" }),
-    ).rejects.toBeInstanceOf(ApiError);
+    await expect(s.setVersionLabel(OBJECT, "v9", "x", { revision: "v1" })).rejects.toBeInstanceOf(
+      ApiError,
+    );
   });
 });

@@ -5,24 +5,29 @@
  * first: the mono version chip, the label or "No label", the Current chip on the current
  * version, and "{relative time} · {size}"; under the Back row and the version count, the
  * eyebrow "HISTORY {size} · NEWEST FIRST"; and the note that FileSquid keeps every version. A
- * version other than the current one has a menu with **Restore as new version**, which opens
- * the restore dialog and publishes one new version through `FileSource.restore` (API-F2.5,
- * `POST /api/v1/files/restorations`), a command whose expected revision is the object's head as
- * last read (API-F2.13); a head another writer moved meanwhile is refused as `conflict` and
- * changes nothing. No delete, expiry or thinning control exists.
+ * row has a menu ({@link versionActions}): **Restore as new version** (not on the current
+ * version) opens the restore dialog and publishes one new version through `FileSource.restore`
+ * (API-F2.5, `POST /api/v1/files/restorations`); **Download this version** (UI-F2.11) saves that
+ * version's file under its display name through {@link DownloadSource}; **Edit label**
+ * (UI-F2.11) opens a dialog and sets or clears the label through `FileSource.setVersionLabel`
+ * (API-F2.5, `PUT /api/v1/files/labels`). Restore and Edit label are commands whose expected
+ * revision is the object's head as last read (API-F2.13); a head another writer moved
+ * meanwhile is refused as `conflict` and changes nothing. No delete, expiry or thinning
+ * control exists.
  *
  * Reads: `GET /api/v1/files/history`, `GET /api/v1/files/versions` (the head, for the next
- * version) and `GET /api/v1/files/history-size`, through {@link HistorySource}. UI-F2.11 adds
- * Download this version and Edit label to the same row menu.
+ * version) and `GET /api/v1/files/history-size`, through {@link HistorySource}.
  *
  * **Events** (bubbling and composed): `fs-versions-close` from Back; `fs-files-change`
- * (`detail.operation` `restore`, `detail.commit`) after a restore commits.
+ * (`detail.operation` `restore` or `label`, `detail.commit`) after a restore or a label edit
+ * commits.
  *
  * Accessibility (UI-S-016): the shared stylesheet comes first; the rows are a named list; the
  * menu button has `aria-haspopup="menu"` and `aria-expanded`, the menu moves with the arrow
  * keys and Escape closes it and returns focus; the dialog is modal, keeps Tab inside, and
- * Escape cancels it and returns focus to the menu button; a restore is announced in a polite
- * status region; focus is never moved by a load.
+ * Escape cancels it and returns focus to the menu button; a restore, a label edit and a
+ * download are announced in a polite status region; a failed download shows a visible alert;
+ * focus is never moved by a load.
  */
 import { formatLabel, type LabelTable } from "../theme/labels";
 import { A11Y_STYLE } from "./a11y-style";
@@ -34,24 +39,32 @@ import {
   RESTORE_DIALOG_STYLE,
   buildRestoreDialog,
   labelProblem,
-  type RestoreDialog,
+  type DialogParts,
 } from "./version-restore-dialog";
+import { buildLabelDialog, labelChange } from "./version-label-dialog";
+import { saveFileToDevice } from "./save-file";
 import { failureText } from "../files/ops";
 import { formatSize, type FileCommit, type FileRef } from "../files/model";
 import type { FileSource } from "../files/source";
 import type { HistorySource } from "../files/history-source";
+import type { DownloadSource } from "../files/download-source";
+import { ApiError } from "../api/client";
 import {
   laterVersions,
   nextVersion,
   relativeTime,
   versionCountText,
+  versionActions,
   versionRows,
   versionTotal,
+  type VersionAction,
   type VersionRow,
 } from "../files/versions";
 
-/** The reads and the restore the view needs. */
-export type VersionsSource = Pick<FileSource, "restore"> & HistorySource;
+/** The reads, the restore, the label edit and the download the view needs. */
+export type VersionsSource = Pick<FileSource, "restore" | "setVersionLabel"> &
+  HistorySource &
+  DownloadSource;
 
 /** What the view needs. */
 export interface VersionsPanelOptions {
@@ -63,6 +76,8 @@ export interface VersionsPanelOptions {
   online?: () => boolean;
   /** The present, for relative times; the clock when absent. */
   now?: () => Date;
+  /** Saves a downloaded file; the browser's own download ({@link saveFileToDevice}) when absent. */
+  save?: (blob: Blob, name: string) => void;
 }
 
 /** Name of the event Back dispatches. */
@@ -112,6 +127,9 @@ const STYLE = `
   .note p { margin: 0; font-size: var(--fs-font-size-small); line-height: 1.23; }
   .note-title { font-weight: 600; color: var(--fs-on-surface); }
   .note-detail { color: var(--fs-on-surface-variant); }
+  .notices:empty { display: none; }
+  .notice { margin: var(--fs-space-2) var(--fs-space-3) 0; padding: var(--fs-space-2); border: 1.5px solid var(--fs-error); border-radius: var(--fs-radius-item); background: var(--fs-surface-card); color: var(--fs-error); font-size: var(--fs-font-size-small); overflow-wrap: anywhere; }
+  .more[aria-busy="true"] { color: var(--fs-icon-disabled); cursor: progress; }
   .announce { position: absolute; inline-size: 1px; block-size: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 `;
 
@@ -138,7 +156,9 @@ export class FsVersionsPanel extends HTMLElement {
   private count?: HTMLElement;
   private announcer?: HTMLElement;
   private menu?: { element: HTMLElement; button: HTMLButtonElement };
-  private dialog?: { parts: RestoreDialog; opener: HTMLButtonElement; busy: boolean };
+  private notices?: HTMLElement;
+  private downloadAbort?: AbortController;
+  private dialog?: { parts: DialogParts; opener: HTMLButtonElement; busy: boolean };
   private readonly onOutside = (event: Event) => this.closeMenuOutside(event);
 
   constructor() {
@@ -178,12 +198,14 @@ export class FsVersionsPanel extends HTMLElement {
     if (!samePath) this.loaded = undefined;
     this.file = file;
     this.closeMenu(false);
+    this.stopDownload();
     void this.load();
   }
 
   /** Cancel a read in flight and close the menu and the dialog when the element leaves. */
   disconnectedCallback(): void {
     this.abort?.abort();
+    this.stopDownload();
     this.closeMenu(false);
     this.dropDialog();
   }
@@ -200,10 +222,18 @@ export class FsVersionsPanel extends HTMLElement {
     back.addEventListener("click", () => this.emit(VERSIONS_CLOSE_EVENT, undefined));
     this.count = node("p", "count");
     bar.append(back, this.count);
+    this.notices = node("div", "notices");
     this.content = node("div", "content");
     this.announcer = node("p", "announce");
     this.announcer.setAttribute("role", "status");
-    this.shadowRoot?.replaceChildren(style, bar, this.content, note(labels), this.announcer);
+    this.shadowRoot?.replaceChildren(
+      style,
+      bar,
+      this.notices,
+      this.content,
+      note(labels),
+      this.announcer,
+    );
   }
 
   /** Read the history, the head and the history size, then list them; ignore stale answers. */
@@ -309,7 +339,7 @@ export class FsVersionsPanel extends HTMLElement {
         : node("span", "label", row.label),
     );
     if (row.current) line.append(node("span", "chip ok current", labels.versionsCurrent));
-    else if (!row.removed) line.append(this.menuButton(labels, row));
+    line.append(this.menuButton(labels, row));
     item.append(dot, line, metaLine(labels, row, now, locale));
     return item;
   }
@@ -342,20 +372,44 @@ export class FsVersionsPanel extends HTMLElement {
     const element = node("div", "menu");
     element.setAttribute("role", "menu");
     element.setAttribute("aria-label", button.getAttribute("aria-label") ?? "");
-    const restore = node("button", "menu-item");
-    restore.type = "button";
-    restore.setAttribute("role", "menuitem");
-    restore.tabIndex = -1;
-    restore.dataset.action = "restore";
-    restore.append(icon("history"), document.createTextNode(labels.versionsRestoreAction));
-    restore.addEventListener("click", () => this.chooseRestore(button, row));
-    element.append(restore);
+    const items = versionActions(row).map((action) => this.menuItem(labels, action, button, row));
+    element.append(...items);
     element.addEventListener("keydown", (event) => this.onMenuKey(event, element));
     button.closest("li")?.append(element);
     button.setAttribute("aria-expanded", "true");
     this.menu = { element, button };
     document.addEventListener("pointerdown", this.onOutside, true);
-    focusElement(restore);
+    focusElement(items[0] as HTMLElement);
+  }
+
+  /** One item of a row's menu: its icon and words, and what choosing it does. */
+  private menuItem(
+    labels: LabelTable,
+    action: VersionAction,
+    button: HTMLButtonElement,
+    row: VersionRow,
+  ): HTMLButtonElement {
+    const words = {
+      restore: { icon: "history", text: labels.versionsRestoreAction },
+      download: { icon: "download", text: labels.versionsDownloadAction },
+      "edit-label": { icon: "edit", text: labels.versionsEditLabelAction },
+    } as const;
+    const item = node("button", "menu-item");
+    item.type = "button";
+    item.setAttribute("role", "menuitem");
+    item.tabIndex = -1;
+    item.dataset.action = action;
+    item.append(icon(words[action].icon), document.createTextNode(words[action].text));
+    item.addEventListener("click", () => this.chooseAction(action, button, row));
+    return item;
+  }
+
+  /** Close the menu, then do what the chosen item says. */
+  private chooseAction(action: VersionAction, button: HTMLButtonElement, row: VersionRow): void {
+    this.closeMenu(false);
+    if (action === "restore") this.chooseRestore(button, row);
+    else if (action === "edit-label") this.chooseEditLabel(button, row);
+    else void this.runDownload(button, row);
   }
 
   /** Close the menu; when `focus`, return focus to its button. */
@@ -392,9 +446,8 @@ export class FsVersionsPanel extends HTMLElement {
     }
   }
 
-  /** Restore as new version was chosen: close the menu and open the dialog. */
+  /** Restore as new version was chosen: open the restore dialog. */
   private chooseRestore(button: HTMLButtonElement, row: VersionRow): void {
-    this.closeMenu(false);
     const { options, file, loaded } = this;
     if (!options || !file || !loaded) return;
     const parts = buildRestoreDialog({
@@ -405,16 +458,38 @@ export class FsVersionsPanel extends HTMLElement {
       later: laterVersions(loaded.rows, row.version),
       locale: document.documentElement.lang || "en",
     });
-    this.dialog = { parts, opener: button, busy: false };
+    this.openDialog(parts, button, () => this.submitRestore(row));
+  }
+
+  /** Edit label was chosen: open the label dialog holding the version's label. */
+  private chooseEditLabel(button: HTMLButtonElement, row: VersionRow): void {
+    const { options, file } = this;
+    if (!options || !file) return;
+    const parts = buildLabelDialog({
+      labels: options.labels,
+      file,
+      version: row.version,
+      current: row.label,
+    });
+    this.openDialog(parts, button, () => this.submitLabel(row));
+  }
+
+  /** Show a built dialog, wire its buttons and Escape, and focus its field. */
+  private openDialog(
+    parts: DialogParts,
+    opener: HTMLButtonElement,
+    submit: () => Promise<void>,
+  ): void {
+    this.dialog = { parts, opener, busy: false };
     parts.close.addEventListener("click", () => this.closeDialog());
     parts.cancel.addEventListener("click", () => this.closeDialog());
     parts.dialog.addEventListener("submit", (event) => {
       event.preventDefault();
-      void this.submitRestore(row);
+      void submit();
     });
-    parts.restore.addEventListener("click", (event) => {
+    parts.submit.addEventListener("click", (event) => {
       event.preventDefault();
-      void this.submitRestore(row);
+      void submit();
     });
     parts.dialog.addEventListener("keydown", (event) => this.onDialogKey(event, parts.dialog));
     this.shadowRoot?.append(parts.scrim);
@@ -479,7 +554,11 @@ export class FsVersionsPanel extends HTMLElement {
         revision: loaded.head,
         label: label === "" ? undefined : label,
       });
-      this.afterRestore(options.labels, file, commit, dialog);
+      const words = formatLabel(options.labels.fileRestored, {
+        name: file.display_name,
+        version: commit.version,
+      });
+      this.afterCommit("restore", words, commit, dialog);
     } catch (failure) {
       console.warn("FileSquid could not restore a version", errorName(failure));
       if (this.dialog !== dialog) return;
@@ -493,35 +572,104 @@ export class FsVersionsPanel extends HTMLElement {
     const dialog = this.dialog;
     if (!dialog) return;
     dialog.busy = busy;
-    const { close, cancel, restore, input } = dialog.parts;
-    for (const control of [close, cancel, restore, input]) control.disabled = busy;
+    const { close, cancel, submit, input } = dialog.parts;
+    for (const control of [close, cancel, submit, input]) control.disabled = busy;
   }
 
   /**
-   * The restore committed: tell the page, so its listing shows the new version; then, unless
-   * the view moved on to another file or version meanwhile (which dropped the dialog), close
-   * the dialog, announce it and list again.
+   * A restore or a label edit committed: tell the page, so its listing shows the new version;
+   * then, unless the view moved on to another file or version meanwhile (which dropped the
+   * dialog), close the dialog, announce `words` and list again.
    */
-  private afterRestore(
-    labels: LabelTable,
-    file: FileRef,
+  private afterCommit(
+    operation: "restore" | "label",
+    words: string,
     commit: FileCommit,
     dialog: NonNullable<FsVersionsPanel["dialog"]>,
   ): void {
-    this.emit("fs-files-change", { operation: "restore", commit });
+    this.emit("fs-files-change", { operation, commit });
     if (this.dialog !== dialog) return;
     this.dialog.parts.scrim.remove();
     this.dialog = undefined;
-    if (this.announcer) {
-      this.announcer.textContent = formatLabel(labels.fileRestored, {
-        name: file.display_name,
-        version: commit.version,
-      });
-    }
+    if (this.announcer) this.announcer.textContent = words;
     void this.load().then(() => {
       const list = this.shadowRoot?.querySelector<HTMLElement>("ul.versions");
       if (list) focusElement(list);
     });
+  }
+
+  /** Check the typed label, then set or clear the version's label in one call. */
+  private async submitLabel(row: VersionRow): Promise<void> {
+    const { options, file, dialog, loaded } = this;
+    if (!options || !file || !dialog || !loaded || dialog.busy) return;
+    const { input, error } = dialog.parts;
+    const change = labelChange(input.value, row.label);
+    if (change.kind === "invalid") {
+      input.setAttribute("aria-invalid", "true");
+      error.textContent = options.labels.versionsRestoreLabelInvalid;
+      return;
+    }
+    input.removeAttribute("aria-invalid");
+    error.textContent = "";
+    if (change.kind === "unchanged") return this.closeDialog();
+    this.setBusy(true);
+    try {
+      const object = { library_id: file.library_id, object_id: file.object_id };
+      const commit = await options.source.setVersionLabel(object, row.version, change.label, {
+        revision: loaded.head,
+      });
+      const key = change.label === null ? "versionsLabelCleared" : "versionsLabelSaved";
+      const words = formatLabel(options.labels[key], { version: row.version });
+      this.afterCommit("label", words, commit, dialog);
+    } catch (failure) {
+      console.warn("FileSquid could not set a version label", errorName(failure));
+      if (this.dialog !== dialog) return;
+      this.setBusy(false);
+      error.textContent = failureText(failure, options.labels);
+    }
+  }
+
+  /** Read one version's file and hand it to the browser; a failure shows an alert. */
+  private async runDownload(button: HTMLButtonElement, row: VersionRow): Promise<void> {
+    const { options, file } = this;
+    if (!options || !file) return;
+    this.stopDownload();
+    this.notices?.replaceChildren();
+    const abort = new AbortController();
+    this.downloadAbort = abort;
+    const words = { version: row.version, name: file.display_name };
+    if (this.announcer) {
+      this.announcer.textContent = formatLabel(options.labels.versionsDownloading, words);
+    }
+    button.setAttribute("aria-busy", "true");
+    try {
+      const blob = await options.source.readVersionFile(
+        { ...file, version: row.version },
+        { signal: abort.signal },
+      );
+      if (abort.signal.aborted) return;
+      (options.save ?? saveFileToDevice)(blob, file.display_name);
+    } catch (failure) {
+      if (abort.signal.aborted) return;
+      console.warn("FileSquid could not download a version", errorName(failure));
+      this.showNotice(downloadFailure(options.labels, row.version, failure));
+    } finally {
+      button.removeAttribute("aria-busy");
+    }
+  }
+
+  /** Cancel a download in flight. */
+  private stopDownload(): void {
+    this.downloadAbort?.abort();
+    this.downloadAbort = undefined;
+    this.notices?.replaceChildren();
+  }
+
+  /** Show a visible alert above the rows. */
+  private showNotice(text: string): void {
+    const alert = node("p", "notice", text);
+    alert.setAttribute("role", "alert");
+    this.notices?.replaceChildren(alert);
   }
 
   /** Dispatch a bubbling, composed event. */
@@ -555,6 +703,13 @@ function metaLine(labels: LabelTable, row: VersionRow, now: Date, locale: string
     document.createTextNode(after.replace("{size}", size)),
   );
   return meta;
+}
+
+/** The words of a failed download: it failed, and for a version too large to read, why. */
+function downloadFailure(labels: LabelTable, version: string, error: unknown): string {
+  const failed = formatLabel(labels.versionsDownloadFailed, { version });
+  const tooLarge = error instanceof ApiError && error.code === "payload_too_large";
+  return tooLarge ? `${failed} ${labels.versionsDownloadTooLarge}` : failed;
 }
 
 /** The kind of an error, without its message. */

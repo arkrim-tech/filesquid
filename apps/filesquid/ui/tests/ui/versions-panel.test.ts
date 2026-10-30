@@ -1,7 +1,7 @@
 /**
  * UI tests for `<fs-versions-panel>` (UI-F2.3, UI-S-009, UI-S-031 26 and 27): the Back row and
- * count, the history eyebrow, rows newest first with the current version marked and no menu on
- * it, the row menu, the restore dialog (one call with the optional label, a refusal kept in the
+ * count, the history eyebrow, rows newest first with the current version marked, the row menu
+ * (Restore as new version, Download this version, Edit label: UI-F2.11), the restore dialog (one call with the optional label, a refusal kept in the
  * dialog, Escape and Tab inside), the change event, and the loading and error states.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -93,17 +93,17 @@ describe("<fs-versions-panel>", () => {
     );
   });
 
-  it("marks the current version with a chip and offers no menu on it; every other row has one", async () => {
+  it("marks the current version with a chip; every row has a menu button, the current one included", async () => {
     const panel = await mount();
     expect(row(panel, "v7").querySelector(".current")?.textContent).toBe(labels.versionsCurrent);
-    expect(row(panel, "v7").querySelector("button.more")).toBeNull();
+    expect(row(panel, "v7").querySelector("button.more")).not.toBeNull();
     const more = row(panel, "v5").querySelector<HTMLButtonElement>("button.more");
     expect(more?.getAttribute("aria-label")).toBe("Actions for v5");
     expect(more?.getAttribute("aria-haspopup")).toBe("menu");
-    expect(root(panel).querySelectorAll("button.more")).toHaveLength(6);
+    expect(root(panel).querySelectorAll("button.more")).toHaveLength(7);
   });
 
-  it("opens the row menu with Restore as new version and no delete, expiry or thinning", async () => {
+  it("opens the row menu with Restore as new version, Download this version and Edit label, and no delete, expiry or thinning", async () => {
     const panel = await mount();
     const more = row(panel, "v5").querySelector<HTMLButtonElement>(
       "button.more",
@@ -111,7 +111,11 @@ describe("<fs-versions-panel>", () => {
     more.click();
     expect(more.getAttribute("aria-expanded")).toBe("true");
     const items = [...root(panel).querySelectorAll('[role="menu"] [role="menuitem"]')];
-    expect(items.map((i) => i.textContent)).toEqual([labels.versionsRestoreAction]);
+    expect(items.map((i) => i.textContent)).toEqual([
+      labels.versionsRestoreAction,
+      labels.versionsDownloadAction,
+      labels.versionsEditLabelAction,
+    ]);
     const words = items.map((i) => i.textContent?.toLowerCase() ?? "").join(" ");
     expect(words).not.toMatch(/delete|expir|thin/);
     expect(root(panel).activeElement).toBe(items[0]);
@@ -363,7 +367,7 @@ describe("<fs-versions-panel>", () => {
     ).rejects.toMatchObject({ code: "not_found" });
   });
 
-  it("marks a removal and offers no restore from it", async () => {
+  it("marks a removal and offers only Edit label on it: it holds no file to restore or download", async () => {
     const source = new FakePanelSource();
     source.entries = source.entries.map((entry, i) =>
       i === 2 ? { ...entry, change: "deleted", digest: null, size: null } : entry,
@@ -372,6 +376,8 @@ describe("<fs-versions-panel>", () => {
     expect(row(panel, "v3").querySelector(".meta")?.textContent).toBe(
       `Oct 2, 2026 · ${labels.versionsRemoved}`,
     );
-    expect(row(panel, "v3").querySelector("button.more")).toBeNull();
+    row(panel, "v3").querySelector<HTMLButtonElement>("button.more")?.click();
+    const items = [...root(panel).querySelectorAll('[role="menu"] [role="menuitem"]')];
+    expect(items.map((i) => i.textContent)).toEqual([labels.versionsEditLabelAction]);
   });
 });

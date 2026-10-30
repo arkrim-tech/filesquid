@@ -99,7 +99,12 @@ describe("bindFilesRoute", () => {
 
   it("mounts the file panel in the panel slot for the opened file and removes it on close (UI-F2.3)", async () => {
     window.history.replaceState(null, "", "#/files/lib/obj");
-    stop = bindFilesRoute(host, { labels, source: fixture(), history: new FakePanelSource() });
+    stop = bindFilesRoute(host, {
+      labels,
+      source: fixture(),
+      history: new FakePanelSource(),
+      download: new FakePanelSource(),
+    });
     await settle();
     expect(host.querySelector("fs-file-panel")).toBeNull();
     await click(control(browser() as FsFileBrowser, "readme.txt"));
@@ -120,7 +125,12 @@ describe("bindFilesRoute", () => {
 
   it("removes the file panel when the viewer closes or the route leaves the files", async () => {
     window.history.replaceState(null, "", "#/files/lib/obj");
-    stop = bindFilesRoute(host, { labels, source: fixture(), history: new FakePanelSource() });
+    stop = bindFilesRoute(host, {
+      labels,
+      source: fixture(),
+      history: new FakePanelSource(),
+      download: new FakePanelSource(),
+    });
     await settle();
     await click(control(browser() as FsFileBrowser, "readme.txt"));
     await settle();
@@ -139,7 +149,12 @@ describe("bindFilesRoute", () => {
 
   it("reloads the listing after the panel commits a restore", async () => {
     window.history.replaceState(null, "", "#/files/lib/obj");
-    stop = bindFilesRoute(host, { labels, source: fixture(), history: new FakePanelSource() });
+    stop = bindFilesRoute(host, {
+      labels,
+      source: fixture(),
+      history: new FakePanelSource(),
+      download: new FakePanelSource(),
+    });
     await settle();
     await click(control(browser() as FsFileBrowser, "readme.txt"));
     await settle();
@@ -160,7 +175,13 @@ describe("bindFilesRoute", () => {
     window.history.replaceState(null, "", "#/files/lib/obj");
     const metadata = new FakeMetadataSource();
     const history = new FakePanelSource();
-    stop = bindFilesRoute(host, { labels, source: fixture(), history, metadata });
+    stop = bindFilesRoute(host, {
+      labels,
+      source: fixture(),
+      history,
+      download: history,
+      metadata,
+    });
     await settle();
     await click(control(browser() as FsFileBrowser, "readme.txt"));
     await settle();
