@@ -10,7 +10,9 @@ macOS-first desktop target and a desktop-only FileSquid MVP
 
 Accepted
 
-Accepted: 2026-10-17. Amends [ADR 002](./002-tauri2-desktop-shell.md), [ADR 006](./006-libvips-native-stills-not-imagemagick.md) (its Linux-first profile statement only; libvips workers stay in the MVP), [ADR 013](./013-cargo-svelte-workspaces.md) and [ADR 020](./020-distribution-web-and-tauri.md) where they name Linux desktop as the first target. Does not change the release order of [ADR 029](./029-filesquid-unified-product-and-distributions.md); it inserts an early-access MVP before the first consumer release.
+Accepted: 2026-10-17. Amends [ADR 002](./002-tauri2-desktop-shell.md), [ADR 006](./006-libvips-native-stills-not-imagemagick.md) (its Linux-first profile statement only; libvips workers stay in the MVP), [ADR 013](./013-cargo-svelte-workspaces.md) and [ADR 020](./020-distribution-web-and-tauri.md) where they name Linux desktop as the first target. It inserts an early-access MVP before the first consumer release. The desktop-target order in this record is unchanged.
+
+Noted 2026-10-29: the owner decision in [ADR 029](./029-filesquid-unified-product-and-distributions.md) places encrypted backup immediately after this MVP and ahead of the first consumer release. This record does not set that product order.
 
 Amended: 2026-10-18 by [ADR 037](./037-c2pa-in-release-2.md), which removes C2PA (read, validation, unsigned import-time records, the Content Credentials routes and panel) from the MVP scope this record cites from C-056.
 
@@ -26,7 +28,7 @@ Amended: 2026-10-19 (owner decision): the app no longer shows an "early access" 
 
 ## Decision
 
-1. **macOS is the first desktop target.** Installers, packaged-desktop performance evidence and native-window tests start on macOS (WKWebView). Linux (WebKitGTK) and Windows (WebView2) follow the MVP, before the first consumer release.
+1. **macOS is the first desktop target.** Installers, packaged-desktop performance evidence and native-window tests start on macOS (WKWebView). Linux (WebKitGTK) and Windows (WebView2) are the later desktop targets. They ship in the first consumer release, after encrypted backup ([ADR 029](./029-filesquid-unified-product-and-distributions.md)).
 2. **The FileSquid MVP is desktop-only.** The MVP ships the default distribution on the macOS desktop host with the scope in [C-056](../product-vision.md#release-sequence). `filesquid-server`, its HTTP binding, accounts, groups, sharing, the container image and the multi-user load test move after the MVP. `filesquid-api` stays transport-agnostic ([ADR 030](./030-filesquid-api-and-transports.md)); nothing in the MVP may assume a single transport.
 3. **Unsigned early-access DMG.** The MVP installer is a `.dmg` built by the Tauri bundler, not signed with a Developer ID and not notarized. On Apple silicon the bundle MUST still carry an ad-hoc signature so it can launch; the exact Tauri configuration is verified in DE-F3.1 before it is documented ([command-verification](../../.agents/rules/command-verification.md)). The download page labels the build "early access", and the install guide states how to open an app Gatekeeper blocks. The app itself shows no early-access label; its About view states that the build is not signed or notarised by Apple yet (amended 2026-10-19, owner decision). Developer ID signing, notarization and the updater remain gated by a signing ADR (Task 8.5).
 4. **Native-window tests on macOS use the WebdriverIO Tauri service.** `tauri-driver` is not used on macOS.
@@ -52,10 +54,10 @@ Amended: 2026-10-19 (owner decision): the app no longer shows an "early access" 
 
 - Easier: one platform, one host and no signing dependency before the MVP.
 - Harder: counsel review of the macOS DMG's linked inventory is on the MVP critical path, so it should start as soon as the MVP's native inventory is known (after Task 0.5).
-- Harder: WebKitGTK and WebView2 differences surface later; the Linux and Windows installers and their native-window suites become post-MVP work that MUST pass before the first consumer release. Developers on Linux or Windows can build and test the workspace but cannot produce or smoke-test the MVP DMG, which needs a macOS machine.
+- Harder: WebKitGTK and WebView2 differences surface later; the Linux and Windows installers and their native-window suites are first-consumer-release work. They follow encrypted backup and MUST pass before that release closes. Developers on Linux or Windows can build and test the workspace but cannot produce or smoke-test the MVP DMG, which needs a macOS machine.
 - Gatekeeper warnings on the unsigned DMG make the MVP unsuitable for a general public launch; the PRD gate says so.
 - libvips workers ([ADR 006](./006-libvips-native-stills-not-imagemagick.md)) stay in the MVP, so the MVP DMG bundles native libraries.
-- The implementation plan splits Phase F3 into the MVP gate (Task FS-3.9) and a post-MVP completion phase that restores the deferred scope before the first consumer release.
+- The implementation plan splits Phase F3 into the MVP gate (Task FS-3.9) and phase F3R, which restores the deferred scope in the first consumer release, after phase F4.
 
 ## Related Decisions / Notes
 
