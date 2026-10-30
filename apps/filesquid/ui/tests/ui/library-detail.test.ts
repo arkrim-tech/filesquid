@@ -150,6 +150,7 @@ describe("<fs-library-detail>", () => {
     expect(source.calls).toEqual([
       "candidates:lib-1",
       "choose:copy_destination",
+      "revision:lib-1",
       "copy:lib-1:loc-1",
     ]);
     const result = rootOf(page).querySelector('[data-result="copy"]');
@@ -212,7 +213,9 @@ describe("<fs-library-detail>", () => {
     expect(source.calls).toEqual([
       "candidates:lib-1",
       "choose:copy_destination",
+      "revision:lib-1",
       "copy:lib-1:loc-1",
+      "revision:lib-1",
       "copy:lib-1:loc-1",
     ]);
     expect(states.hidden).toBe(true);
@@ -242,8 +245,10 @@ describe("<fs-library-detail>", () => {
     expect(text(page, '[data-for="actions"] .alert')).toBe(labels.libraryConflictCopy);
   });
 
-  it("rebuild: starts the durable job expecting the library's revision, keeps Working. while it runs, then reads the candidates again", async () => {
-    const { page, source } = await mount();
+  it("rebuild: starts the durable job expecting the revision this page kept, keeps Working. while it runs, then reads the candidates again", async () => {
+    const registry = new LibraryRegistry();
+    registry.remember(LIBRARY);
+    const { page, source } = await mount(new FakeLibrarySource(), registry);
     action(page, "rebuild").click();
     await settle();
     expect(source.calls).toEqual(["candidates:lib-1", "rebuild:lib-1", "candidates:lib-1"]);
@@ -254,20 +259,41 @@ describe("<fs-library-detail>", () => {
     expect(text(page, '[data-for="actions"] .status')).toBe(labels.libraryWorking);
   });
 
-  it("copy and rebuild expect the initial revision of a library this page did not open", async () => {
+  it.each(["copy", "rebuild"] as const)(
+    "%s sends nothing for a library the page left while its revision was being read",
+    async (name) => {
+      const source = new FakeLibrarySource();
+      let release: (revision: string) => void = () => undefined;
+      source.current = () => new Promise<string>((resolve) => (release = resolve));
+      const { page } = await mount(source, new LibraryRegistry());
+      action(page, name).click();
+      await settle();
+      page.libraryId = "lib-2";
+      await settle();
+      release("1");
+      await settle();
+      expect(source.calls.filter((call) => call.startsWith(`${name}:`))).toEqual([]);
+    },
+  );
+
+  it("copy and rebuild of a library this page did not open expect its current revision from its facts", async () => {
     const registry = new LibraryRegistry();
-    const { page, source } = await mount(new FakeLibrarySource(), registry);
+    const source = new FakeLibrarySource();
+    source.current = "3";
+    const { page } = await mount(source, registry);
     action(page, "rebuild").click();
     await settle();
     action(page, "copy").click();
     await settle();
     expect(source.calls.slice(1)).toEqual([
+      "revision:lib-1",
       "rebuild:lib-1",
       "candidates:lib-1",
       "choose:copy_destination",
+      "revision:lib-1",
       "copy:lib-1:loc-1",
     ]);
-    expect(source.revisions).toEqual(["1", "1"]);
+    expect(source.revisions).toEqual(["3", "3"]);
   });
 
   it("shows an error state with Retry when the candidates cannot be read", async () => {

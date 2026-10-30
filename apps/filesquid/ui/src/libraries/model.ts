@@ -46,9 +46,10 @@ export const REPAIR_STATEMENT_ID = "version_inventory_repair.v2";
  */
 export const NEW_LIBRARY_REVISION = "0";
 /**
- * The revision a library is at once this host binds it (API-S-019): what a copy or rebuild
- * of a library this page did not create or open expects, until a later command on this host
- * advances it (the facts of UI-1.3 will read the current one).
+ * The revision a library is at once this host binds it (API-S-019). A copy or rebuild of a
+ * library this page did not create or open expects the current revision read from its facts
+ * (`LibrarySource.revision`); this constant is only the fallback when the facts answer `null`
+ * for a library that is not open now, whose command the API then refuses as `library_not_open`.
  */
 export const INITIAL_LIBRARY_REVISION = "1";
 /** Most objects one repair request may name (API-S-023). */
@@ -96,6 +97,11 @@ export interface LibrarySource {
    * library's `revision` as last read; answers the pending job, never a report.
    */
   rebuild(libraryId: string, expectedRevision: string): Promise<RebuildJobAnswer>;
+  /**
+   * The current revision of a library this host opened, read from its facts (API-S-038), for
+   * a page that did not create or open it; the initial revision when it is not open now.
+   */
+  revision(libraryId: string): Promise<string>;
   /** List the objects whose head lacks its version inventory or its sidecar. */
   repairCandidates(libraryId: string): Promise<RepairCandidates>;
   /** Run the consented version-inventory repair. */
