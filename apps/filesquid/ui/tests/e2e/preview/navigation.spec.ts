@@ -19,6 +19,7 @@ import {
   trackErrors,
 } from "../support/strict-dom";
 import { FAMILY, serveNavigation, type NavigationApi } from "../support/navigation-api";
+import { serveDrive } from "../support/drive-api";
 import type { FixtureNode } from "../../../src/navigation/source";
 
 const labels = activeLabels();
@@ -45,6 +46,8 @@ async function serveShell(page: Page): Promise<{ send: (event: object) => void }
     }),
   );
   await page.routeWebSocket(/\/api\/v1\/events$/, (ws) => void sockets.push(ws));
+  // The file view of a library or collection reads its rows through the view operation.
+  await serveDrive(page, [], undefined, ["l1", "l2", "c1", "c2", "c3", "v1"]);
   return { send: (event) => sockets.forEach((ws) => ws.send(JSON.stringify(event))) };
 }
 

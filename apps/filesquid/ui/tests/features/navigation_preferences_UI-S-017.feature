@@ -61,3 +61,19 @@ Feature: Navigation preferences
     When the user presses the keyboard shortcut to move the section down
     Then the Collections section should follow the Virtual collections section
     And the new order should be saved
+
+  # UI-F2.8: per-user preferences replace the device key
+  Scenario: The device value moves to the API once
+    Given the device holds "filesquid.navigation" with one pinned collection
+    And the API serves per-user preferences with no navigation choices
+    When the UI starts
+    Then the choices should be copied to the API once
+    And the device key should be removed
+    And later changes should be saved through the API, not on the device
+
+  Scenario: The API's own choices win over a device value
+    Given the API already holds navigation choices
+    And the device holds "filesquid.navigation"
+    When the UI starts
+    Then the API's choices should apply
+    And the device key should be removed
