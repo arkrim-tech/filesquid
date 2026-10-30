@@ -106,13 +106,18 @@ async fn a_600_mib_file_is_imported_within_bounded_memory() {
     let before = peak_resident();
     let imported = import_file(&files, &request).await;
     let after = peak_resident();
-    let view = imported.expect("imported, with no too_large_for_this_build refusal");
-    let file_id = FileId::new(&view.file_id).expect("id");
-    let original = read_file_original(&backend, &OwnerReadable, &file_id)
-        .await
-        .expect("read")
-        .expect("original");
+    let original = match &imported {
+        Ok(view) => match FileId::new(&view.file_id) {
+            Ok(file_id) => read_file_original(&backend, &OwnerReadable, &file_id)
+                .await
+                .ok(),
+            Err(_) => None,
+        },
+        Err(_) => None,
+    };
     std::fs::remove_dir_all(&dir).expect("scratch removed");
+    imported.expect("imported, with no too_large_for_this_build refusal");
+    let original = original.flatten().expect("the original and its record");
     let entry = &original.record.imports()[0];
     assert_eq!(entry.acquisition.size, FILE_BYTES);
     assert_eq!(entry.source.verified_size, FILE_BYTES);

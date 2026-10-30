@@ -439,6 +439,9 @@ enum FileOutcome {
     /// A pause or cancel was asked while the file was being retried: the file is not done,
     /// and the job must halt if the request still stands.
     Halt,
+    /// The file's object is committed but the index kept refusing its registration: the job
+    /// must suspend and keep the import's intent, so the next run registers it.
+    Unregistered,
 }
 
 /// How the manifest's run ended.
@@ -447,6 +450,9 @@ enum Ended {
     Done(Box<RunningJob>),
     /// The run gave its lease back; the job is now in this state.
     Halted(JobState),
+    /// The run gave its lease back with a committed file still unregistered; the job is now
+    /// in this state, and the import's intent is kept even if it was cancelled.
+    Unregistered(JobState),
 }
 
 /// Run the import job `job_id` for `plan`: start it (resuming at its checkpoint), keep or
@@ -492,6 +498,7 @@ pub async fn run_import_job(
             }
             run.state = state;
         }
+        Ended::Unregistered(state) => run.state = state,
     }
     Ok(run)
 }
@@ -530,6 +537,10 @@ async fn run_manifest(
             FileOutcome::Suspend => {
                 running.checkpoint(&import_checkpoint(index), index as u64, total)?;
                 return Ok(Ended::Halted(running.suspend()?));
+            }
+            FileOutcome::Unregistered => {
+                running.checkpoint(&import_checkpoint(index), index as u64, total)?;
+                return Ok(Ended::Unregistered(running.suspend()?));
             }
         };
         running.checkpoint(&import_checkpoint(next), next as u64, total)?;
@@ -848,7 +859,7 @@ async fn import_with_attempts(
         if let Err(err) = running.renew() {
             return FileOutcome::Lost(err);
         }
-        if running.requested().is_some() {
+        if !committed && attempt < MAX_ATTEMPTS && running.requested().is_some() {
             return FileOutcome::Halt;
         }
     }
@@ -859,9 +870,10 @@ async fn import_with_attempts(
 }
 
 /// Suspend the job whose file object is committed but whose registration the index kept
-/// refusing to take: the job and the import's intent stay, so the next run answers the same
-/// object and registers it, rather than leave a committed object outside every collection.
-/// Logs the code (stdout).
+/// refusing to take: the job and the import's intent stay (even under a cancel, which ends
+/// the job but keeps the intent pending for the index's reconciliation), so the committed
+/// object is never left outside every collection with its intent cleared. Logs the code
+/// (stdout).
 fn unregistered(running: &RunningJob) -> FileOutcome {
     tracing::warn!(
         operation = IMPORT_FILE_OPERATION,
@@ -869,7 +881,7 @@ fn unregistered(running: &RunningJob) -> FileOutcome {
         error_code = "unavailable",
         "an imported file is committed but not yet registered; the job is suspended"
     );
-    FileOutcome::Suspend
+    FileOutcome::Unregistered
 }
 
 /// Journal an imported file and answer it.

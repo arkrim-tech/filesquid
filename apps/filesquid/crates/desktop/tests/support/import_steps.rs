@@ -326,7 +326,7 @@ async fn job_reaches(world: &mut DesktopWorld, state: String, done: u64, total: 
         if reached(&view) {
             break;
         }
-        std::thread::sleep(Duration::from_millis(50));
+        tokio::time::sleep(Duration::from_millis(50)).await;
     }
     assert!(reached(&view), "{state}: {view}");
     assert_eq!(view["done"], done, "{view}");

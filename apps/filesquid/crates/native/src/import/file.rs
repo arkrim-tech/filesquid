@@ -89,11 +89,12 @@ impl ImportFailure {
 }
 
 /// The codes the API puts at the start of a refusal's message for a source that was not
-/// what it reported: its size, or its bytes between the stage's two reads. Both are retried.
-const SOURCE_CODES: [&str; 2] = ["size_mismatch", "source_changed"];
+/// what it reported (its size, or its bytes between the stage's two reads) or that could not
+/// be read while it was staged. Each is retried under the per-file attempt rule.
+const SOURCE_CODES: [&str; 3] = ["size_mismatch", "source_changed", "source_unreadable"];
 
-/// The failure of a commit the API refused: `size_mismatch` and `source_changed` by the code
-/// that starts its message, anything else by its API error code. Pure.
+/// The failure of a commit the API refused: `size_mismatch`, `source_changed` and
+/// `source_unreadable` by the code that starts its message, anything else by its API error code. Pure.
 pub fn commit_failure(err: FileError) -> ImportFailure {
     let source = SOURCE_CODES
         .into_iter()

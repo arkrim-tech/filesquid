@@ -168,7 +168,7 @@ async fn an_import_stores_the_original_under_its_uuid_with_its_record_in_one_ver
     assert!(markdown.contains("Holiday photo.JPG"), "{markdown}");
 }
 
-/// The import of `gathered` facts about a source as job `job-1`.
+/// The import of `gathered` facts about a source, outside any job.
 fn source_import(gathered: filesquid_native::import::facts::GatheredSource) -> SourceImport {
     SourceImport {
         library_id: LIBRARY.into(),
@@ -234,7 +234,11 @@ async fn a_source_that_changes_between_its_two_reads_is_refused_as_source_change
 
 #[test]
 fn a_size_mismatch_and_a_changed_source_are_retried_within_the_job() {
-    for message in ["size_mismatch: x", "source_changed: x"] {
+    for message in [
+        "size_mismatch: x",
+        "source_changed: x",
+        "source_unreadable: x",
+    ] {
         let failure = commit_failure(FileError::invalid(message));
         assert_eq!(failure.error_code(), &message[..message.len() - 3]);
         assert!(failure.retry_now(), "{message}");
@@ -249,9 +253,31 @@ fn the_source_entity_tag_changes_when_the_file_is_rewritten() {
     let key = filesquid_ocfl::storage::StorageKey::new(SOURCE_KEY).expect("key");
     let before = ready(source.head(&key)).expect("head");
     assert_eq!(before.size, 3);
-    std::fs::write(&path, b"three").expect("rewrite");
-    let after = ready(source.head(&key)).expect("head");
-    assert_ne!(before.etag, after.etag);
+    std::fs::write(&path, b"two").expect("rewrite, same length");
+    let later = UNIX_EPOCH + Duration::new(1_792_490_401, 5);
+    let file = std::fs::File::options()
+        .write(true)
+        .open(&path)
+        .expect("open");
+    file.set_modified(later).expect("time");
+    let rewritten = ready(source.head(&key)).expect("head");
+    assert_eq!(rewritten.size, 3);
+    assert_ne!(before.etag, rewritten.etag, "a later modification time");
+    let replaced = dir.0.join("source").join("replacement.txt");
+    std::fs::write(&replaced, b"two").expect("replacement");
+    let file = std::fs::File::options()
+        .write(true)
+        .open(&replaced)
+        .expect("open");
+    file.set_modified(later).expect("time");
+    std::fs::rename(&replaced, &path).expect("replace");
+    let swapped = ready(source.head(&key)).expect("head");
+    if cfg!(unix) {
+        assert_ne!(
+            rewritten.etag, swapped.etag,
+            "another file, same size and time"
+        );
+    }
     let other = filesquid_ocfl::storage::StorageKey::new("other").expect("key");
     assert!(ready(source.head(&other)).is_err(), "one key only");
     assert!(ready(source.put(&key, b"x")).is_err(), "a read-only source");

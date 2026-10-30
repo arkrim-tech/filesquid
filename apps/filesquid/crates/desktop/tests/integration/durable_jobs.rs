@@ -452,5 +452,5 @@ fn import_jobs_are_transfers_so_at_most_four_run_at_once() {
         .expect("suspended");
     host.stop();
     drop(jobs);
-    let _ = std::fs::remove_dir_all(&dir);
+    folder_library::remove_all(&dir);
 }

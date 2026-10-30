@@ -1,6 +1,6 @@
 # Task DE-1.9 Walkthrough: Desktop wiring of the job routes and import job controls
 
-Branch `feat/de-1.9-desktop-job-wiring`. Module row [DE-1.9](../plan.md); with it every module row of global [Task FS-1.4](../../../../../../resources/implementation-plan.md#task-fs-1.4) is ticked (API-F1.6, API-F1.7, DE-1.9), so FS-1.4's box is ticked too. No contract change (no `openapi.json` or `API_VERSION` bump).
+Branch `feat/de-1.9-desktop-job-wiring`. Module row [DE-1.9](../plan.md) of global [Task FS-1.4](../../../../../../resources/implementation-plan.md#task-fs-1.4). With it every module row of FS-1.4 is ticked (API-F1.6, API-F1.7, DE-1.9), but FS-1.4's own box stays open: the API-F1.6 status records that its Monitor-link hiding and self-scoped journal route have no module row yet. No contract change (no `openapi.json` or `API_VERSION` bump).
 
 ## What was already on main
 
@@ -16,13 +16,13 @@ Branch `feat/de-1.9-desktop-job-wiring`. Module row [DE-1.9](../plan.md); with i
 - **`filesquid-native`**
   - [`workers/history_backfill.rs`](../../../native/src/workers/history_backfill.rs) `open_jobs`: `import` is classed as a transfer (`JobClass::Transfer`), so at most 4 run at once (API-S-037, CORE-S-006).
   - [`import/worker.rs`](../../../native/src/import/worker.rs): `ImportWorker` implements `JobRunner`; a resumed import is queued like a new one (`queue_full`/`unavailable` answer `JobError::Unavailable`, the job stays pending). A queued or recovered job that is paused is never started (no `job.refused` or `import.job` entry); one found finished (cancelled while pending) has its plan finished and its intent cleared.
-  - [`import/job.rs`](../../../native/src/import/job.rs): `run_manifest` reads `RunningJob::requested()` after every per-file checkpoint and halts only through `RunningJob::halt_if_requested()`; a control read at a lease renewal between attempts of one file stops the attempts with the checkpoint at that file. A cancelled run finishes its plan and clears its intent. The loop is bounded by the manifest plus `MAX_CONTINUED_HALTS` (1,000). Each file is imported on a scoped thread with its own runtime while the worker thread renews the job's lease every third of its length (`renewal_interval`, 5 s for the 15 s lease), since the storage backends block.
+  - [`import/job.rs`](../../../native/src/import/job.rs): `run_manifest` reads `RunningJob::requested()` after every per-file checkpoint and halts only through `RunningJob::halt_if_requested()`; a control read at a lease renewal between attempts of one file stops the attempts with the checkpoint at that file. A cancelled run finishes its plan and clears its intent, except when a committed file is still unregistered: the job then suspends (or, under a cancel, ends) with the intent kept. The final attempt of a file is never halted, so a file that exhausts its attempts is quarantined. The loop is bounded by the manifest plus `MAX_CONTINUED_HALTS` (1,000). Each file is imported on a scoped thread with its own runtime while the worker thread renews the job's lease every third of its length (`renewal_interval`, 5 s for the 15 s lease), since the storage backends block.
   - [`import/source.rs`](../../../native/src/import/source.rs) (new): `SourceFile`, the read-only one-file storage view (`SOURCE_KEY`), entity tag from size, modification time and device/inode, never from the bytes; errors name the key, never the path.
-  - [`import/file.rs`](../../../native/src/import/file.rs): `MAX_IN_MEMORY_BYTES`, `ImportFailure::TooLarge` and `too_large_for_this_build` removed; `commit_failure` (now public) maps `size_mismatch` and `source_changed` to retryable per-file failures.
-- **`filesquid-api`** (smallest adapter change, no route or contract change): `FileService::import_original` takes a `StorageBackend` source and key instead of bytes and stages the original with `ChangeModel::stage_file` after `reset`, checking the reported size against the source's size before and refusing a source whose size or entity tag changed by the end (`source_changed`); `ChangeError::SourceChanged` answers `conflict` with `source_changed` in the message. New `canonical::commit_staged_original` commits the staged original with its record; `check_new_content` checks a record against a digest and size (`check_new_original` delegates to it).
+  - [`import/file.rs`](../../../native/src/import/file.rs): `MAX_IN_MEMORY_BYTES`, `ImportFailure::TooLarge` and `too_large_for_this_build` removed; `commit_failure` (now public) maps `size_mismatch`, `source_changed` and `source_unreadable` to retryable per-file failures.
+- **`filesquid-api`** (smallest adapter change, no route or contract change): `FileService::import_original` takes a `StorageBackend` source and key instead of bytes and stages the original with `ChangeModel::stage_file` after `reset`, in the new object's own staging area outside the library's write lock (taken for the commit only), checking the reported size against the source's size before and refusing a source whose size or entity tag changed by the end (`source_changed`); a source that cannot be read is `source_unreadable`; what a failed attempt staged is cleared. `ChangeError::SourceChanged` answers `conflict` with `source_changed` in the message. New `canonical::commit_staged_original` checks that exactly the original is staged with the cited digest, then commits it with its record; `check_new_content` checks a record against a digest and size (`check_new_original` delegates to it).
 - **`filesquid-desktop`**: `install_import_runner` installs the worker as the `import` runner in `start_imports`, before the router serves.
 - **Workspace `Cargo.toml`**: `[profile.dev.package.sha2] opt-level = 3`. Unoptimised SHA-256 made one 600 MiB import take over 200 s in a test build (about 40 s with it). It affects dev and test builds only.
-- **Docs**: DE-S-019 (every file staged through `stage_file`; the 512 MiB refusal no longer applies; lease renewal while one file is imported), root README import section and test commands, plan and checklist ticks, progress block.
+- **Docs**: DE-S-019 (every file staged through `stage_file` into the on-disk staging area; the 512 MiB refusal no longer applies; lease renewal while one file is imported), root README import section and test commands, DE-1.9 plan and checklist ticks, progress block.
 
 ## DE-S-020: Desktop job routes
 
@@ -46,7 +46,7 @@ Branch `feat/de-1.9-desktop-job-wiring`. Module row [DE-1.9](../plan.md); with i
 | Source read at most twice; changed source fails `source_changed`, retried | `a_source_that_changes_between_its_two_reads_is_refused_as_source_changed` (2 passes, nothing published), `a_size_mismatch_and_a_changed_source_are_retried_within_the_job` |
 | Size checked | `a_size_that_is_not_the_size_read_is_refused_and_nothing_is_published` |
 | Entity tag changes with the file, view is read-only and one-key | `the_source_entity_tag_changes_when_the_file_is_rewritten` |
-| Lease kept while one file takes longer than a lease | `a_file_that_streams_longer_than_the_lease_keeps_the_job_s_lease_alive` (1.5 s lease, 96 MiB file) |
+| Lease kept while one file takes longer than a lease | `a_file_that_streams_longer_than_the_lease_keeps_the_job_s_lease_alive` (300 ms lease, 96 MiB file, one run) |
 
 ## OCFL-S-026, API-S-033, API-S-037, NFR-003
 
@@ -245,6 +245,8 @@ Feature: Desktop file and folder import
 ```
 
 ## Known limits
+
+- The heartbeat of one file is bounded at 24 hours (AGENTS.md §22). Past it the lease lapses and the run is fenced at its next checkpoint; the next run answers the committed file instead of importing it twice.
 
 - The per-file items and retry routes of API-S-037 (`/items`, `/retry`, `/retry-failed`) are API-F2.16, not this row.
 - A control read between attempts of one file stops those attempts with the checkpoint at that file, so the next run retries it from its first attempt.

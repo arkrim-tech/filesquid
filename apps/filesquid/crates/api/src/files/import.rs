@@ -19,7 +19,7 @@
 
 use super::error::FileError;
 use super::media;
-use super::service::{change_model, FileService};
+use super::service::{change_model, FileService, Library};
 use super::upload::{canonical_error, parse_file_id};
 use super::view::UploadView;
 use crate::canonical::original::original_path_for;
@@ -33,8 +33,8 @@ use filesquid_metadata::import::attributes::Attributes;
 use filesquid_metadata::import::{
     Acquisition, ByteStorage, Host, ImportEntry, ImportMethod, SourceFile, SourceVolume,
 };
-use filesquid_ocfl::change::{ChangeError, ChangeModel};
-use filesquid_ocfl::storage::{StorageBackend, StorageKey};
+use filesquid_ocfl::change::{ChangeError, ChangeModel, VersionMeta};
+use filesquid_ocfl::storage::{StorageBackend, StorageError, StorageKey};
 use filesquid_ocfl::write::VersionReservations;
 
 /// What a host gathered about one source file before reading it.
@@ -81,17 +81,23 @@ where
     /// Commit one import of the file at `key` of `source`, the host's read-only view of the
     /// source `import` describes, by `actor`, as the new file object of `import.file_id`; when
     /// that object already holds an import of the same job, answer it without writing. The
-    /// original is staged through [`ChangeModel::stage_file`] (OCFL-S-026): read in bounded
-    /// chunks at most twice, once to hash it and once to copy it while hashing again, so no
-    /// file is held in memory whatever its size (Task DE-1.9).
+    /// original is staged through [`ChangeModel::stage_file`] (OCFL-S-026): read in chunks of
+    /// at most 8 MiB, at most twice, once to hash it and once to copy it while hashing again.
+    /// The stage's own buffers are bounded whatever the file's size; the staged blob lives in
+    /// the library's staging backend, which a host keeps on disk (`FsBackend`) or in a remote
+    /// store for large files, since a `MemoryBackend` staging area holds it in memory (Task
+    /// DE-1.9). The stage runs in the new object's own staging area outside the library's
+    /// write lock, which is taken for the commit only; whatever an attempt staged is cleared
+    /// when it fails.
     ///
     /// # Errors
     /// `invalid_request` with `size_mismatch` in its message when the source is not the size
     /// it reported, for a malformed file ID or key, or for a record the metadata module
     /// refuses; `conflict` with `source_changed` in its message when the source changed
-    /// between its reads; `not_found` for an unknown library; `conflict` when the object
-    /// already exists and holds no import of this job; a storage failure otherwise. Nothing
-    /// is published on any error, and no message names the source.
+    /// between its reads, or `source_unreadable` when it could not be read; `not_found` for an
+    /// unknown library; `conflict` when the object already exists and holds no import of this
+    /// job; a storage failure otherwise. Nothing is published on any error, and no message
+    /// names the source.
     pub async fn import_original<D: StorageBackend>(
         &self,
         import: SourceImport,
@@ -101,14 +107,9 @@ where
     ) -> Result<UploadView, FileError> {
         let meta = self.meta(actor, None)?;
         let library = self.library(&import.library_id)?;
-        let _writing = library.writes.lock().await;
-        let backend = library.files.backend.as_ref();
         let file_id = parse_file_id(&import.file_id)?;
-        let existing = read_file_original(backend, &OwnerReadable, &file_id)
-            .await
-            .map_err(canonical_error)?;
-        if let Some(original) = existing {
-            return replayed(&import, &original.record);
+        if let Some(answer) = imported_before(&library, &import, &file_id).await? {
+            return Ok(answer);
         }
         let root = file_object_root(&file_id).map_err(canonical_error)?;
         let object_id = file_object_id(&file_id);
@@ -116,23 +117,95 @@ where
             .map_err(canonical_error)?;
         let staging = library.staging(&object_id)?;
         let model = change_model(&library, &root, &object_id, staging);
-        let (sha256, size) = stage_source(&model, &path, &import.source, (source, key)).await?;
-        let citation = Citation {
-            object_id,
-            version: "v1".to_string(),
-            path,
-            sha256,
-            size,
-        };
-        let library_id = import.library_id.clone();
-        let entry = import_entry(import, &citation, &self.created());
-        let record = import_record(entry)?;
-        let content = (citation.sha256.as_str(), citation.size);
-        let receipt = commit_staged_original(&model, &file_id, &record, content, meta)
-            .await
-            .map_err(canonical_error)?;
-        library.remember(&citation.object_id, &root);
-        Ok(view_of(library_id, &file_id, receipt))
+        let created = self.created();
+        let imported = async {
+            let staged = stage_source(&model, &path, &import.source, (source, key)).await?;
+            let _writing = library.writes.lock().await;
+            if let Some(answer) = imported_before(&library, &import, &file_id).await? {
+                clear_staged(&model).await;
+                return Ok(answer);
+            }
+            let citation = Citation {
+                object_id: object_id.clone(),
+                version: "v1".to_string(),
+                path: path.clone(),
+                sha256: staged.0,
+                size: staged.1,
+            };
+            let committed = commit_import(&model, import, &file_id, &citation, (&created, meta));
+            let answer = committed.await?;
+            library.remember(&object_id, &root);
+            Ok(answer)
+        }
+        .await;
+        if imported.is_err() {
+            clear_staged(&model).await;
+        }
+        imported
+    }
+}
+
+/// The answer of an import whose file object already exists in `library`: see [`replayed`].
+/// `None` when it does not exist yet. Storage I/O.
+///
+/// # Errors
+/// As [`replayed`]; a read failure.
+async fn imported_before<B, R, S>(
+    library: &Library<B, R, S>,
+    import: &SourceImport,
+    file_id: &FileId,
+) -> Result<Option<UploadView>, FileError>
+where
+    B: StorageBackend,
+    R: VersionReservations,
+    S: StorageBackend,
+{
+    let backend = library.files.backend.as_ref();
+    let existing = read_file_original(backend, &OwnerReadable, file_id)
+        .await
+        .map_err(canonical_error)?;
+    existing
+        .map(|original| replayed(import, &original.record))
+        .transpose()
+}
+
+/// Build the record of `import` citing the staged original `citation`, recorded at `created`,
+/// and commit it with the original as the new object of `file_id`, with `meta`. Storage I/O.
+///
+/// # Errors
+/// A record the metadata module refuses; as [`commit_staged_original`].
+async fn commit_import<B, R, S>(
+    model: &ChangeModel<'_, B, R, S>,
+    import: SourceImport,
+    file_id: &FileId,
+    citation: &Citation,
+    (created, meta): (&str, VersionMeta),
+) -> Result<UploadView, FileError>
+where
+    B: StorageBackend,
+    R: VersionReservations,
+    S: StorageBackend,
+{
+    let library_id = import.library_id.clone();
+    let record = import_record(import_entry(import, citation, created))?;
+    let content = (citation.sha256.as_str(), citation.size);
+    let receipt = commit_staged_original(model, file_id, &record, content, meta)
+        .await
+        .map_err(canonical_error)?;
+    Ok(view_of(library_id, file_id, receipt))
+}
+
+/// Clear what a failed import left in its object's staging area, so a quarantined import
+/// keeps no copy of its source; a failure to clear is logged (the next attempt clears it
+/// first). Storage I/O.
+async fn clear_staged<B, R, S>(model: &ChangeModel<'_, B, R, S>)
+where
+    B: StorageBackend,
+    R: VersionReservations,
+    S: StorageBackend,
+{
+    if let Err(err) = model.reset().await {
+        tracing::warn!(error = %err, "a failed import's staging area could not be cleared");
     }
 }
 
@@ -159,13 +232,13 @@ where
     let checked =
         StorageKey::new(key).map_err(|_| FileError::invalid("The source key is not valid."))?;
     model.reset().await?;
-    let before = source.head(&checked).await?;
+    let before = source.head(&checked).await.map_err(source_unreadable)?;
     check_size(reported, before.size)?;
     let digest = model
         .stage_file(path, source, key)
         .await
         .map_err(stage_error)?;
-    let after = source.head(&checked).await?;
+    let after = source.head(&checked).await.map_err(source_unreadable)?;
     match after == before {
         true => Ok((digest, before.size)),
         false => Err(source_changed()),
@@ -175,6 +248,14 @@ where
 /// The refusal of a source that changed while it was staged. Pure.
 fn source_changed() -> FileError {
     FileError::conflict("source_changed: the source changed while it was read; import it again.")
+}
+
+/// The refusal of a source that could not be read (gone, or unreadable), whose retry may
+/// succeed; the storage error is logged, never answered, since it names the key only. Pure
+/// but for the log.
+fn source_unreadable(err: StorageError) -> FileError {
+    tracing::debug!(error = %err, "an import source could not be read");
+    FileError::conflict("source_unreadable: the source could not be read; import it again.")
 }
 
 /// The error of a failed stage: a source that changed between its reads is

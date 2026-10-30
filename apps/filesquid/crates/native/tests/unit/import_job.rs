@@ -510,20 +510,18 @@ async fn a_file_that_streams_longer_than_the_lease_keeps_the_job_s_lease_alive()
         jobs: &short,
         ..rig.context(&journal)
     };
-    let started = std::time::Instant::now();
     let run = run_import_job(&context, &job.id, &plan)
         .await
         .expect("the lease held through the file");
     assert_eq!(run.state, JobState::Completed);
     assert_eq!(run.imported.len(), 1);
-    assert!(
-        started.elapsed() > Duration::from_millis(LEASE_TTL_MS as u64),
-        "the file streamed for longer than one lease"
-    );
+    assert_eq!(rig.jobs.job(&job.id).expect("job").attempts, 1, "one run");
 }
 
-/// The lease of [`a_file_that_streams_longer_than_the_lease_keeps_the_job_s_lease_alive`].
-const LEASE_TTL_MS: i64 = 1_500;
+/// The lease of [`a_file_that_streams_longer_than_the_lease_keeps_the_job_s_lease_alive`]:
+/// far shorter than staging and committing its 96 MiB file takes (two reads, two hashes and
+/// two writes of the file), so the run's lease must be renewed while the file is imported.
+const LEASE_TTL_MS: i64 = 300;
 
 #[tokio::test]
 async fn a_quit_suspends_between_files_and_the_resume_imports_only_the_rest() {

@@ -13,7 +13,7 @@ use super::{CanonicalError, ProfileTransform};
 use filesquid_core::{Collection, FileId, Folder};
 use filesquid_metadata::file_record::FileRecord;
 use filesquid_metadata::store::ocfl::MAX_RECORD_BYTES;
-use filesquid_ocfl::change::{ChangeError, ChangeModel, VersionMeta};
+use filesquid_ocfl::change::{ChangeError, ChangeModel, PathChange, VersionMeta};
 use filesquid_ocfl::digest::DigestAlgorithm;
 use filesquid_ocfl::read::{LogicalFile, Object, ReadError};
 use filesquid_ocfl::storage::{
@@ -392,6 +392,7 @@ where
 {
     let path = original_path_of(file_id, record)?;
     check_new_content(file_id, record, None, &path, (digest, size))?;
+    check_staged(model, &path, digest).await?;
     let companion = companion_path(file_id)?;
     model
         .stage_bytes(&companion, &encode_record(record))
@@ -400,6 +401,38 @@ where
     match model.commit(meta).instrument(span).await {
         Err(ChangeError::NothingToCommit) => Err(CanonicalError::Conflict),
         result => published(result),
+    }
+}
+
+/// Refuse to commit unless `model` stages exactly one new file, `path`, with the content
+/// `digest`, so a record can never cite content its version does not hold. Storage I/O.
+///
+/// # Errors
+/// [`CanonicalError::Encode`] when the staged state is anything else; a read failure.
+async fn check_staged<B, R, S>(
+    model: &ChangeModel<'_, B, R, S>,
+    path: &str,
+    digest: &str,
+) -> Result<(), CanonicalError>
+where
+    B: StorageBackend,
+    R: VersionReservations,
+    S: StorageBackend,
+{
+    let status = model.status().await?;
+    let staged = match status.changes.as_slice() {
+        [PathChange::Added {
+            path: staged,
+            digest: content,
+            ..
+        }] => staged == path && content == digest,
+        _ => false,
+    };
+    match staged {
+        true => Ok(()),
+        false => Err(CanonicalError::Encode(
+            "the original is not staged with the content the record cites".into(),
+        )),
     }
 }
 
