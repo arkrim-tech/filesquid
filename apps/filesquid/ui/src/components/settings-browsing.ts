@@ -62,21 +62,28 @@ function sortOptions(labels: LabelTable): (readonly [string, string])[] {
   );
 }
 
+/** The five controls of the Browsing section, before they are wired to the preferences. */
+interface BrowsingControls {
+  layout: HTMLSelectElement;
+  sort: HTMLSelectElement;
+  folders: HTMLSelectElement;
+  start: HTMLSelectElement;
+  hover: HTMLInputElement;
+}
+
 /**
- * Build the Browsing section's body: the five rows, the help line and the status note.
+ * Create the Browsing section's controls with their option words from the label table.
  *
  * @param labels The active label table.
- * @param service The shared preferences; each control saves through it.
- * @returns The elements to put in the section.
+ * @returns The five unwired controls.
  */
-export function browsingRows(labels: LabelTable, service: PreferencesService): HTMLElement[] {
+function browsingControls(labels: LabelTable): BrowsingControls {
   const layout = select(
     "pref-layout",
     LAYOUTS.map(
       (value) => [value, value === "list" ? labels.fileViewList : labels.fileViewGrid] as const,
     ),
   );
-  const sort = select("pref-sort", sortOptions(labels));
   const folders = select(
     "pref-folders",
     FOLDER_PLACEMENTS.map(
@@ -97,6 +104,17 @@ export function browsingRows(labels: LabelTable, service: PreferencesService): H
   const hover = document.createElement("input");
   hover.type = "checkbox";
   hover.id = "pref-hover";
+  return { layout, sort: select("pref-sort", sortOptions(labels)), folders, start, hover };
+}
+
+/**
+ * Save a change of any control through the shared preferences.
+ *
+ * @param controls The controls {@link browsingControls} created.
+ * @param service The shared preferences; each change is one `update`.
+ */
+function wireSaves(controls: BrowsingControls, service: PreferencesService): void {
+  const { layout, sort, folders, start, hover } = controls;
   layout.addEventListener("change", () =>
     service.update({ layout: layout.value as "list" | "grid" }),
   );
@@ -111,14 +129,26 @@ export function browsingRows(labels: LabelTable, service: PreferencesService): H
     service.update({ start_view: start.value as "home" | "personal_root" }),
   );
   hover.addEventListener("change", () => service.update({ hover_card: hover.checked }));
+}
+
+/**
+ * Build the Browsing section's body: the five rows, the help line and the status note.
+ *
+ * @param labels The active label table.
+ * @param service The shared preferences; each control saves through it.
+ * @returns The elements to put in the section.
+ */
+export function browsingRows(labels: LabelTable, service: PreferencesService): HTMLElement[] {
+  const controls = browsingControls(labels);
+  wireSaves(controls, service);
   const rows = document.createElement("div");
   rows.className = "pref-rows";
   rows.append(
-    row("pref-layout", labels.settingsDefaultLayout, layout),
-    row("pref-sort", labels.settingsSortBy, sort),
-    row("pref-folders", labels.settingsFolders, folders),
-    row("pref-start", labels.settingsStartView, start),
-    row("pref-hover", labels.settingsHoverCard, hover),
+    row("pref-layout", labels.settingsDefaultLayout, controls.layout),
+    row("pref-sort", labels.settingsSortBy, controls.sort),
+    row("pref-folders", labels.settingsFolders, controls.folders),
+    row("pref-start", labels.settingsStartView, controls.start),
+    row("pref-hover", labels.settingsHoverCard, controls.hover),
   );
   const help = document.createElement("p");
   help.className = "pref-note help";
