@@ -74,8 +74,10 @@ async function firstOfKind(
 }
 
 /**
- * The first library the host lists. At most one read per level, so a host with many libraries
- * costs two calls. Network I/O via the navigation source.
+ * The first library the host lists. It reads the root and then the repository, and follows each
+ * listing's cursor until the first node of the kind is found, at most {@link MAX_PAGES} reads per
+ * level: two calls when the first pages hold it, and a bounded number when they do not. Network
+ * I/O via the navigation source.
  *
  * @param navigation The navigation listing.
  * @returns The library, or undefined when the host lists none.

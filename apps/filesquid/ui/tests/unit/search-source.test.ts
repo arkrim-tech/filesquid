@@ -217,19 +217,19 @@ describe("MemorySearchSource", () => {
   });
 
   it("refuses a value-less owner: as invalid, dates that are not on the calendar, and over 32 terms", async () => {
-    await expect(names("owner:")).rejects.toMatchObject({ status: 400 });
-    await expect(names("owner:ben")).rejects.toMatchObject({ status: 503 });
+    await expect(names("owner:")).rejects.toMatchObject({ status: 400, code: "invalid_request" });
+    await expect(names("owner:ben")).rejects.toMatchObject({ status: 503, code: "unavailable" });
     for (const q of [
       "before:2026-13-01",
       "after:2026-02-30",
       "after:2026-00-10",
       "after:2025-02-29",
     ]) {
-      await expect(names(q)).rejects.toMatchObject({ status: 400 });
+      await expect(names(q)).rejects.toMatchObject({ status: 400, code: "invalid_request" });
     }
     await expect(names("after:2024-02-29")).resolves.toBeDefined();
     const many = Array.from({ length: 33 }, (_, i) => "w" + i).join(" ");
-    await expect(names(many)).rejects.toMatchObject({ status: 400 });
+    await expect(names(many)).rejects.toMatchObject({ status: 400, code: "invalid_request" });
   });
 
   it("applies in: to the collection a file is in, without case", async () => {

@@ -400,7 +400,10 @@ export class FsSearchBar extends HTMLElement {
     if (this.choice === "in") void this.loadLocations();
   }
 
-  /** Read the library's collections for the Location choices; one page, bounded. */
+  /**
+   * Read the library's collections for the Location choices. It follows the listing's cursor, at
+   * most {@link MAX_LOCATION_PAGES} pages of {@link MAX_LOCATIONS}, and logs a failure. Network I/O.
+   */
   private async loadLocations(): Promise<void> {
     const options = this.options as SearchBarOptions;
     try {
