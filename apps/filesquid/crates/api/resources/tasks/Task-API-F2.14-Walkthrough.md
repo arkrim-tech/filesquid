@@ -131,25 +131,26 @@ Feature: Home collections for uploads and copies
 test a_new_folder_at_a_file_path_is_numbered_beside_the_file ... ok
 test a_failed_upload_releases_its_reservation ... ok
 test a_new_folder_at_a_taken_path_is_numbered_beside_it_and_nothing_is_written ... ok
-test a_numbered_folder_over_255_bytes_is_name_too_long ... ok
-test a_collection_move_gives_a_file_another_folder_keeping_its_name_and_its_bytes ... ok
 test a_new_folder_names_its_collection_or_is_refused_with_the_rule_code ... ok
+test a_numbered_folder_over_255_bytes_is_name_too_long ... ok
 test a_copy_is_registered_in_its_destination_beside_its_source ... ok
+test a_collection_move_gives_a_file_another_folder_keeping_its_name_and_its_bytes ... ok
 test a_reserved_folder_is_invalid_path ... ok
-test a_retry_after_a_crash_between_the_object_and_its_registration_completes_once ... ok
 test a_rename_gives_a_registered_file_its_new_name_in_its_folder_numbered_when_taken ... ok
+test a_retry_after_a_crash_between_the_object_and_its_registration_completes_once ... ok
+test a_rename_whose_relocation_failed_is_completed_by_its_retry ... ok
 test a_taken_path_is_numbered_beside_it_and_a_deleted_file_keeps_its_place ... ok
 test an_unknown_or_foreign_collection_is_collection_not_found ... ok
 test an_upload_is_registered_at_its_folder_and_name_and_answered_with_it ... ok
 test an_upload_without_a_collection_is_destination_required_and_stages_nothing ... ok
 test new_content_of_a_file_answers_its_own_home ... ok
 test the_same_operation_id_with_other_bytes_after_a_crash_is_refused ... ok
-test after_9999_numbers_a_new_folder_is_path_suffix_exhausted ... ok
 test a_rename_that_cannot_be_placed_is_refused_before_the_name_changes ... ok
+test after_9999_numbers_a_new_folder_is_path_suffix_exhausted ... ok
 test after_9999_numbers_the_upload_is_path_suffix_exhausted_with_no_change ... ok
-test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 16.90s
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 15.33s
      Running tests/unit/contract.rs (<target>/debug/deps/unit_contract-9d2af10e8a3ee2c6)
-test result: ok. 28 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.12s
+test result: ok. 28 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.92s
      Running tests/features.rs (<target>/debug/deps/features-65175459859f17e0)
 Feature: Moves, renames and folders in the home collections
   Scenario: A move gives a file another folder and keeps its name
@@ -166,10 +167,10 @@ Feature: Moves, renames and folders in the home collections
   Scenario: A new folder inside a reserved folder is refused
 [Summary]
 12 scenarios (12 passed)
-59 steps (59 passed)
+62 steps (62 passed)
 ```
 
-`cargo test -p filesquid-native --features desktop --test unit_folder_libraries` (before Cubic round 1; the round renamed the relocation fixtures, whose dotted names (`api-f2.14-…`) made `with_extension` give every fixture the same library folder, so tests run together failed with `Unavailable("storage unavailable")`; after it the target passes 27 of 27, under a `TMPDIR` in `/dev/shm` too):
+`cargo test -p filesquid-native --features desktop --test unit_folder_libraries` (after Cubic round 1, which renamed the relocation fixtures, whose dotted names (`api-f2.14-…`) made `with_extension` give every fixture the same library folder, so tests run together failed with `Unavailable("storage unavailable")`; run under a `TMPDIR` in `/dev/shm`):
 
 ```text
      Running tests/unit/folder_libraries.rs (<target>/debug/deps/unit_folder_libraries-9c58a0c9fd172ba7)
@@ -177,28 +178,30 @@ test a_create_library_command_is_refused_and_creates_nothing ... ok
 test a_folder_that_cannot_be_a_library_leaves_nothing_in_the_catalog_directory ... ok
 test a_file_object_without_a_snapshot_entry_is_counted_and_left_unregistered ... ok
 test a_file_s_path_is_taken_below_it_and_no_file_sits_below_a_file ... ok
-test a_library_folder_copied_elsewhere_reopens_with_its_collections_folders_and_files ... ok
 test a_file_of_the_earlier_form_is_placed_when_it_is_registered ... ok
+test a_library_folder_copied_elsewhere_reopens_with_its_collections_folders_and_files ... ok
 test a_refused_registration_is_journaled_as_failed_with_its_code ... ok
 test a_registration_whose_numbers_are_all_taken_is_refused_and_changes_nothing ... ok
 test a_registered_file_names_its_path_and_object_in_the_snapshot_and_the_index ... ok
 test a_retired_in_app_root_is_neither_opened_nor_served ... ok
 test a_registered_file_is_relocated_in_one_version_and_its_own_path_never_takes_it ... ok
-test an_empty_folder_attached_with_an_index_of_another_folder_starts_afresh ... ok
-test an_index_write_for_a_library_that_is_not_attached_is_refused ... ok
+test a_relocation_into_a_removed_collection_is_collection_not_found_even_at_its_own_path ... ok
+test a_relocated_file_s_own_path_never_takes_its_target_at_it_below_it_or_above_it ... ok
 test a_version_2_catalog_is_migrated_to_the_current_version_and_rebuilt_from_its_folder ... ok
-test an_index_built_from_another_copy_of_the_folder_is_rebuilt ... ok
+test an_index_write_for_a_library_that_is_not_attached_is_refused ... ok
+test an_empty_folder_attached_with_an_index_of_another_folder_starts_afresh ... ok
 test a_taken_path_is_numbered_beside_it_and_a_deleted_file_s_path_counts ... ok
+test an_index_built_from_another_copy_of_the_folder_is_rebuilt ... ok
 test no_index_is_created_beyond_the_catalog_s_limit_of_files ... ok
 test files_deleted_with_their_collection_are_deleted_not_unfiled ... ok
 test no_library_root_or_original_is_ever_created_in_the_catalog_directory ... ok
 test deleting_a_collection_deletes_its_files_in_place_in_one_version ... ok
-test removing_a_collection_that_still_holds_files_is_refused_before_anything_is_published ... ok
 test renaming_a_library_retitles_its_entity_in_one_journaled_version_and_a_same_name_rename_publishes_nothing ... ok
-test the_catalog_is_the_home_collections_of_uploads_and_copies ... ok
+test removing_a_collection_that_still_holds_files_is_refused_before_anything_is_published ... ok
 test folders_and_scope_entries_come_from_the_index_of_ordinary_files ... ok
+test the_catalog_is_the_home_collections_of_uploads_and_copies ... ok
 test the_library_s_own_retention_survives_a_rebuild_and_sets_purge_after ... ok
-test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.73s
+test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.29s
 ```
 
 The head-commit `FULL=1 bash scripts/pre-commit.sh` summary line is recorded in the pull request.

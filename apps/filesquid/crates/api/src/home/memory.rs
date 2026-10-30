@@ -29,6 +29,8 @@ struct State {
     /// Whether the next registration fails as the store being unreachable (a crash between a
     /// file's object and its registration, as tests stage it).
     fail_next: bool,
+    /// Whether the next relocation fails as an unreachable store (only a relocation clears it).
+    fail_next_relocation: bool,
 }
 
 /// Home collections held in memory.
@@ -78,7 +80,7 @@ impl MemoryHomeCollections {
     /// Make the next relocation fail as an unreachable store, as a crash between a rename's
     /// name commit and its relocation would.
     pub fn fail_next_relocation(&self) {
-        self.lock().fail_next = true;
+        self.lock().fail_next_relocation = true;
     }
 
     /// The number of unfinished reservations.
@@ -222,7 +224,7 @@ impl HomeCollections for MemoryHomeCollections {
         journal: JournalEntry,
     ) -> Result<Placed, CatalogError> {
         let mut state = self.lock();
-        if std::mem::take(&mut state.fail_next) {
+        if std::mem::take(&mut state.fail_next_relocation) {
             return Err(CatalogError::Unavailable("staged crash".into()));
         }
         let placed = relocate_in(&mut state, library_id, request);
