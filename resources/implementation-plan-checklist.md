@@ -198,90 +198,94 @@ FileSquid MVP (early access) on the macOS desktop: phases F0 to F3, closed by ga
     - [ ] [UI-F3.1](../apps/filesquid/ui/resources/plan.md#phase-f3-mvp-performance-global-task-fs-34) Production-build browsing performance
 28. [ ] [Task FS-3.9](./implementation-plan.md#task-fs-3.9) FileSquid MVP gate (macOS desktop)
 
-## Release1
+## Backup
 
-FileSquid release 1: server host, accounts and sharing, Linux and Windows installers, signing, the published `ocfl` and `metadata` crates and the `@filesquid/ui` package (phase F3R), closed by gate Task FS-3.5 and followed by the ImageSquid extraction in Task FS-3.8 (0 of 14 done). C2PA signing, edits, scans and crate publishing moved to phase C.
-
-29. [ ] [Task FS-3.10](./implementation-plan.md#task-fs-3.10) Server host: HTTP binding, storage root, accounts and groups
-    - [ ] [SV-F1.1](../apps/filesquid/crates/server/resources/plan.md#phase-f3r-multi-user-host-global-tasks-fs-310-and-fs-27-not-in-the-macos-desktop-mvp) HTTP and event-channel transport
-    - [ ] [SV-F1.3](../apps/filesquid/crates/server/resources/plan.md#phase-f3r-multi-user-host-global-tasks-fs-310-and-fs-27-not-in-the-macos-desktop-mvp) Storage root configuration
-    - [ ] [API-F1.9](../apps/filesquid/crates/api/resources/plan.md#phase-f1-the-api-global-tasks-fs-11fs-14-after-the-mvp-api-f18-in-fs-15-api-f19-in-fs-310-and-api-f15-in-fs-c1) Server accounts, groups and collection permissions in the authorisation layer
-    - [ ] [SV-F1.2](../apps/filesquid/crates/server/resources/plan.md#phase-f3r-multi-user-host-global-tasks-fs-310-and-fs-27-not-in-the-macos-desktop-mvp) Accounts, groups, sessions and collection permissions
-    - [ ] [BE-0.6](../apps/filesquid/crates/server/resources/plan.md#phase-f4-hosted-service-isolation-and-operational-foundation-global-task-06-be-06-in-global-task-fs-310) Allure reporting and static SPA serving
-30. [ ] [Task FS-1.5](./implementation-plan.md#task-fs-1.5) Distribution manifest and module switches
-    - [ ] [API-F1.8](../apps/filesquid/crates/api/resources/plan.md#phase-f1-the-api-global-tasks-fs-11fs-14-after-the-mvp-api-f18-in-fs-15-api-f19-in-fs-310-and-api-f15-in-fs-c1) Distribution manifest and module switches
-31. [ ] [Task FS-3.11](./implementation-plan.md#task-fs-3.11) Linux and Windows desktop installers
-    - [ ] [DE-F3.3](../apps/filesquid/crates/desktop/resources/plan.md#phase-f3-installers-and-performance-global-tasks-fs-31-fs-34-and-after-the-mvp-fs-311) Linux and Windows installers, ImageSquid overlay
-    - [ ] [UI-F3.3](../apps/filesquid/ui/resources/plan.md#phase-f3r-linux-media-playback-global-task-fs-311-after-the-mvp) MediaSource video player for WebKitGTK
-32. [ ] [Task FS-3.7](./implementation-plan.md#task-fs-3.7) Publish `@filesquid/ui` and a versioned API contract
-    - [ ] [API-F3.1](../apps/filesquid/crates/api/resources/plan.md#phase-f3r-versioned-api-contract-global-task-fs-37-after-the-mvp) Version and publish the API contract
-    - [ ] [UI-F3.2](../apps/filesquid/ui/resources/plan.md#phase-f3r-package-publishing-global-task-fs-37-after-the-mvp) Publish `@filesquid/ui` as a versioned package
-33. [ ] [Task FS-2.3](./implementation-plan.md#task-fs-2.3) Users, groups and sharing UI on filesquid-server
-    - [ ] [UI-F2.6](../apps/filesquid/ui/resources/plan.md#phase-f2-default-ui-global-tasks-fs-21-fs-22-fs-24-fs-25-11-12-after-the-mvp-ui-f26-in-global-task-fs-23-ui-f210-and-ui-f212-in-global-task-fs-27-ui-f213-in-global-task-fs-26-ui-f25-in-global-task-fs-c1-phase-c) Users, groups and sharing UI
-34. [ ] [Task FS-2.6](./implementation-plan.md#task-fs-2.6) Virtual exhibits through the API and the default UI
-    - [ ] [API-F2.6](../apps/filesquid/crates/api/resources/plan.md#phase-f2-activity-and-health-monitoring-global-task-fs-24-and-drive-parity-operations-global-task-fs-25-api-f24-in-global-task-fs-27-after-the-mvp) Virtual exhibit operations
-    - [ ] [UI-F2.13](../apps/filesquid/ui/resources/plan.md#phase-f2-default-ui-global-tasks-fs-21-fs-22-fs-24-fs-25-11-12-after-the-mvp-ui-f26-in-global-task-fs-23-ui-f210-and-ui-f212-in-global-task-fs-27-ui-f213-in-global-task-fs-26-ui-f25-in-global-task-fs-c1-phase-c) Virtual exhibit view
-35. [ ] [Task 8.5](./implementation-plan.md#task-8.5) Native installer signing, updater, and update recovery
-    - [ ] [DE-8.5](../apps/filesquid/crates/desktop/resources/plan.md#phases-i5i7-f3-l-and-v-projects-advanced-media-sharing-publication-installers-global-tasks-61-7x-8x-9x-101) Installer signing, updater, and update recovery
-    - [ ] [DE-8.6](../apps/filesquid/crates/desktop/resources/plan.md#phases-i5i7-f3-l-and-v-projects-advanced-media-sharing-publication-installers-global-tasks-61-7x-8x-9x-101) Native-window capability regression suite
-36. [ ] [Task FS-2.7](./implementation-plan.md#task-fs-2.7) Activity stream, comments and sharing
-    - [ ] [API-F2.4](../apps/filesquid/crates/api/resources/plan.md#phase-f2-activity-and-health-monitoring-global-task-fs-24-and-drive-parity-operations-global-task-fs-25-api-f24-in-global-task-fs-27-after-the-mvp) User activity stream, per-file activity and comments
-    - [ ] [SV-F1.4](../apps/filesquid/crates/server/resources/plan.md#phase-f3r-multi-user-host-global-tasks-fs-310-and-fs-27-not-in-the-macos-desktop-mvp) Shares, roles, links, ownership transfer and administrator switches
-    - [ ] [UI-F2.10](../apps/filesquid/ui/resources/plan.md#phase-f2-default-ui-global-tasks-fs-21-fs-22-fs-24-fs-25-11-12-after-the-mvp-ui-f26-in-global-task-fs-23-ui-f210-and-ui-f212-in-global-task-fs-27-ui-f213-in-global-task-fs-26-ui-f25-in-global-task-fs-c1-phase-c) `<fs-activity-panel>` and the activity view
-    - [ ] [UI-F2.12](../apps/filesquid/ui/resources/plan.md#phase-f2-default-ui-global-tasks-fs-21-fs-22-fs-24-fs-25-11-12-after-the-mvp-ui-f26-in-global-task-fs-23-ui-f210-and-ui-f212-in-global-task-fs-27-ui-f213-in-global-task-fs-26-ui-f25-in-global-task-fs-c1-phase-c) `<fs-sharing-panel>` and the shares view
-37. [ ] [Task FS-3.3](./implementation-plan.md#task-fs-3.3) Publish module crates and CLIs
-    - [ ] [IO-D.1](../apps/filesquid/crates/ocfl/resources/plan.md#phase-f3r-publish-the-crate-and-cli-global-task-fs-33-after-the-mvp-task-104-superseded) Version the public engine API
-    - [ ] [IO-D.3](../apps/filesquid/crates/ocfl/resources/plan.md#phase-f3r-publish-the-crate-and-cli-global-task-fs-33-after-the-mvp-task-104-superseded) Publish the library crate
-    - [ ] [IO-D.4](../apps/filesquid/crates/ocfl/resources/plan.md#phase-f3r-publish-the-crate-and-cli-global-task-fs-33-after-the-mvp-task-104-superseded) CLI and GitHub Release binaries
-    - [ ] [MD-F3.1](../apps/filesquid/crates/metadata/resources/plan.md#phase-f3r-publish-the-crate-global-task-fs-33-after-the-mvp) Version and publish `filesquid-metadata`
-    - [ ] [PV-F3.1](../apps/filesquid/crates/prov/resources/plan.md#phase-f3r-publish-the-crate-and-its-commands-global-task-fs-33-after-the-mvp) Version and publish `filesquid-prov`; `fsquid prov` commands
-38. [ ] [Task FS-3.2](./implementation-plan.md#task-fs-3.2) Multi-user server container and documentation site
-    - [ ] [SV-F3.1](../apps/filesquid/crates/server/resources/plan.md#phase-f3r-release-1-container-and-performance-global-tasks-fs-32-fs-313) Container image and Compose service
-39. [ ] [Task FS-3.13](./implementation-plan.md#task-fs-3.13) Multi-user server load test
-    - [ ] [SV-F3.2](../apps/filesquid/crates/server/resources/plan.md#phase-f3r-release-1-container-and-performance-global-tasks-fs-32-fs-313) Multi-user load test
-40. [ ] [Task FS-3.6](./implementation-plan.md#task-fs-3.6) Optional OTLP export and reference observability profile
-    - [ ] [SV-F3.3](../apps/filesquid/crates/server/resources/plan.md#phase-f3r-optional-otlp-export-global-task-fs-36-not-in-the-macos-desktop-mvp) Store-and-forward OTLP export and reference observability profile
-41. [ ] [Task FS-3.5](./implementation-plan.md#task-fs-3.5) FileSquid release 1 gate
-42. [ ] [Task FS-3.8](./implementation-plan.md#task-fs-3.8) Extract ImageSquid to its own repository
-
-## Later
-
-Everything after FileSquid release 1, in the phase order of the implementation plan (0 of 56 done). Phase A and phase L wait on the owner's order decision in Task 9.0.
-
+Encrypted backup and sync is the primary product after the MVP (phase F4), closed by gate Task FS-4.2 (0 of 9 done). The Drive is the interface for day-to-day file work. OCFL stays behind that Drive. The owner of a Drive enrolls a device key so another user can upload into that Drive. That Drive's backup keeps recovery points in more than one geography. This section starts after Task FS-3.9. Phase F3R waits until Task FS-4.2 is checked.
 
 ### Encrypted backup and sync (phase F4)
 
-43. [ ] [Task FS-4.1](./implementation-plan.md#task-fs-4.1) Ciphertext-only hosted service at `*.filesquid.tech`
+29. [ ] [Task FS-4.1](./implementation-plan.md#task-fs-4.1) Ciphertext-only hosted service at `*.filesquid.tech`
     - [ ] [SV-F4.1](../apps/filesquid/crates/server/resources/plan.md#phase-f4-ciphertext-only-hosted-service-binary-global-task-fs-41) Hosted-service binary and dependency-graph gate
     - [ ] [SV-F4.2](../apps/filesquid/crates/server/resources/plan.md#phase-f4-ciphertext-only-hosted-service-binary-global-task-fs-41) `*.filesquid.tech` deployment
     - [ ] [API-F4.1](../apps/filesquid/crates/api/resources/plan.md#phase-f4-backup-and-sync-control-global-task-fs-41) Backup and sync control routes
-44. [ ] [Task 0.6](./implementation-plan.md#task-0.6) Hosted mailbox isolation and operational schema
+30. [ ] [Task 0.6](./implementation-plan.md#task-0.6) Hosted mailbox isolation and operational schema
     - [ ] [BE-0.1](../apps/filesquid/crates/server/resources/plan.md#phase-f4-hosted-service-isolation-and-operational-foundation-global-task-06-be-06-in-global-task-fs-310) Isolation gate
     - [ ] [BE-0.2](../apps/filesquid/crates/server/resources/plan.md#phase-f4-hosted-service-isolation-and-operational-foundation-global-task-06-be-06-in-global-task-fs-310) Stdout JSON logs and Prometheus /metrics
     - [ ] [BE-0.3](../apps/filesquid/crates/server/resources/plan.md#phase-f4-hosted-service-isolation-and-operational-foundation-global-task-06-be-06-in-global-task-fs-310) PostgreSQL operational schema
     - [ ] [BE-0.4](../apps/filesquid/crates/server/resources/plan.md#phase-f4-hosted-service-isolation-and-operational-foundation-global-task-06-be-06-in-global-task-fs-310) Hosted-safe core path dependency
     - [ ] [BE-0.5](../apps/filesquid/crates/server/resources/plan.md#phase-f4-hosted-service-isolation-and-operational-foundation-global-task-06-be-06-in-global-task-fs-310) Versioned HTTPS command/query surface
-45. [ ] [Task 5.1](./implementation-plan.md#task-5.1) Client encryption, key custody, and independent crypto vectors
+31. [ ] [Task 5.1](./implementation-plan.md#task-5.1) Client encryption, key custody, and independent crypto vectors
     - [ ] [CO-5.1](../apps/filesquid/crates/core/resources/plan.md#phase-f4-protection-contracts-global-tasks-51-52) Key hierarchy and access-record types
     - [ ] [DE-5.1](../apps/filesquid/crates/desktop/resources/plan.md#phase-f4-keys-sync-hosted-ocfl-global-tasks-51-52-54-de-53-in-global-task-56-phase-i5) Key custody
     - [ ] [UI-5.1](../apps/filesquid/ui/resources/plan.md#phase-f4-protection-ui-global-tasks-5153) Unlock, key recovery, and lock/logout
-46. [ ] [Task 0.11](./implementation-plan.md#task-0.11) Browser-to-canonical commit protocol
+32. [ ] [Task 0.11](./implementation-plan.md#task-0.11) Browser-to-canonical commit protocol
     - [ ] [CL-0.4](../apps/filesquid/crates/api/resources/plan.md#phase-f1-application-layer-global-task-010-cl-04-in-global-task-011-phase-f4-cl-05-in-global-task-012-phase-i1) Browser-to-canonical commit types
-47. [ ] [Task 5.2](./implementation-plan.md#task-5.2) Personal sync, encrypted backup, and verified restore
+33. [ ] [Task 5.2](./implementation-plan.md#task-5.2) Personal sync, encrypted backup, and verified restore
     - [ ] [CO-5.2](../apps/filesquid/crates/core/resources/plan.md#phase-f4-protection-contracts-global-tasks-51-52) Sync operation, conflict, and tombstone types
     - [ ] [DE-5.2](../apps/filesquid/crates/desktop/resources/plan.md#phase-f4-keys-sync-hosted-ocfl-global-tasks-51-52-54-de-53-in-global-task-56-phase-i5) Sync and backup clients
     - [ ] [BE-5.1](../apps/filesquid/crates/server/resources/plan.md#phase-f4-accounts-sync-relay-snapshots-global-tasks-5255) Encrypted change relay and snapshot receipts
     - [ ] [UI-5.2](../apps/filesquid/ui/resources/plan.md#phase-f4-protection-ui-global-tasks-5153) Sync and backup status UI
     - [ ] [IO-5.1](../apps/filesquid/crates/ocfl/resources/plan.md#phase-f4-s3-compatible-ciphertext-backend-global-task-52) S3-compatible backend with CAS on inventory heads
-48. [ ] [Task 5.3](./implementation-plan.md#task-5.3) Accounts, entitlements, and scoped job billing (F-032)
+34. [ ] [Task 5.3](./implementation-plan.md#task-5.3) Accounts, entitlements, and scoped job billing (F-032)
     - [ ] [BE-5.2](../apps/filesquid/crates/server/resources/plan.md#phase-f4-accounts-sync-relay-snapshots-global-tasks-5255) Accounts, entitlements, membership, and cancellation
     - [ ] [UI-5.3](../apps/filesquid/ui/resources/plan.md#phase-f4-protection-ui-global-tasks-5153) Accounts, entitlements, and job billing
-49. [ ] [Task 5.4](./implementation-plan.md#task-5.4) Hosted ciphertext OCFL preservation
+35. [ ] [Task 5.4](./implementation-plan.md#task-5.4) Hosted ciphertext OCFL preservation
     - [ ] [DE-5.4](../apps/filesquid/crates/desktop/resources/plan.md#phase-f4-keys-sync-hosted-ocfl-global-tasks-51-52-54-de-53-in-global-task-56-phase-i5) Hosted OCFL via filesquid-ocfl S3 backend
     - [ ] [BE-5.3](../apps/filesquid/crates/server/resources/plan.md#phase-f4-accounts-sync-relay-snapshots-global-tasks-5255) Hosted object-store receipts (no OCFL writer)
-50. [ ] [Task 5.5](./implementation-plan.md#task-5.5) Hosted-protection readiness close (C-2)
+36. [ ] [Task 5.5](./implementation-plan.md#task-5.5) Hosted-protection readiness close (C-2)
     - [ ] [BE-5.5](../apps/filesquid/crates/server/resources/plan.md#phase-f4-accounts-sync-relay-snapshots-global-tasks-5255) Hosted-protection readiness operational evidence
-51. [ ] [Task FS-4.2](./implementation-plan.md#task-fs-4.2) Encrypted backup and sync release gate
+37. [ ] [Task FS-4.2](./implementation-plan.md#task-fs-4.2) Encrypted backup and sync release gate
+
+## Release1
+
+FileSquid release 1 follows Task FS-4.2 and waits while that gate is open: server host, accounts and sharing, Linux and Windows installers, signing, the published `ocfl` and `metadata` crates and the `@filesquid/ui` package (phase F3R), closed by gate Task FS-3.5 and followed by the ImageSquid extraction in Task FS-3.8 (0 of 14 done). C2PA signing, edits, scans and crate publishing moved to phase C.
+
+38. [ ] [Task FS-3.10](./implementation-plan.md#task-fs-3.10) Server host: HTTP binding, storage root, accounts and groups
+    - [ ] [SV-F1.1](../apps/filesquid/crates/server/resources/plan.md#phase-f3r-multi-user-host-global-tasks-fs-310-and-fs-27-not-in-the-macos-desktop-mvp) HTTP and event-channel transport
+    - [ ] [SV-F1.3](../apps/filesquid/crates/server/resources/plan.md#phase-f3r-multi-user-host-global-tasks-fs-310-and-fs-27-not-in-the-macos-desktop-mvp) Storage root configuration
+    - [ ] [API-F1.9](../apps/filesquid/crates/api/resources/plan.md#phase-f1-the-api-global-tasks-fs-11fs-14-after-the-mvp-api-f18-in-fs-15-api-f19-in-fs-310-and-api-f15-in-fs-c1) Server accounts, groups and collection permissions in the authorisation layer
+    - [ ] [SV-F1.2](../apps/filesquid/crates/server/resources/plan.md#phase-f3r-multi-user-host-global-tasks-fs-310-and-fs-27-not-in-the-macos-desktop-mvp) Accounts, groups, sessions and collection permissions
+    - [ ] [BE-0.6](../apps/filesquid/crates/server/resources/plan.md#phase-f4-hosted-service-isolation-and-operational-foundation-global-task-06-be-06-in-global-task-fs-310) Allure reporting and static SPA serving
+39. [ ] [Task FS-1.5](./implementation-plan.md#task-fs-1.5) Distribution manifest and module switches
+    - [ ] [API-F1.8](../apps/filesquid/crates/api/resources/plan.md#phase-f1-the-api-global-tasks-fs-11fs-14-after-the-mvp-api-f18-in-fs-15-api-f19-in-fs-310-and-api-f15-in-fs-c1) Distribution manifest and module switches
+40. [ ] [Task FS-3.11](./implementation-plan.md#task-fs-3.11) Linux and Windows desktop installers
+    - [ ] [DE-F3.3](../apps/filesquid/crates/desktop/resources/plan.md#phase-f3-installers-and-performance-global-tasks-fs-31-fs-34-and-after-the-mvp-fs-311) Linux and Windows installers, ImageSquid overlay
+    - [ ] [UI-F3.3](../apps/filesquid/ui/resources/plan.md#phase-f3r-linux-media-playback-global-task-fs-311-after-the-mvp) MediaSource video player for WebKitGTK
+41. [ ] [Task FS-3.7](./implementation-plan.md#task-fs-3.7) Publish `@filesquid/ui` and a versioned API contract
+    - [ ] [API-F3.1](../apps/filesquid/crates/api/resources/plan.md#phase-f3r-versioned-api-contract-global-task-fs-37-after-the-mvp) Version and publish the API contract
+    - [ ] [UI-F3.2](../apps/filesquid/ui/resources/plan.md#phase-f3r-package-publishing-global-task-fs-37-after-the-mvp) Publish `@filesquid/ui` as a versioned package
+42. [ ] [Task FS-2.3](./implementation-plan.md#task-fs-2.3) Users, groups and sharing UI on filesquid-server
+    - [ ] [UI-F2.6](../apps/filesquid/ui/resources/plan.md#phase-f2-default-ui-global-tasks-fs-21-fs-22-fs-24-fs-25-11-12-after-the-mvp-ui-f26-in-global-task-fs-23-ui-f210-and-ui-f212-in-global-task-fs-27-ui-f213-in-global-task-fs-26-ui-f25-in-global-task-fs-c1-phase-c) Users, groups and sharing UI
+43. [ ] [Task FS-2.6](./implementation-plan.md#task-fs-2.6) Virtual exhibits through the API and the default UI
+    - [ ] [API-F2.6](../apps/filesquid/crates/api/resources/plan.md#phase-f2-activity-and-health-monitoring-global-task-fs-24-and-drive-parity-operations-global-task-fs-25-api-f24-in-global-task-fs-27-after-the-mvp) Virtual exhibit operations
+    - [ ] [UI-F2.13](../apps/filesquid/ui/resources/plan.md#phase-f2-default-ui-global-tasks-fs-21-fs-22-fs-24-fs-25-11-12-after-the-mvp-ui-f26-in-global-task-fs-23-ui-f210-and-ui-f212-in-global-task-fs-27-ui-f213-in-global-task-fs-26-ui-f25-in-global-task-fs-c1-phase-c) Virtual exhibit view
+44. [ ] [Task 8.5](./implementation-plan.md#task-8.5) Native installer signing, updater, and update recovery
+    - [ ] [DE-8.5](../apps/filesquid/crates/desktop/resources/plan.md#phases-i5i7-f3-l-and-v-projects-advanced-media-sharing-publication-installers-global-tasks-61-7x-8x-9x-101) Installer signing, updater, and update recovery
+    - [ ] [DE-8.6](../apps/filesquid/crates/desktop/resources/plan.md#phases-i5i7-f3-l-and-v-projects-advanced-media-sharing-publication-installers-global-tasks-61-7x-8x-9x-101) Native-window capability regression suite
+45. [ ] [Task FS-2.7](./implementation-plan.md#task-fs-2.7) Activity stream, comments and sharing
+    - [ ] [API-F2.4](../apps/filesquid/crates/api/resources/plan.md#phase-f2-activity-and-health-monitoring-global-task-fs-24-and-drive-parity-operations-global-task-fs-25-api-f24-in-global-task-fs-27-after-the-mvp) User activity stream, per-file activity and comments
+    - [ ] [SV-F1.4](../apps/filesquid/crates/server/resources/plan.md#phase-f3r-multi-user-host-global-tasks-fs-310-and-fs-27-not-in-the-macos-desktop-mvp) Shares, roles, links, ownership transfer and administrator switches
+    - [ ] [UI-F2.10](../apps/filesquid/ui/resources/plan.md#phase-f2-default-ui-global-tasks-fs-21-fs-22-fs-24-fs-25-11-12-after-the-mvp-ui-f26-in-global-task-fs-23-ui-f210-and-ui-f212-in-global-task-fs-27-ui-f213-in-global-task-fs-26-ui-f25-in-global-task-fs-c1-phase-c) `<fs-activity-panel>` and the activity view
+    - [ ] [UI-F2.12](../apps/filesquid/ui/resources/plan.md#phase-f2-default-ui-global-tasks-fs-21-fs-22-fs-24-fs-25-11-12-after-the-mvp-ui-f26-in-global-task-fs-23-ui-f210-and-ui-f212-in-global-task-fs-27-ui-f213-in-global-task-fs-26-ui-f25-in-global-task-fs-c1-phase-c) `<fs-sharing-panel>` and the shares view
+46. [ ] [Task FS-3.3](./implementation-plan.md#task-fs-3.3) Publish module crates and CLIs
+    - [ ] [IO-D.1](../apps/filesquid/crates/ocfl/resources/plan.md#phase-f3r-publish-the-crate-and-cli-global-task-fs-33-after-the-mvp-task-104-superseded) Version the public engine API
+    - [ ] [IO-D.3](../apps/filesquid/crates/ocfl/resources/plan.md#phase-f3r-publish-the-crate-and-cli-global-task-fs-33-after-the-mvp-task-104-superseded) Publish the library crate
+    - [ ] [IO-D.4](../apps/filesquid/crates/ocfl/resources/plan.md#phase-f3r-publish-the-crate-and-cli-global-task-fs-33-after-the-mvp-task-104-superseded) CLI and GitHub Release binaries
+    - [ ] [MD-F3.1](../apps/filesquid/crates/metadata/resources/plan.md#phase-f3r-publish-the-crate-global-task-fs-33-after-the-mvp) Version and publish `filesquid-metadata`
+    - [ ] [PV-F3.1](../apps/filesquid/crates/prov/resources/plan.md#phase-f3r-publish-the-crate-and-its-commands-global-task-fs-33-after-the-mvp) Version and publish `filesquid-prov`; `fsquid prov` commands
+47. [ ] [Task FS-3.2](./implementation-plan.md#task-fs-3.2) Multi-user server container and documentation site
+    - [ ] [SV-F3.1](../apps/filesquid/crates/server/resources/plan.md#phase-f3r-release-1-container-and-performance-global-tasks-fs-32-fs-313) Container image and Compose service
+48. [ ] [Task FS-3.13](./implementation-plan.md#task-fs-3.13) Multi-user server load test
+    - [ ] [SV-F3.2](../apps/filesquid/crates/server/resources/plan.md#phase-f3r-release-1-container-and-performance-global-tasks-fs-32-fs-313) Multi-user load test
+49. [ ] [Task FS-3.6](./implementation-plan.md#task-fs-3.6) Optional OTLP export and reference observability profile
+    - [ ] [SV-F3.3](../apps/filesquid/crates/server/resources/plan.md#phase-f3r-optional-otlp-export-global-task-fs-36-not-in-the-macos-desktop-mvp) Store-and-forward OTLP export and reference observability profile
+50. [ ] [Task FS-3.5](./implementation-plan.md#task-fs-3.5) FileSquid release 1 gate
+51. [ ] [Task FS-3.8](./implementation-plan.md#task-fs-3.8) Extract ImageSquid to its own repository
+
+## Later
+
+Content Credentials, the encrypted browser host, ImageSquid, Arkrim and later work, in this checklist's dispatch order (0 of 47 done). Encrypted backup and sync is in the Backup section, immediately after the MVP. Phase A and phase L wait on the owner's order decision in Task 9.0.
+
 
 ### Content Credentials, release 2 (phase C)
 

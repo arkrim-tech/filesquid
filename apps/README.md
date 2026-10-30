@@ -28,7 +28,7 @@ apps/
 |---|---|---|---|
 | Desktop (`filesquid-desktop`, Tauri 2) | In-process, through a Tauri custom URI scheme. No TCP port. | The owner's device only | Building now |
 | Multi-user server (`filesquid-server`, Axum) | HTTP (and an event channel) on `FILESQUID_BIND`, default `127.0.0.1:8083`. It also serves the selected UI's static files. | The operator of that server (self-hosters, institutions) | Building now |
-| Hosted backup and sync at `*.filesquid.tech` | The service stores ciphertext only. Clients encrypt before upload. | Nobody on the service side | Planned |
+| Hosted backup and sync at `*.filesquid.tech` | The service stores ciphertext only. Clients encrypt before upload. The Drive owner enrolls a device key for uploads into that Drive. Each Drive's backup keeps copies in more than one geography. | Nobody on the service side | Next product after the MVP |
 | E2EE browser host | The same API, run as WebAssembly in the browser; the server is a ciphertext mailbox | The owner's browser only | Roadmap |
 
 ## Rules for this directory
