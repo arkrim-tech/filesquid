@@ -4,7 +4,7 @@
 //! filesystem and a seeded library catalog.
 
 use crate::drive_catalog::{DriveCatalog, COLLECTION, COLLECTION_TITLE, VIRTUAL_TITLE};
-use crate::files_fixture::{encode, upload_facts, Answer, FilesRig, LIBRARY};
+use crate::files_fixture::{encode, upload_facts, Answer, FilesRig, HOME_COLLECTION, LIBRARY};
 use crate::MonitorWorld;
 use cucumber::{given, then, when};
 use filesquid_api::journal::{JournalEntry, JournalStore, Outcome};
@@ -179,7 +179,9 @@ async fn deleted(w: &mut MonitorWorld, name: String) {
 
 #[when(expr = "the owner copies {string}")]
 async fn copies(w: &mut MonitorWorld, name: String) {
-    let body = json!({ "library_id": LIBRARY, "file_id": w.view.id(&name) });
+    let body = json!({
+        "library_id": LIBRARY, "file_id": w.view.id(&name), "collection_id": HOME_COLLECTION
+    });
     let answer = w.view.rig().command("/api/v1/files/copies", body).await;
     assert_eq!(answer.status.as_u16(), 200, "{:?}", answer.json());
     w.view.answer = Some(answer);

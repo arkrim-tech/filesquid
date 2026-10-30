@@ -14,15 +14,13 @@
 
 use super::{
     ImportAnswer, ImportOutcome, ImportRequest, ImportStartError, ImportStarter, PlanDiscarded,
-    PlanItemPage, COLLECTION_NOT_FOUND, DESTINATION_REQUIRED, IMPORT_DISCARD_OPERATION,
-    IMPORT_PLAN_ITEMS_OPERATION, IMPORT_PLAN_OPERATION, IMPORT_START_OPERATION, MAX_PLAN_ITEMS,
+    PlanItemPage, IMPORT_DISCARD_OPERATION, IMPORT_PLAN_ITEMS_OPERATION, IMPORT_PLAN_OPERATION,
+    IMPORT_START_OPERATION, MAX_PLAN_ITEMS,
 };
 use crate::auth::{journal_entry, Action, Principal};
-use crate::canonical::collection_path::check_folder;
 use crate::error::{ApiError, ErrorCode};
+use crate::home::destination::{self, Destination, DestinationRefusal};
 use crate::journal::{JournalEntry, Level, Outcome};
-use crate::library::CatalogError;
-use crate::navigation::{NavigationError, NodeRef};
 use crate::routes::Route;
 use crate::ApiState;
 use axum::extract::rejection::{JsonRejection, QueryRejection};
@@ -30,7 +28,6 @@ use axum::extract::{Path, Query, State};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post};
 use axum::{Extension, Json};
-use filesquid_core::CollectionId;
 use serde::Deserialize;
 use std::sync::Arc;
 
@@ -66,7 +63,12 @@ async fn plan(
         Ok(None) => {}
         Err(err) => return refuse(&state, &actor, Some(&request), err).await,
     }
-    if let Err(refusal) = checked_destination(&state, &principal, &request).await {
+    let destination = Destination {
+        collection_id: request.collection_id.clone(),
+        folder: request.folder.clone(),
+    };
+    let checked = destination::check(&state, &principal, &request.library_id, &destination).await;
+    if let Err(refusal) = checked {
         return refuse_destination(&state, &actor, &request, refusal).await;
     }
     let planned = match starter {
@@ -279,121 +281,6 @@ async fn refuse_discard(state: &ApiState, actor: &str, err: ImportStartError) ->
         .error_code(err.error_code());
     journal_entry(state, entry).await;
     ApiError::new(code, message).into_response()
-}
-
-/// Why a request's destination was refused before any dialog.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum DestinationRefusal {
-    /// No `collection_id`.
-    Required,
-    /// A `folder` outside the collection-path rule or in a reserved folder.
-    Folder,
-    /// An unknown collection, one of another library, or one the caller may not read.
-    NotFound,
-    /// The library catalog cannot answer now.
-    Unavailable,
-    /// The library catalog failed in a way a retry will not fix.
-    Internal,
-}
-
-impl DestinationRefusal {
-    /// The refusal of a catalog failure: `unavailable` only when a retry may succeed. Pure.
-    fn of_catalog(err: &CatalogError) -> Self {
-        match err {
-            CatalogError::Unavailable(_) => Self::Unavailable,
-            CatalogError::Conflict | CatalogError::Failed(_) => Self::Internal,
-        }
-    }
-
-    /// The refusal of a readability check of the collection and its ancestors. Pure.
-    fn of_navigation(err: NavigationError) -> Self {
-        match err {
-            NavigationError::NotFound | NavigationError::Invalid(_) => Self::NotFound,
-            NavigationError::Unavailable => Self::Unavailable,
-            NavigationError::Internal => Self::Internal,
-        }
-    }
-
-    /// The journal error code, the answer's status code and its message (which names the
-    /// error code and never the request's values).
-    fn answer(self) -> (&'static str, ErrorCode, &'static str) {
-        match self {
-            Self::Required => (
-                DESTINATION_REQUIRED,
-                ErrorCode::InvalidRequest,
-                "Choose the collection to import into (destination_required); nothing is \
-                 imported to a library's top level.",
-            ),
-            Self::Folder => (
-                "invalid_path",
-                ErrorCode::InvalidRequest,
-                "The destination folder is not a folder path inside the collection \
-                 (invalid_path).",
-            ),
-            Self::NotFound => (
-                COLLECTION_NOT_FOUND,
-                ErrorCode::NotFound,
-                "That collection is not in this library (collection_not_found).",
-            ),
-            Self::Unavailable => (
-                "unavailable",
-                ErrorCode::Unavailable,
-                "This host cannot import now.",
-            ),
-            Self::Internal => (
-                "internal",
-                ErrorCode::Internal,
-                "This host could not check the destination.",
-            ),
-        }
-    }
-}
-
-/// Check the request's destination: a collection is named, the folder (if any) follows the
-/// collection-path rule outside the reserved folders, and the collection belongs to the
-/// request's library and is readable to `principal`. Reads the library catalog on a
-/// blocking thread.
-async fn checked_destination(
-    state: &ApiState,
-    principal: &Principal,
-    request: &ImportRequest,
-) -> Result<(), DestinationRefusal> {
-    let collection = request
-        .collection_id
-        .clone()
-        .ok_or(DestinationRefusal::Required)?;
-    if let Some(folder) = &request.folder {
-        check_folder(folder).map_err(|_| DestinationRefusal::Folder)?;
-    }
-    let navigation = state.navigation().ok_or(DestinationRefusal::Unavailable)?;
-    let (principal, library) = (principal.clone(), request.library_id.clone());
-    let found = tokio::task::spawn_blocking(move || {
-        collection_in(&navigation, &principal, &library, &collection)
-    })
-    .await;
-    found.unwrap_or(Err(DestinationRefusal::Unavailable))
-}
-
-/// Whether `collection` is a collection of `library` that `principal` may read. Reads the
-/// library catalog (may block).
-fn collection_in(
-    navigation: &crate::navigation::NavigationService,
-    principal: &Principal,
-    library: &str,
-    collection: &str,
-) -> Result<(), DestinationRefusal> {
-    let id = CollectionId::new(collection).map_err(|_| DestinationRefusal::NotFound)?;
-    let found = navigation
-        .catalog()
-        .collection(&id)
-        .map_err(|err| DestinationRefusal::of_catalog(&err))?
-        .ok_or(DestinationRefusal::NotFound)?;
-    if found.library_id().as_str() != library {
-        return Err(DestinationRefusal::NotFound);
-    }
-    navigation
-        .check_readable(principal, &NodeRef::Collection(id))
-        .map_err(DestinationRefusal::of_navigation)
 }
 
 /// Journal a refused destination once (`import.plan`) and answer its typed error.

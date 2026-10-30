@@ -187,7 +187,7 @@ export { MemoryFileSource, type MemoryFile, type MemoryOptions } from "./files/m
 export { MediaHandleController, MAX_REMINTS, type MediaState } from "./files/media-handle";
 export { columnsFor, revealScrollTop, visibleWindow } from "./files/window";
 export { listKeyTarget } from "./files/keys";
-export { uploadName, uploadFiles, moveTarget, MAX_UPLOAD_FILES } from "./files/ops";
+export { uploadName, uploadFiles, uploadTarget, moveTarget, MAX_UPLOAD_FILES } from "./files/ops";
 export {
   builtInRenderers,
   pickRenderer,

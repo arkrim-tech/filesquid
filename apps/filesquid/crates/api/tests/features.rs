@@ -147,6 +147,8 @@ mod job_steps;
 #[path = "support/command_steps.rs"]
 mod command_steps;
 
+#[path = "support/home_steps.rs"]
+mod home_steps;
 #[path = "support/import_fixture.rs"]
 mod import_fixture;
 #[path = "support/import_steps.rs"]
@@ -217,6 +219,7 @@ struct MonitorWorld {
     commands: command_steps::CommandWorld,
     facts: library_facts_steps::FactsWorld,
     imports: import_steps::ImportsWorld,
+    home: home_steps::HomeWorld,
 }
 
 impl std::fmt::Debug for MonitorWorld {

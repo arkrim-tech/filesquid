@@ -16,6 +16,9 @@ pub struct FileError {
     message: String,
     /// What failed inside the engine, for stdout only (`internal` answers).
     detail: Option<String>,
+    /// The specific journal code of a rule's refusal (`destination_required`), when the rule
+    /// names one; the general code otherwise.
+    specific: Option<&'static str>,
 }
 
 impl FileError {
@@ -25,6 +28,16 @@ impl FileError {
             code,
             message: message.into(),
             detail: None,
+            specific: None,
+        }
+    }
+
+    /// A refusal with `code` whose journal code is the rule's own `specific` code, and a
+    /// `message` for people that names it.
+    pub fn coded(code: ErrorCode, specific: &'static str, message: impl Into<String>) -> Self {
+        Self {
+            specific: Some(specific),
+            ..Self::new(code, message)
         }
     }
 
@@ -84,9 +97,10 @@ impl FileError {
         self.code.retryable()
     }
 
-    /// The code's wire name, as the journal records it.
+    /// The code the journal records: the rule's own code when it names one, else the
+    /// general code's wire name.
     pub fn error_code(&self) -> &'static str {
-        self.code.as_str()
+        self.specific.unwrap_or_else(|| self.code.as_str())
     }
 
     /// The typed answer for `operation`. An `internal` failure logs its detail to stdout

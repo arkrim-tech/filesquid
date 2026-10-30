@@ -22,7 +22,7 @@ Feature: Command envelopes on the file write routes
     When the owner moves "a.txt" to "c.txt" as operation "op-move-1" expecting "v1"
     Then the answer should be a committed outcome of operation "op-move-1"
     And its result should name version "v2"
-    And the journal should record one "files.move" success under operation "op-move-1"
+    And the journal should record one "file.move" success under operation "op-move-1"
 
   Scenario: An upload is a multipart command with its envelope, input and file
     When the owner uploads "notes.txt" as operation "op-upload-1" expecting "0"
@@ -35,7 +35,7 @@ Feature: Command envelopes on the file write routes
     When the owner moves "a.txt" to "c.txt" as operation "op-move-2" expecting "v1"
     Then the answer should be the first answer of operation "op-move-2"
     And the object's head should be "v2"
-    And the journal should record one "files.move" success under operation "op-move-2"
+    And the journal should record one "file.move" success under operation "op-move-2"
 
   Scenario: A stale expected revision is a conflict outcome and changes nothing
     When the owner removes "b.txt" as operation "op-remove-1" expecting "v7"

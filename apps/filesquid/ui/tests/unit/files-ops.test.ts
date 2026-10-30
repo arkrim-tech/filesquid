@@ -22,17 +22,23 @@ import {
   uploadFacts,
   uploadFiles,
   uploadName,
+  uploadTarget,
 } from "../../src/files/ops";
 import {
   MAX_DISPLAY_NAME_BYTES,
   MAX_UPLOAD_BYTES,
   validateName,
   type FileRow,
+  type UploadTarget,
 } from "../../src/files/model";
 import { MemoryFileSource } from "../../src/files/memory-source";
 import labels from "../../src/theme/labels.en.json";
 
+/** A collection of the library (a UUID, API-S-011 Destination). */
+const COLLECTION = "9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d";
 const OBJECT = { library_id: "lib", object_id: "obj" };
+/** Where the uploads of these tests go: the root of a collection of the library. */
+const TARGET: UploadTarget = { library_id: "lib", collection_id: COLLECTION };
 /** 2026-10-20T08:00:00Z in milliseconds. */
 const MODIFIED = Date.UTC(2026, 9, 20, 8, 0, 0);
 
@@ -113,7 +119,7 @@ describe("uploadFiles operation ids", () => {
     const source = new MemoryFileSource({ ...OBJECT, files: [{ path: "seed.txt", content: "s" }] });
     const upload = vi.spyOn(source, "upload");
     const files = [new File(["a"], "one.txt"), new File(["b"], "two.txt")];
-    await uploadFiles(source, OBJECT, files, undefined, (file) => `op-${file.name}`);
+    await uploadFiles(source, TARGET, files, undefined, (file) => `op-${file.name}`);
     expect(upload.mock.calls.map((c) => c[3])).toEqual([
       { operationId: "op-one.txt" },
       { operationId: "op-two.txt" },
@@ -135,7 +141,7 @@ describe("uploadFiles", () => {
       new File(["a"], "one.txt", { type: "text/plain", lastModified: MODIFIED }),
       new File(["b"], "two.txt"),
     ];
-    const result = await uploadFiles(source, OBJECT, files, (i, n, name) =>
+    const result = await uploadFiles(source, TARGET, files, (i, n, name) =>
       seen.push(`${i}/${n} ${name}`),
     );
     expect(upload.mock.calls.map((c) => c[0].library_id)).toEqual(["lib", "lib"]);
@@ -156,7 +162,7 @@ describe("uploadFiles", () => {
 
   it("sends the cleaned display name, never a path", async () => {
     const { source, upload } = empty();
-    await uploadFiles(source, OBJECT, [new File(["a"], "a/b\\c.txt")]);
+    await uploadFiles(source, TARGET, [new File(["a"], "a/b\\c.txt")]);
     expect(upload.mock.calls[0]?.[1].name).toBe("a_b_c.txt");
   });
 
@@ -164,7 +170,7 @@ describe("uploadFiles", () => {
     const { source, upload } = empty();
     const huge = new File(["x"], "huge.bin");
     Object.defineProperty(huge, "size", { value: MAX_UPLOAD_BYTES + 1 });
-    const result = await uploadFiles(source, OBJECT, [huge, new File(["y"], "ok.txt")]);
+    const result = await uploadFiles(source, TARGET, [huge, new File(["y"], "ok.txt")]);
     expect(upload).toHaveBeenCalledTimes(1);
     expect(result.failed).toMatchObject([{ name: "huge.bin", reason: "too_large" }]);
     expect(result.committed).toHaveLength(1);
@@ -175,7 +181,7 @@ describe("uploadFiles", () => {
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const error = new ApiError(409, "/api/v1/files/upload", { code: "conflict" });
     vi.spyOn(source, "upload").mockRejectedValueOnce(error);
-    const result = await uploadFiles(source, OBJECT, [
+    const result = await uploadFiles(source, TARGET, [
       new File(["a"], "a.txt"),
       new File(["b"], "b.txt"),
     ]);
@@ -187,7 +193,7 @@ describe("uploadFiles", () => {
   it("refuses a name longer than 255 bytes without sending it", async () => {
     const { source, upload } = empty();
     const long = new File(["x"], `${"a".repeat(256)}.txt`);
-    const result = await uploadFiles(source, OBJECT, [long]);
+    const result = await uploadFiles(source, TARGET, [long]);
     expect(upload).not.toHaveBeenCalled();
     expect(result.failed).toMatchObject([{ reason: "name_too_long" }]);
   });
@@ -199,7 +205,7 @@ describe("uploadFiles", () => {
       { length: MAX_UPLOAD_FILES + 2 },
       (_, i) => new File(["a"], `f${i}.txt`),
     );
-    const result = await uploadFiles(source, OBJECT, files);
+    const result = await uploadFiles(source, TARGET, files);
     expect(result.left.map((f) => f.name)).toEqual([
       `f${MAX_UPLOAD_FILES}.txt`,
       `f${MAX_UPLOAD_FILES + 1}.txt`,
@@ -213,7 +219,7 @@ describe("uploadFiles", () => {
       { length: MAX_UPLOAD_FILES + 3 },
       (_, i) => new File(["a"], `f${i}.txt`),
     );
-    const result = await uploadFiles(source, OBJECT, files);
+    const result = await uploadFiles(source, TARGET, files);
     expect(upload).toHaveBeenCalledTimes(MAX_UPLOAD_FILES);
     expect(result.skipped).toBe(3);
   });
@@ -350,5 +356,39 @@ describe("renaming a file (API-S-027)", () => {
     expect(refuse(500, "internal")).toBe(labels.fileActionFailed);
     const denied = new ApiError(403, "/x", { code: "forbidden", reason: "not_permitted" });
     expect(renameFailureText(denied, labels)).toBe(labels.authNotPermitted);
+  });
+});
+
+describe("uploadTarget", () => {
+  const at = { library_id: "lib", object_id: "obj" };
+
+  it("is the library, the collection and the folder shown", () => {
+    const where = { ...at, prefix: "Contracts/2026", collection_id: COLLECTION };
+    expect(uploadTarget(where)).toEqual({
+      library_id: "lib",
+      collection_id: COLLECTION,
+      folder: "Contracts/2026",
+    });
+  });
+
+  it("names no folder at a collection's root", () => {
+    const target = uploadTarget({ ...at, prefix: "", collection_id: COLLECTION });
+    expect(target).toEqual({ library_id: "lib", collection_id: COLLECTION });
+    expect(target).not.toHaveProperty("folder");
+  });
+
+  it("is nothing where no collection is shown, never a default collection", () => {
+    expect(uploadTarget({ ...at, prefix: "" })).toBeUndefined();
+    expect(uploadTarget({ ...at, prefix: "Contracts", collection_id: "" })).toBeUndefined();
+  });
+});
+
+describe("uploadFiles destination", () => {
+  it("hands every file the one target it was given", async () => {
+    const source = new MemoryFileSource({ ...OBJECT, files: [{ path: "seed.txt", content: "s" }] });
+    const upload = vi.spyOn(source, "upload");
+    const target = { ...TARGET, folder: "Drawings" };
+    await uploadFiles(source, target, [new File(["a"], "one.txt"), new File(["b"], "two.txt")]);
+    expect(upload.mock.calls.map((c) => c[0])).toEqual([target, target]);
   });
 });

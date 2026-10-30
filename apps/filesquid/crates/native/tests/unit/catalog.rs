@@ -134,7 +134,7 @@ fn catalog_files(root: &std::path::Path) -> Vec<String> {
 fn the_catalog_directory_name_is_stable() {
     assert_eq!(CATALOG_DIR, "libraries");
     assert_eq!(CATALOG_FILE_EXTENSION, "sqlite");
-    assert_eq!(CATALOG_SCHEMA_VERSION, 3);
+    assert_eq!(CATALOG_SCHEMA_VERSION, 4);
 }
 
 #[test]

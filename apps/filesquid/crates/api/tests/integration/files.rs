@@ -419,7 +419,7 @@ async fn an_upload_creates_its_own_file_object_and_is_journaled() {
     assert!(answer
         .header("content-disposition")
         .contains("filename=\"b.txt\""));
-    let entries = rig.journaled("files.upload");
+    let entries = rig.journaled("file.upload");
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].outcome, Outcome::Succeeded);
     assert_eq!(entries[0].actor, "owner");
@@ -436,7 +436,7 @@ async fn an_upload_whose_declared_size_differs_commits_nothing() {
     let uri = upload_facts("b.txt", 5, "");
     let answer = rig.upload(uri, b"four").await;
     assert_error(&answer, 400, "invalid_request");
-    let refused = rig.journaled("files.upload");
+    let refused = rig.journaled("file.upload");
     assert_eq!(refused.len(), 1);
     assert_eq!(refused[0].outcome, Outcome::Failed);
     let objects = std::fs::read_dir(rig.dir.join("root").join("files"));
@@ -470,7 +470,7 @@ async fn a_move_to_the_same_path_is_refused_without_a_version() {
         )
         .await;
     // The engine refuses a move onto a path that is taken, its own included.
-    assert_refused_no_op(&rig, &answer, (400, "invalid_request"), "files.move");
+    assert_refused_no_op(&rig, &answer, (400, "invalid_request"), "file.move");
     assert_eq!(rig.head().await, "v1");
 }
 
@@ -494,7 +494,7 @@ async fn an_upload_above_the_cap_is_refused() {
     let answer = rig.upload(uri, &vec![0u8; MAX_UPLOAD_BYTES + 1]).await;
     assert_error(&answer, 400, "invalid_request");
     assert_eq!(rig.head().await, "v1");
-    assert_eq!(rig.journaled("files.upload").len(), 1);
+    assert_eq!(rig.journaled("file.upload").len(), 1);
 }
 
 #[tokio::test]
@@ -595,7 +595,7 @@ async fn a_move_renames_a_file_or_a_whole_folder_in_one_version() {
         let uri = format!("/api/v1/files/details?{}", query(&format!("path={moved}")));
         assert_eq!(rig.get(&uri).await.status.as_u16(), status, "{moved}");
     }
-    assert_eq!(rig.journaled("files.move").len(), 2);
+    assert_eq!(rig.journaled("file.move").len(), 2);
 }
 
 #[tokio::test]
@@ -659,7 +659,7 @@ async fn a_move_of_a_missing_path_is_not_found_and_publishes_nothing() {
         .await;
     assert_error(&answer, 404, "not_found");
     assert_eq!(rig.head().await, "v1");
-    let refused = rig.journaled("files.move");
+    let refused = rig.journaled("file.move");
     assert_eq!(refused.len(), 1);
     assert_eq!(refused[0].error_code.as_deref(), Some("not_found"));
 }
