@@ -80,6 +80,21 @@ export function parseLibraryView(value: unknown): LibraryView {
 }
 
 /**
+ * Check the revision in a library's facts (API-S-038): the open library's revision, or null
+ * for a remembered library that is not open now. Only the revision is read.
+ *
+ * @param value The parsed JSON answer of `GET /api/v1/libraries/{library}/facts`.
+ * @returns The revision, or null when the library is not open.
+ * @throws TypeError when the answer is not an object or the revision is neither text nor null.
+ */
+export function parseLibraryRevision(value: unknown): string | null {
+  if (!isRecord(value)) throw breaks("library facts");
+  const { revision } = value;
+  if (revision !== null && !isText(revision)) throw breaks("library facts");
+  return revision;
+}
+
+/**
  * Check the answer of a rebuild command: its pending job (API-S-025, API-F2.19).
  *
  * @param value The parsed JSON `result` of the pending outcome.
