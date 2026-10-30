@@ -79,11 +79,13 @@ Feature: File browser
     Then no upload call should be sent
 
   Scenario: A media type with parameters is sent as its type/subtype only
+    Given the browser shows the root of a collection
     When I upload a file whose media type is "text/plain;charset=utf-8"
     Then one upload call should be sent with the name, its normalisation form and the size
     And its media type should be "text/plain"
 
   Scenario: A media type or time the API cannot take is left out, and the file still uploads
+    Given the browser shows the root of a collection
     When I upload a file whose media type is "text" and whose last-modified time is in the year 10000
     Then one upload call should be sent with the name, its normalisation form and the size
     And it should send no media type
@@ -128,11 +130,13 @@ Feature: File browser
 
   # Edge cases
   Scenario: A file over 64 MiB is refused before it is sent
+    Given the browser shows the root of a collection
     When I choose a file larger than 64 MiB to upload
     Then no upload call should be sent
     And the alert should name the file and the limit
 
   Scenario: A file of exactly 64 MiB is accepted
+    Given the browser shows the root of a collection
     When I choose a file of exactly 64 MiB to upload
     Then one upload call should be sent
 
