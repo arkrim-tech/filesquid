@@ -7,8 +7,8 @@
 //! and, for the view, the caller's own journal entries; both may block, so they run on a
 //! blocking thread before the file service reads each file's object.
 
-use super::command::{self, Done, FileCommand};
-use super::copy::{CopyRequest, CopyView};
+use super::command::{self, FileCommand};
+use super::copy::CopyRequest;
 use super::drive::{
     check_filter, check_limit, check_view, file_candidate, folder_candidate, matches_filter, page,
     Candidate, MyTimes, ViewPage, ViewRequest,
@@ -16,14 +16,14 @@ use super::drive::{
 use super::drive_facts::{CollectionHistorySizeView, CollectionSizeQuery};
 use super::drive_scope::{collection_files, my_times, view_scope, ViewScope};
 use super::error::FileError;
-use super::routes::{body, files, query, read_answer};
+use super::provenance::Caller;
+use super::routes::{body, files, query, read_answer, recorded};
 use super::search::{parse_zone, search_files, search_page, Examined, SearchPage, SearchRequest};
 use super::search_match::Searcher;
 use super::search_query::parse;
 use super::search_scope::{search_scope, SearchScope};
 use super::{COLLECTION_HISTORY_SIZE_OPERATION, COPY_OPERATION, SEARCH_OPERATION, VIEW_OPERATION};
 use crate::auth::{Action, Principal};
-use crate::journal::JournalEntry;
 use crate::navigation::{NavigationService, NodeRef};
 use crate::routes::Route;
 use crate::ApiState;
@@ -71,26 +71,11 @@ async fn copy(
         COPY_OPERATION,
         command,
         |files, c, actor| async move {
-            let copied = files.copy(c.input, actor, c.expected).await?;
-            Ok(Done {
-                entries: vec![copy_entry(principal, &copied)],
-                view: copied,
-                changed: true,
-            })
+            let caller = Caller::new(actor).with_operation(c.operation_id);
+            Ok(recorded(files.copy(c.input, caller, c.expected).await?))
         },
     )
     .await
-}
-
-/// The journal entry of one copy: the caller, the library, the new file's object and its
-/// version, with its `<object-id>@vN` reference (API-S-028).
-fn copy_entry(principal: &Principal, copied: &CopyView) -> JournalEntry {
-    let ids = (
-        copied.library_id.as_str(),
-        copied.object_id.as_str(),
-        copied.version.as_str(),
-    );
-    command::version_entry(COPY_OPERATION, principal, ids, true)
 }
 
 /// `GET /api/v1/files/view`: one page of a library, collection or virtual-collection node.
