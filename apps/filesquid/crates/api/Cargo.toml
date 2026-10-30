@@ -216,6 +216,14 @@ name = "unit_imports_route"
 path = "tests/unit/imports_route.rs"
 
 [[test]]
+name = "unit_import_review"
+path = "tests/unit/import_review.rs"
+
+[[test]]
+name = "unit_job_items"
+path = "tests/unit/job_items.rs"
+
+[[test]]
 name = "unit_history_jobs"
 path = "tests/unit/history_jobs.rs"
 

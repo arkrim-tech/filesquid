@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "FileSquid API",
-    "version": "0.31.0",
+    "version": "0.32.0",
     "description": "The single FileSquid API served by every FileSquid host. See resources/architecture/030-filesquid-api-and-transports.md. Conventions: a command (mutation) sends a CommandEnvelope as the `envelope` member of its JSON request body (operation_id is the idempotency key, expected_revision the revision last read) and answers with a CommandOutcome; a query (list) takes the PageSize (`limit`, 1-1000) and Cursor (`cursor`) parameters; every failed request answers with an ApiError body (code, message, retryable). Router-wide fallbacks: any /api/v1/ path not in this contract answers 404 not_found, and a documented path called with a method it does not document answers 405 method_not_allowed; both carry the ApiError body. They are not listed per operation because no operation sends them. Authorisation is deny-by-default: every operation, including health, the contract and the event channel, requires the bearerAuth credential and is authorised before anything else runs, so a call without it answers 401 unauthorized and a call whose credential is not accepted or does not grant the operation answers 403 forbidden, before any 404 or 405; both carry the ApiError body with a DenialReason in `reason`. Each operation names the authorisation action it performs in x-filesquid-action. The one deliberate exception is GET /api/v1/health/live (x-filesquid-action public, security []), a liveness probe that answers only {\"status\":\"up\"} without a credential. The content route GET and HEAD /api/v1/content/{handle} (x-filesquid-action content.read, x-filesquid-credential content-handle, security []) is not public: its only credential is the content handle in its path, minted by POST /api/v1/content-handles for one file version (API-S-018); a Bearer token is not accepted there, and every unusable request under /api/v1/content/ (unknown, malformed, missing, expired, evicted or revoked handle, an extra path segment or another method) answers one identical 403 forbidden with reason invalid_credentials, never 401, 404 or 405. Paths marked x-filesquid-host-route are served by the hosts, not by the filesquid-api router."
   },
   "security": [
@@ -2442,8 +2442,8 @@
     "/api/v1/imports": {
       "post": {
         "operationId": "startImport",
-        "summary": "Import files or a folder the owner picks in the host's dialog",
-        "description": "API-S-036. The host shows its own native dialog for the source named (`files` or `folder`), and imports what the owner picks into the open library as one durable import job (kind `import`): each file's original and its metadata record with the facts the host's operating system provides are committed in one version of the file's own object, as an upload is (API-S-026, ADR 038). The body carries a CommandEnvelope whose scope is `library:<library_id>`; its operation ID is the idempotency key, so the same operation ID answers the same job instead of starting a second import. An import only adds new files, so the expected revision is not compared. The answer carries the command outcome API-S-002 requires: `pending` with the job (`import: started`), or `committed` with `import: cancelled` when the owner closed the dialog and no job was made. No path, file name or storage key crosses the API in the request, the answer, an error or the journal. Every import names its destination (owner decision 2026-10-22, \"Must choose\", ADR 041): `collection_id` and optionally `folder`. A request without `collection_id` is refused 400 invalid_request (`destination_required`) and an unknown collection 404 not_found (`collection_not_found`), each before any dialog and journaled once. Each imported file is registered in its home collection at its logical path in the library's collection snapshot under the request's operation ID, so it appears in navigation and in the listing by collection or folder node. A request while a dialog is open is refused 409 conflict (`dialog_open`); a library that is not open answers 404 not_found; a host without an import dialog (filesquid-server) answers 503 unavailable. Each request is journaled once as `import.start`; each file as `import.file`.",
+        "summary": "Plan an import of files or a folder the owner picks in the host's dialog",
+        "description": "API-S-036. The host shows its own native dialog for the source named (`files` or `folder`) and, before any byte is staged, plans the import of what the owner picked into the open library (owner answer 5 of 2026-10-22, \"Keep the review\"): the answer is `pending` with `import: planned`, the `plan_id` and the `plan` the UI shows (files found, new and already in this library, bytes to copy, the destination, the count of names to be numbered, free bytes after the upload and the staging limit). `GET /api/v1/imports/{plan_id}/items` pages the planned files; the job starts only on `POST /api/v1/imports/{plan_id}/start`; `DELETE /api/v1/imports/{plan_id}` discards the plan, as the host does on its own after 1 hour. A host without the review (the desktop until Task DE-1.8) starts the job at once and answers `import: started` with the job. The body carries a CommandEnvelope whose scope is `library:<library_id>`; its operation ID is the idempotency key, so a repeated operation ID answers its open plan (`planned`, the same `plan_id`), its started job (`started`) or `cancelled` without a second dialog, and 404 not_found (`plan_not_found`) once its plan expired or was discarded. An import only adds new files, so the expected revision is not compared. `committed` with `import: cancelled` when the owner closed the dialog: no plan and no job were made. No path, file name or storage key crosses the API in the request, the answer, an error or the journal. Every import names its destination (owner decision 2026-10-22, \"Must choose\", ADR 041): `collection_id` and optionally `folder`. A request without `collection_id` is refused 400 invalid_request (`destination_required`) and an unknown collection 404 not_found (`collection_not_found`), each before any dialog and journaled once. Each imported file is registered in its home collection at its logical path in the library's collection snapshot under the request's operation ID. A request while a dialog is open is refused 409 conflict (`dialog_open`); a library that is not open answers 404 not_found; a host without an import dialog (filesquid-server) answers 503 unavailable. Each plan request is journaled once as `import.plan` (`succeeded` with the plan ID, `cancelled`, or `failed` with its code; `import.start` with the job ID when the host started at once); each file as `import.file`.",
         "x-filesquid-action": "files.write",
         "requestBody": {
           "required": true,
@@ -2457,7 +2457,7 @@
         },
         "responses": {
           "200": {
-            "description": "The import job, or that the owner cancelled.",
+            "description": "The plan awaiting the owner's confirmation, the job of a host without the review, or that the owner cancelled.",
             "content": {
               "application/json": {
                 "schema": {
@@ -2476,7 +2476,7 @@
             "$ref": "#/components/responses/Forbidden"
           },
           "404": {
-            "description": "The library is not open on this host (`library_not_found`), or the destination collection is unknown, of another library or not readable (`collection_not_found`).",
+            "description": "The library is not open on this host (`library_not_found`), the destination collection is unknown, of another library or not readable (`collection_not_found`), or the repeated operation ID's plan expired or was discarded (`plan_not_found`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -4148,6 +4148,283 @@
           },
           "503": {
             "$ref": "#/components/responses/LibraryUnavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/imports/{plan_id}/items": {
+      "get": {
+        "operationId": "listImportPlanItems",
+        "summary": "The planned files of an import plan",
+        "description": "API-S-036 Review. The files of the open plan, at most 1,000 per page with a cursor, in the plan's order, each with its display name (its base name, never a folder path), its size, whether the library already holds it (the job skips it) and whether its name will be numbered because its path is taken (API-S-011). An unknown, expired, discarded or started plan is 404 not_found (`plan_not_found`); a limit outside 1 to 1000 or an unknown query field is 400 invalid_request; a host without an import dialog answers 503. A refusal is journaled once as `import.plan_items`; the display names never appear in an error or a journal entry.",
+        "x-filesquid-action": "files.write",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PlanId"
+          },
+          {
+            "$ref": "#/components/parameters/Cursor"
+          },
+          {
+            "$ref": "#/components/parameters/PageSize"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page of the planned files.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlanItemPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/PlanNotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/imports/{plan_id}/start": {
+      "post": {
+        "operationId": "startImportPlan",
+        "summary": "Start the import job of a reviewed plan",
+        "description": "API-S-036 Review. Takes no body and no CommandEnvelope (API-S-002, owner decision 2026-10-30): the plan ID is the idempotency key, and the answer's outcome names the plan request's operation ID. Asks the host to submit one durable import job (API-S-033, kind `import`) for the open plan and start it in the background; answers `pending` with `import: started` and the job. A repeated start of the same plan answers the same job again and starts nothing. An unknown, expired or discarded plan is 404 not_found (`plan_not_found`); a source that changed since the plan was made is 409 conflict (`source_changed`) and the plan stays open for review; a host that cannot run the job now, or without an import dialog, answers 503. Each start is journaled once as `import.start`: `succeeded` with the job ID, or `failed` with its code. Takes no body: the plan carries the operation ID of the request that made it.",
+        "x-filesquid-action": "files.write",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PlanId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The import job.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportAnswer"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/PlanNotFound"
+          },
+          "409": {
+            "description": "The picked source changed since the plan was made (conflict, journal code `source_changed`); the plan stays open.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/imports/{plan_id}": {
+      "delete": {
+        "operationId": "discardImportPlan",
+        "summary": "Discard an import plan",
+        "description": "API-S-036 Review. Takes no body and no CommandEnvelope (API-S-002, owner decision 2026-10-30): the plan ID is the idempotency key; a repeated discard is 404 not_found (`plan_not_found`) and changes nothing. Discards the open plan, changing nothing else: no byte was staged and no job is made; the plan's operation ID then answers 404 not_found (`plan_not_found`). The host discards an open plan on its own 1 hour after it was made. An unknown, expired, discarded or started plan is 404 not_found (`plan_not_found`); a host without an import dialog answers 503. Each discard is journaled once as `import.discard`.",
+        "x-filesquid-action": "files.write",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PlanId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The plan was discarded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlanDiscarded"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/PlanNotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/jobs/{job}/items": {
+      "get": {
+        "operationId": "listJobItems",
+        "summary": "The files of an upload job",
+        "description": "API-S-037 Per-file progress (owner answer 6 of 2026-10-22, \"Yes, report progress per file\"). The files of the job, at most 1,000 per page with a cursor, in the job's order, each with its display name (no path), its destination folder, its state (`queued`, `copying` with bytes done of total, `copied`, `skipped` as already in the library, or `failed` with its error code), its bytes and its size. A job without files answers an empty page. An unknown job is 404 not_found (journaled as job.refused); a limit outside 1 to 1000 or an unknown query field is 400 invalid_request; a host that keeps no per-file progress answers 503.",
+        "x-filesquid-action": "jobs.read",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/JobId"
+          },
+          {
+            "$ref": "#/components/parameters/Cursor"
+          },
+          {
+            "$ref": "#/components/parameters/PageSize"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page of the job's files.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobItemPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/JobNotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/JobsUnavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/jobs/{job}/items/{item}/retry": {
+      "post": {
+        "operationId": "retryJobItem",
+        "summary": "Retry one failed file of an upload job",
+        "description": "API-S-037 Per-file progress. Puts the failed file back to `queued` and hands a pending job to the runner the host installed for its kind (`scheduled` says whether it did; a running job's worker picks the file up itself). Not a command envelope (owner decision 2 of 2026-10-23): it names the state it asks for, takes no body and answers the job view, so repeating it changes nothing and hands nothing to the runner; a file that is not failed is left as it is. A paused job is refused 409 conflict (`job_paused`) and nothing changes: resume it first. A finished or cancel-requested job refuses the retry as the controls do; an unknown job or item is 404 not_found. Each file put back is journaled once as `job.item_retried` under the job's operation ID, with the job and the item as targets; a retry that changes nothing is not journaled; a refusal is journaled as job.refused. The display name never appears in an error or a journal entry.",
+        "x-filesquid-action": "jobs.manage",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/JobId"
+          },
+          {
+            "$ref": "#/components/parameters/JobItemId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The job after the retry, and whether it was handed to its runner.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobControlAnswer"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/JobOrItemNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/JobRetryConflict"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/JobsUnavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/jobs/{job}/retry-failed": {
+      "post": {
+        "operationId": "retryFailedJobItems",
+        "summary": "Retry every failed file of an upload job",
+        "description": "API-S-037 Per-file progress. Puts every failed file of the job back to `queued` and hands a pending job to its runner (`scheduled`); a retry that puts no file back changes nothing and hands nothing to the runner. Not a command envelope (owner decision 2 of 2026-10-23): no body, the job view answered, idempotent. A paused job is refused 409 conflict (`job_paused`) and nothing changes; a finished or cancel-requested job refuses the retry as the controls do; an unknown job is 404 not_found. Each file put back is journaled once as `job.item_retried` under the job's operation ID.",
+        "x-filesquid-action": "jobs.manage",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/JobId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The job after the retry, and whether it was handed to its runner.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobControlAnswer"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/JobNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/JobRetryConflict"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/JobsUnavailable"
           }
         }
       }
@@ -7623,8 +7900,9 @@
       },
       "ImportOutcome": {
         "type": "string",
-        "description": "What became of an import request.",
+        "description": "What became of an import request: `planned` (the host planned it and waits for the owner's confirmation; `plan_id` and `plan` describe it), `started` (its job runs or ran; `job_id` names it), or `cancelled` (the owner closed the dialog; no plan and no job were made).",
         "enum": [
+          "planned",
           "started",
           "cancelled"
         ]
@@ -7664,7 +7942,7 @@
       },
       "ImportAnswer": {
         "type": "object",
-        "description": "The answer of an import request: the command outcome (API-S-002) and what became of the request.",
+        "description": "The answer of an import request or start: the command outcome (API-S-002) and what became of the request.",
         "required": [
           "outcome",
           "import"
@@ -7673,15 +7951,24 @@
         "properties": {
           "outcome": {
             "$ref": "#/components/schemas/CommandOutcome",
-            "description": "`pending` for a started import (its job's work is durable and not yet complete; a repeated operation ID answers it again), `committed` for a cancelled one (nothing changed)."
+            "description": "`pending` for a planned or started import (the work is durable and not yet complete; a repeated operation ID answers it again), `committed` for a cancelled one (nothing changed)."
           },
           "import": {
             "$ref": "#/components/schemas/ImportOutcome"
           },
+          "plan_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The plan awaiting confirmation; present when planned."
+          },
+          "plan": {
+            "$ref": "#/components/schemas/ImportPlan",
+            "description": "What the plan shows for the review; present when planned."
+          },
           "job_id": {
             "type": "string",
             "minLength": 1,
-            "description": "The import job; absent when cancelled."
+            "description": "The import job; present when started."
           }
         }
       },
@@ -8081,6 +8368,10 @@
           "operation_id": {
             "type": "string",
             "description": "The job's operation ID."
+          },
+          "destination": {
+            "$ref": "#/components/schemas/JobDestination",
+            "description": "Where an upload job's files go (API-S-037 Per-file progress); absent for a kind without a destination or on a host that keeps no per-file progress."
           },
           "state": {
             "$ref": "#/components/schemas/JobState"
@@ -8797,6 +9088,289 @@
           }
         }
       },
+      "ImportDestination": {
+        "type": "object",
+        "description": "Where an import goes: a collection of the library and a folder inside it.",
+        "required": [
+          "collection_id"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "collection_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The destination collection."
+          },
+          "folder": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024,
+            "description": "The destination folder inside the collection, a collection logical path; the collection's root when absent."
+          }
+        }
+      },
+      "ImportPlan": {
+        "type": "object",
+        "description": "An import plan the owner reviews before any byte is staged (API-S-036 Review; mockup 18-import-review.svg): counts, sizes and IDs only, never a path or a name.",
+        "required": [
+          "plan_id",
+          "source",
+          "destination",
+          "files_found",
+          "files_new",
+          "files_present",
+          "bytes_to_copy",
+          "names_numbered",
+          "free_bytes_after",
+          "staging_limit_bytes",
+          "expires"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "plan_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The plan."
+          },
+          "source": {
+            "$ref": "#/components/schemas/ImportSource"
+          },
+          "destination": {
+            "$ref": "#/components/schemas/ImportDestination"
+          },
+          "source_volume": {
+            "type": "string",
+            "description": "The label of the volume the source is on, as the dialog showed it (never a path); absent when the host does not know it."
+          },
+          "files_found": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Files found in the picked source."
+          },
+          "files_new": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Files not yet in this library: the ones the job copies."
+          },
+          "files_present": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Files already in this library (by digest), which the job skips."
+          },
+          "bytes_to_copy": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Bytes the job copies."
+          },
+          "names_numbered": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Files and folders whose names will be numbered because their path is taken (API-S-011)."
+          },
+          "free_bytes_after": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0,
+            "description": "Free bytes on the library's volume after the upload; null when the host cannot read the volume."
+          },
+          "staging_limit_bytes": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Most bytes the host stages at once."
+          },
+          "expires": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the host discards the plan unless it is started or discarded first (RFC 3339, UTC)."
+          }
+        }
+      },
+      "PlanItem": {
+        "type": "object",
+        "description": "One planned file.",
+        "required": [
+          "item_id",
+          "name",
+          "bytes",
+          "present",
+          "numbered"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "item_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The file ID the host minted for it; the item ID of the job once started."
+          },
+          "name": {
+            "type": "string",
+            "description": "Its display name: the base name only, never a folder path."
+          },
+          "bytes": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Its size in bytes."
+          },
+          "present": {
+            "type": "boolean",
+            "description": "Whether the library already holds it (the job skips it)."
+          },
+          "numbered": {
+            "type": "boolean",
+            "description": "Whether its name will be numbered because its path is taken."
+          }
+        }
+      },
+      "PlanItemPage": {
+        "type": "object",
+        "description": "One page of a plan's files (1 to 1,000, default 1,000), in the plan's order.",
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PlanItem"
+            },
+            "description": "The files of this page."
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The cursor of the next page; null after the last."
+          }
+        }
+      },
+      "PlanDiscarded": {
+        "type": "object",
+        "description": "The answer of a discarded import plan.",
+        "required": [
+          "plan_id",
+          "discarded"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "plan_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The plan that was discarded."
+          },
+          "discarded": {
+            "type": "boolean",
+            "description": "Always true: the plan is gone and nothing else changed."
+          }
+        }
+      },
+      "JobDestination": {
+        "type": "object",
+        "description": "Where an upload job's files go: a collection of the library and a folder inside it (API-S-037 Per-file progress).",
+        "required": [
+          "collection_id"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "collection_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The destination collection."
+          },
+          "folder": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024,
+            "description": "The destination folder inside it, a collection logical path; the collection's root when absent."
+          }
+        }
+      },
+      "JobItemState": {
+        "type": "string",
+        "description": "Where one file of an upload job stands: queued, copying (bytes_done of bytes_total), copied, skipped (the library already holds it) or failed (with its error code).",
+        "enum": [
+          "queued",
+          "copying",
+          "copied",
+          "skipped",
+          "failed"
+        ]
+      },
+      "JobItem": {
+        "type": "object",
+        "description": "One file of an upload job, as the job items route shows it; never a path.",
+        "required": [
+          "item_id",
+          "name",
+          "state",
+          "bytes_done",
+          "bytes_total"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "item_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The item: the file ID the host minted for it."
+          },
+          "name": {
+            "type": "string",
+            "description": "Its display name: the base name only, never a folder path."
+          },
+          "folder": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024,
+            "description": "The destination folder inside the job's collection it goes to; the collection's root when absent."
+          },
+          "state": {
+            "$ref": "#/components/schemas/JobItemState"
+          },
+          "bytes_done": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Bytes copied so far."
+          },
+          "bytes_total": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Its size in bytes."
+          },
+          "error_code": {
+            "type": "string",
+            "description": "Why it failed, when it did."
+          }
+        }
+      },
+      "JobItemPage": {
+        "type": "object",
+        "description": "One page of an upload job's files (1 to 1,000, default 1,000), in the job's order.",
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/JobItem"
+            },
+            "description": "The files of this page."
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The cursor of the next page; null after the last."
+          }
+        }
+      },
       "LibraryLocationCommand": {
         "type": "object",
         "description": "Body of POST /api/v1/libraries and POST /api/v1/libraries/openings: the command envelope and the input (Task API-F2.19, API-S-002). The envelope's scope is `location:<location_id>`; create expects revision `0` (the library does not exist yet) and open expects `0`, or the current revision of a library already open at that location, which is then answered again; its operation_id is the idempotency key and expected_revision the revision the caller last read (API-S-019).",
@@ -9182,6 +9756,28 @@
           "minLength": 1,
           "maxLength": 128
         }
+      },
+      "PlanId": {
+        "name": "plan_id",
+        "in": "path",
+        "required": true,
+        "description": "An import plan ID as `POST /api/v1/imports` answered it.",
+        "schema": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      },
+      "JobItemId": {
+        "name": "item",
+        "in": "path",
+        "required": true,
+        "description": "An item ID of a job, as the job items route lists it (the file ID the host minted when it planned the import).",
+        "schema": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
       }
     },
     "responses": {
@@ -9444,6 +10040,36 @@
           "application/json": {
             "schema": {
               "$ref": "#/components/schemas/FileCommandConflict"
+            }
+          }
+        }
+      },
+      "PlanNotFound": {
+        "description": "No open import plan has this ID: it is unknown, expired, discarded or already started (not_found, journal code `plan_not_found`).",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
+          }
+        }
+      },
+      "JobOrItemNotFound": {
+        "description": "No job has this ID, or the job has no file with this item ID (not_found).",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
+          }
+        }
+      },
+      "JobRetryConflict": {
+        "description": "The job cannot take a retry now (conflict): it has finished (job_finished), it is being cancelled (cancel_requested), or it is paused and must be resumed first (job_paused); the journaled refusal names the rule. Nothing changed.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
             }
           }
         }
