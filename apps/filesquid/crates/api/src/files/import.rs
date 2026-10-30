@@ -117,9 +117,9 @@ where
             .map_err(canonical_error)?;
         let staging = library.staging(&object_id)?;
         let model = change_model(&library, &root, &object_id, staging);
-        let created = self.created();
         let imported = async {
             let staged = stage_source(&model, &path, &import.source, (source, key)).await?;
+            let created = self.created();
             let _writing = library.writes.lock().await;
             if let Some(answer) = imported_before(&library, &import, &file_id).await? {
                 clear_staged(&model).await;
@@ -237,7 +237,7 @@ where
     let digest = model
         .stage_file(path, source, key)
         .await
-        .map_err(stage_error)?;
+        .map_err(|err| stage_error(err, &checked))?;
     let after = source.head(&checked).await.map_err(source_unreadable)?;
     match after == before {
         true => Ok((digest, before.size)),
@@ -259,11 +259,26 @@ fn source_unreadable(err: StorageError) -> FileError {
 }
 
 /// The error of a failed stage: a source that changed between its reads is
-/// [`source_changed`], anything else as the change model's error. Pure.
-fn stage_error(err: ChangeError) -> FileError {
+/// [`source_changed`], a failed read of the source `source_key` is [`source_unreadable`],
+/// anything else as the change model's error. Pure but for the log.
+fn stage_error(err: ChangeError, source_key: &StorageKey) -> FileError {
     match err {
         ChangeError::SourceChanged { .. } => source_changed(),
+        ChangeError::Storage(storage) if names_key(&storage, source_key) => {
+            source_unreadable(storage)
+        }
         other => other.into(),
+    }
+}
+
+/// Whether `err` is about `key` (a read of the source, rather than of the staging area, whose
+/// keys are the area's own). Pure.
+fn names_key(err: &StorageError, key: &StorageKey) -> bool {
+    match err {
+        StorageError::NotFound { key: named }
+        | StorageError::Io { key: named, .. }
+        | StorageError::InvalidKey { key: named, .. } => named == key.as_str(),
+        _ => false,
     }
 }
 

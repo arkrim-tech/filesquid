@@ -232,6 +232,26 @@ async fn a_source_that_changes_between_its_two_reads_is_refused_as_source_change
     assert!(!backend.root().join("files").exists(), "nothing published");
 }
 
+#[tokio::test]
+async fn a_source_that_cannot_be_read_while_staged_is_refused_as_source_unreadable() {
+    let dir = TempDir::new("unreadable");
+    let (files, backend) = library(&dir.0).await;
+    let path = source(&dir.0, "a.txt", b"twelve bytes");
+    let gathered = gather_source(&path, path.parent().expect("folder")).expect("facts");
+    let failing = ChangingSource::failing(b"twelve bytes").await;
+    let err = files
+        .import_original(source_import(gathered), &failing, SOURCE_KEY, "owner")
+        .await
+        .expect_err("refused");
+    assert!(
+        err.message().starts_with("source_unreadable"),
+        "{}",
+        err.message()
+    );
+    assert!(commit_failure(err).retry_now(), "retried");
+    assert!(!backend.root().join("files").exists(), "nothing published");
+}
+
 #[test]
 fn a_size_mismatch_and_a_changed_source_are_retried_within_the_job() {
     for message in [

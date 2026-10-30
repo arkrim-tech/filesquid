@@ -15,6 +15,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 pub struct ChangingSource {
     inner: MemoryBackend,
     passes: AtomicU32,
+    fails: bool,
 }
 
 impl ChangingSource {
@@ -26,6 +27,16 @@ impl ChangingSource {
         Self {
             inner,
             passes: AtomicU32::new(0),
+            fails: false,
+        }
+    }
+
+    /// A source holding `bytes` whose reads fail from the second pass on, as a file that
+    /// became unreadable while it was staged.
+    pub async fn failing(bytes: &[u8]) -> Self {
+        Self {
+            fails: true,
+            ..Self::holding(bytes).await
         }
     }
 
@@ -38,6 +49,13 @@ impl ChangingSource {
     async fn read(&self, key: &StorageKey, range: ByteRange) -> Result<Vec<u8>, StorageError> {
         if range.start() == 0 {
             self.passes.fetch_add(1, Ordering::SeqCst);
+        }
+        if self.fails && self.passes() > 1 {
+            return Err(StorageError::Io {
+                key: key.to_string(),
+                kind: std::io::ErrorKind::PermissionDenied,
+                message: "permission denied".into(),
+            });
         }
         let mut bytes = self.inner.get_range(key, range).await?;
         if self.passes() > 1 {
