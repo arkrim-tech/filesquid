@@ -24,6 +24,7 @@
 import { ApiError, type RequestOptions } from "../api/client";
 import { commandEnvelope, type CommandAnswer, type CommandEnvelope } from "../api/commands";
 import {
+  parseLibraryRevision,
   parseLibraryView,
   parseLocationChoice,
   parseRebuildJob,
@@ -32,6 +33,7 @@ import {
   parseSnapshotCopyReport,
 } from "./contract";
 import {
+  INITIAL_LIBRARY_REVISION,
   NEW_LIBRARY_REVISION,
   type ChoicePurpose,
   type LibrarySource,
@@ -177,6 +179,23 @@ export class ClientLibrarySource implements LibrarySource {
     const input = { library_id: libraryId };
     const answer = await this.send(ROUTES.rebuild, `library:${libraryId}`, expectedRevision, input);
     return parseRebuildJob(resultOf(answer, ROUTES.rebuild, "pending"));
+  }
+
+  /**
+   * Read the current revision of a library from its facts
+   * (`GET /api/v1/libraries/{library}/facts`; API-S-038), for a page that did not create or
+   * open it. Writes nothing. Network I/O.
+   *
+   * @param libraryId The library.
+   * @returns Its revision; the initial revision when it is not open now, so the command that
+   *   follows is refused by the API as `library_not_open`.
+   * @throws ApiError as the API answers it (404 not_found for a library the caller may not read).
+   * @throws TypeError when the answer breaks the contract.
+   */
+  async revision(libraryId: string): Promise<string> {
+    const path = `/api/v1/libraries/${encodeURIComponent(libraryId)}/facts`;
+    const revision = parseLibraryRevision(await this.client.request<unknown>(path));
+    return revision ?? INITIAL_LIBRARY_REVISION;
   }
 
   /**

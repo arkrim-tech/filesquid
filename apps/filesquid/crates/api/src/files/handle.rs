@@ -7,6 +7,7 @@ use super::download::Download;
 use super::drive_facts::{CollectionHistorySizeView, FactsAnswer};
 use super::error::FileError;
 use super::nodes::ScopeObject;
+use super::provenance::{Caller, Committed};
 use super::scope_listing::{ScopeAfter, ScopeListing, ScopePage};
 use super::service::{ContentAnswer, ContentRequest, FileService};
 use super::statements::{
@@ -14,12 +15,10 @@ use super::statements::{
     RemoveStatementRequest, RenameRequest, SetStatementRequest, StatementsView, TermQuery,
     TermsView,
 };
-use super::versions::Committed;
 use super::view::{
-    CommitView, FileDetailsView, FileHistorySizeView, FileQuery, FolderPageView, FolderRequest,
-    FolderView, HistoryQuery, HistoryView, LabelRequest, LibraryHistorySizeView, LibraryQuery,
-    ListingQuery, MoveRequest, ObjectQuery, RemoveRequest, RestoreRequest, UploadQuery, UploadView,
-    VersionsView,
+    FileDetailsView, FileHistorySizeView, FileQuery, FolderPageView, FolderRequest, FolderView,
+    HistoryQuery, HistoryView, LabelRequest, LibraryHistorySizeView, LibraryQuery, ListingQuery,
+    MoveRequest, ObjectQuery, RemoveRequest, RestoreRequest, UploadQuery, UploadView, VersionsView,
 };
 use crate::content::ContentTarget;
 use crate::navigation::FolderScope;
@@ -84,9 +83,9 @@ pub trait FileOperations: Send + Sync {
         &self,
         query: UploadQuery,
         bytes: Bytes,
-        actor: String,
+        caller: Caller,
         expected: String,
-    ) -> FileFuture<'_, UploadView>;
+    ) -> FileFuture<'_, Committed<UploadView>>;
 
     /// Whether a folder exists or stays pending at the object's head `expected`; writes
     /// nothing.
@@ -97,24 +96,24 @@ pub trait FileOperations: Send + Sync {
     fn move_path(
         &self,
         request: MoveRequest,
-        actor: String,
+        caller: Caller,
         expected: String,
-    ) -> FileFuture<'_, CommitView>;
+    ) -> FileFuture<'_, Committed>;
 
     /// Remove one file or folder by `actor`, if the object's head is `expected`.
     fn remove(
         &self,
         request: RemoveRequest,
-        actor: String,
+        caller: Caller,
         expected: String,
-    ) -> FileFuture<'_, CommitView>;
+    ) -> FileFuture<'_, Committed>;
 
     /// Restore files or folders from an earlier version by `actor`, in one version, if the
     /// object's head is `expected`.
     fn restore(
         &self,
         request: RestoreRequest,
-        actor: String,
+        caller: Caller,
         expected: String,
     ) -> FileFuture<'_, Committed>;
 
@@ -123,7 +122,7 @@ pub trait FileOperations: Send + Sync {
     fn set_label(
         &self,
         request: LabelRequest,
-        actor: String,
+        caller: Caller,
         expected: String,
     ) -> FileFuture<'_, Committed>;
 
@@ -143,26 +142,26 @@ pub trait FileOperations: Send + Sync {
     fn set_statement(
         &self,
         request: SetStatementRequest,
-        actor: String,
-    ) -> FileFuture<'_, MetadataCommitView>;
+        caller: Caller,
+    ) -> FileFuture<'_, Committed<MetadataCommitView>>;
 
     /// Rename a file (its display name only) by `actor`, if the file object's head is
     /// `expected`.
     fn rename(
         &self,
         request: RenameRequest,
-        actor: String,
+        caller: Caller,
         expected: String,
-    ) -> FileFuture<'_, MetadataCommitView>;
+    ) -> FileFuture<'_, Committed<MetadataCommitView>>;
 
     /// Copy a file at its head into a new file by `actor`, if the source's head is
     /// `expected`.
     fn copy(
         &self,
         request: CopyRequest,
-        actor: String,
+        caller: Caller,
         expected: String,
-    ) -> FileFuture<'_, CopyView>;
+    ) -> FileFuture<'_, Committed<CopyView>>;
 
     /// The display name a copy of the file `file_id` of `library_id` takes: its head's.
     fn copy_name(&self, library_id: String, file_id: String) -> FileFuture<'_, String>;
@@ -171,15 +170,15 @@ pub trait FileOperations: Send + Sync {
     fn remove_statement(
         &self,
         request: RemoveStatementRequest,
-        actor: String,
-    ) -> FileFuture<'_, MetadataCommitView>;
+        caller: Caller,
+    ) -> FileFuture<'_, Committed<MetadataCommitView>>;
 
     /// Register a namespace by `actor`.
     fn register_namespace(
         &self,
         request: RegisterNamespaceRequest,
-        actor: String,
-    ) -> FileFuture<'_, MetadataCommitView>;
+        caller: Caller,
+    ) -> FileFuture<'_, Committed<MetadataCommitView>>;
 
     /// The bytes one file's history keeps.
     fn history_size(&self, query: HistoryQuery) -> FileFuture<'_, FileHistorySizeView>;
@@ -255,10 +254,10 @@ where
         &self,
         query: UploadQuery,
         bytes: Bytes,
-        actor: String,
+        caller: Caller,
         expected: String,
-    ) -> FileFuture<'_, UploadView> {
-        Box::pin(async move { FileService::upload(self, query, &bytes, &actor, &expected).await })
+    ) -> FileFuture<'_, Committed<UploadView>> {
+        Box::pin(async move { FileService::upload(self, query, &bytes, caller, &expected).await })
     }
 
     fn create_folder(
@@ -272,37 +271,37 @@ where
     fn move_path(
         &self,
         request: MoveRequest,
-        actor: String,
+        caller: Caller,
         expected: String,
-    ) -> FileFuture<'_, CommitView> {
-        Box::pin(async move { FileService::move_path(self, request, &actor, &expected).await })
+    ) -> FileFuture<'_, Committed> {
+        Box::pin(async move { FileService::move_path(self, request, caller, &expected).await })
     }
 
     fn remove(
         &self,
         request: RemoveRequest,
-        actor: String,
+        caller: Caller,
         expected: String,
-    ) -> FileFuture<'_, CommitView> {
-        Box::pin(async move { FileService::remove(self, request, &actor, &expected).await })
+    ) -> FileFuture<'_, Committed> {
+        Box::pin(async move { FileService::remove(self, request, caller, &expected).await })
     }
 
     fn restore(
         &self,
         request: RestoreRequest,
-        actor: String,
+        caller: Caller,
         expected: String,
     ) -> FileFuture<'_, Committed> {
-        Box::pin(async move { FileService::restore(self, request, &actor, &expected).await })
+        Box::pin(async move { FileService::restore(self, request, caller, &expected).await })
     }
 
     fn set_label(
         &self,
         request: LabelRequest,
-        actor: String,
+        caller: Caller,
         expected: String,
     ) -> FileFuture<'_, Committed> {
-        Box::pin(async move { FileService::set_label(self, request, &actor, &expected).await })
+        Box::pin(async move { FileService::set_label(self, request, caller, &expected).await })
     }
 
     fn history_size(&self, query: HistoryQuery) -> FileFuture<'_, FileHistorySizeView> {
@@ -328,27 +327,27 @@ where
     fn set_statement(
         &self,
         request: SetStatementRequest,
-        actor: String,
-    ) -> FileFuture<'_, MetadataCommitView> {
-        Box::pin(async move { FileService::set_statement(self, request, &actor).await })
+        caller: Caller,
+    ) -> FileFuture<'_, Committed<MetadataCommitView>> {
+        Box::pin(async move { FileService::set_statement(self, request, caller).await })
     }
 
     fn rename(
         &self,
         request: RenameRequest,
-        actor: String,
+        caller: Caller,
         expected: String,
-    ) -> FileFuture<'_, MetadataCommitView> {
-        Box::pin(async move { FileService::rename(self, request, &actor, &expected).await })
+    ) -> FileFuture<'_, Committed<MetadataCommitView>> {
+        Box::pin(async move { FileService::rename(self, request, caller, &expected).await })
     }
 
     fn copy(
         &self,
         request: CopyRequest,
-        actor: String,
+        caller: Caller,
         expected: String,
-    ) -> FileFuture<'_, CopyView> {
-        Box::pin(async move { FileService::copy(self, request, &actor, &expected).await })
+    ) -> FileFuture<'_, Committed<CopyView>> {
+        Box::pin(async move { FileService::copy(self, request, caller, &expected).await })
     }
 
     fn copy_name(&self, library_id: String, file_id: String) -> FileFuture<'_, String> {
@@ -358,17 +357,17 @@ where
     fn remove_statement(
         &self,
         request: RemoveStatementRequest,
-        actor: String,
-    ) -> FileFuture<'_, MetadataCommitView> {
-        Box::pin(async move { FileService::remove_statement(self, request, &actor).await })
+        caller: Caller,
+    ) -> FileFuture<'_, Committed<MetadataCommitView>> {
+        Box::pin(async move { FileService::remove_statement(self, request, caller).await })
     }
 
     fn register_namespace(
         &self,
         request: RegisterNamespaceRequest,
-        actor: String,
-    ) -> FileFuture<'_, MetadataCommitView> {
-        Box::pin(async move { FileService::register_namespace(self, request, &actor).await })
+        caller: Caller,
+    ) -> FileFuture<'_, Committed<MetadataCommitView>> {
+        Box::pin(async move { FileService::register_namespace(self, request, caller).await })
     }
 
     fn library_history_size(&self, query: LibraryQuery) -> FileFuture<'_, LibraryHistorySizeView> {

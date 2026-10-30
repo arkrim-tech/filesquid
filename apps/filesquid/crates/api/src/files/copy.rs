@@ -10,22 +10,26 @@
 //! a streamed copy exists.
 
 use super::error::FileError;
+use super::provenance::{label_of, Caller, Committed, Write};
 use super::service::{change_model, read, FileService};
 use super::statements::metadata_error;
 use super::upload::{canonical_error, committed_before, mint_file_id, parse_file_id};
 use super::view::UploadView;
+use super::COPY_OPERATION;
 use crate::canonical::{
     commit_file_original, copy_record, file_object_id, file_object_root, read_file_original,
-    source_reference, CanonicalError, CopyInput, OwnerReadable, SOURCE_TERM,
+    source_reference, BoundMeta, CanonicalError, CopyInput, OwnerReadable, SOURCE_TERM,
 };
-use filesquid_core::FileId;
+use filesquid_core::{FileId, OperationKind};
 use filesquid_metadata::file_record::FileRecord;
+use filesquid_metadata::namespace::NamespaceRegistry;
 use filesquid_metadata::record::parse_curie_with;
 use filesquid_ocfl::read::Object;
 use filesquid_ocfl::storage::StorageBackend;
 use filesquid_ocfl::view;
 use filesquid_ocfl::write::VersionReservations;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 /// Largest original a copy reads, in bytes: the upload bound, since a copy holds the bytes
 /// in memory as an upload does.
@@ -111,7 +115,8 @@ where
         Ok(original.record.display_name().to_string())
     }
 
-    /// Copy the file `request.file_id` at its head by `actor` into a new file.
+    /// Copy the file `request.file_id` at its head by `caller` into a new file, in one commit
+    /// linked to the journal ([`super::Committed`]).
     ///
     /// # Errors
     /// `invalid_request` for a malformed file ID or message, or a source over
@@ -123,38 +128,46 @@ where
     pub async fn copy(
         &self,
         request: CopyRequest,
-        actor: &str,
+        caller: impl Into<Caller>,
         expected: &str,
-    ) -> Result<CopyView, FileError> {
+    ) -> Result<Committed<CopyView>, FileError> {
+        let caller = caller.into();
         let source_id = parse_file_id(&request.file_id)?;
-        let meta = self.meta(actor, request.message.as_deref())?;
+        let label = label_of(request.message.as_deref())?;
         let library = self.library(&request.library_id)?;
         let registry = self.registry(&request.library_id).await?;
         let _writing = library.writes.lock().await;
         let backend = library.files.backend.as_ref();
         let file_id = match copy_target(backend, &request).await? {
             CopyTarget::New(file_id) => file_id,
-            CopyTarget::Committed(done) => return Ok(done),
+            CopyTarget::Committed(view) => {
+                return Ok(Committed {
+                    view,
+                    entries: Vec::new(),
+                })
+            }
         };
         let source = read_source(backend, source_id, expected).await?;
         let reference = source_reference(&source.file_id, &source.version);
-        let started = self.created();
-        let input = CopyInput {
-            source: &source.record,
-            started: &started,
-            finished: &self.created(),
-        };
-        let mut record = copy_record(&file_id, &input, &source.bytes).map_err(copy_error)?;
-        let (namespace, _) = parse_curie_with(&format!("dcterms:{SOURCE_TERM}"), &registry)
-            .map_err(metadata_error)?;
-        record
-            .statements_mut()
-            .set_registered(&registry, namespace, SOURCE_TERM, reference.clone())
-            .map_err(metadata_error)?;
+        let record = self.copied_record(&file_id, &source, &registry, &reference)?;
         let root = file_object_root(&file_id).map_err(copy_error)?;
         let object_id = file_object_id(&file_id);
+        let prepared = self.prepare(&Write {
+            caller: &caller,
+            kind: OperationKind::Copy,
+            label,
+            operation: COPY_OPERATION,
+            library_id: &request.library_id,
+            object_id: &object_id,
+            metadata: false,
+            moves: BTreeMap::new(),
+        })?;
         let staging = library.staging(&object_id)?;
         let model = change_model(&library, &root, &object_id, staging);
+        let meta = BoundMeta {
+            meta: prepared.meta(),
+            bound: prepared.bound(),
+        };
         let committed = commit_file_original(
             &model,
             &OwnerReadable,
@@ -169,16 +182,43 @@ where
         let receipt =
             committed.ok_or_else(|| FileError::internal("a new copy wrote no version"))?;
         library.remember(&object_id, &root);
-        Ok(CopyView {
+        let view = CopyView {
             library_id: request.library_id,
             file_id: file_id.as_str().to_string(),
-            object_id: receipt.object_id,
+            object_id: receipt.object_id.clone(),
             version: receipt.version.to_string(),
-            created: receipt.created,
+            created: receipt.created.clone(),
             source: reference,
             collection_id: None,
             path: None,
-        })
+        };
+        Ok(prepared.finish(view, &receipt))
+    }
+
+    /// The record of the copy `file_id` of `source`: the source's record rebound to the copy,
+    /// naming the source `reference` as its asserted `dcterms:source`, with this service's
+    /// clock. Pure but for the clock.
+    fn copied_record(
+        &self,
+        file_id: &FileId,
+        source: &Source,
+        registry: &NamespaceRegistry,
+        reference: &str,
+    ) -> Result<FileRecord, FileError> {
+        let started = self.created();
+        let input = CopyInput {
+            source: &source.record,
+            started: &started,
+            finished: &self.created(),
+        };
+        let mut record = copy_record(file_id, &input, &source.bytes).map_err(copy_error)?;
+        let (namespace, _) = parse_curie_with(&format!("dcterms:{SOURCE_TERM}"), registry)
+            .map_err(metadata_error)?;
+        record
+            .statements_mut()
+            .set_registered(registry, namespace, SOURCE_TERM, reference.to_string())
+            .map_err(metadata_error)?;
+        Ok(record)
     }
 }
 

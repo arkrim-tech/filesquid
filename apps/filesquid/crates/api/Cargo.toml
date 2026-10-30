@@ -180,6 +180,10 @@ name = "integration_metadata"
 path = "tests/integration/metadata.rs"
 
 [[test]]
+name = "integration_commit_linkage"
+path = "tests/integration/commit_linkage.rs"
+
+[[test]]
 name = "integration_names"
 path = "tests/integration/names.rs"
 
