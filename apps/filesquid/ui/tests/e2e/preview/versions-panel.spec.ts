@@ -9,6 +9,7 @@
  * here), the constants are the browser's computed styles, and there is no console error. The
  * routes are faked from the mockups' data; the clock is fixed at 14:00 UTC on 16 October 2026.
  */
+import { statSync } from "node:fs";
 import { expect, test, type Page } from "@playwright/test";
 import {
   activeLabels,
@@ -270,6 +271,28 @@ for (const scheme of SCHEMES) {
       expect(api.downloads).toEqual([
         { library_id: "lib", object_id: PANEL_OBJECT, version: "v4", path: HARBOUR.path },
       ]);
+      await expect(page.locator("fs-versions-panel .notice")).toHaveCount(0);
+      expect(errors).toEqual([]);
+    });
+
+    test("Download this version: a version above the desktop cap is read in ranged 8 MiB reads and saved whole", async ({
+      page,
+    }) => {
+      const errors = trackErrors(page);
+      const api = await openVersions(page);
+      const [download] = await Promise.all([
+        page.waitForEvent("download"),
+        choose(page, "v5", "download"),
+      ]);
+      expect(download.suggestedFilename()).toBe("harbour-masterplan-v7.pdf");
+      const saved = await download.path();
+      expect(statSync(saved).size).toBe(HARBOUR.versions[4]?.[2]);
+      expect(api.contentReads).toEqual([
+        "bytes=0-8388607",
+        "bytes=8388608-16777215",
+        "bytes=16777216-18769509",
+      ]);
+      expect(api.downloads).toEqual([]);
       await expect(page.locator("fs-versions-panel .notice")).toHaveCount(0);
       expect(errors).toEqual([]);
     });

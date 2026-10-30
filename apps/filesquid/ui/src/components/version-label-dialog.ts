@@ -13,11 +13,11 @@
  */
 import { formatLabel, type LabelTable } from "../theme/labels";
 import type { FileRef } from "../files/model";
+import { node } from "./library-parts";
 import {
-  labelProblem,
   dialogActions,
   dialogHead,
-  node,
+  labelProblem,
   type DialogParts,
 } from "./version-restore-dialog";
 
@@ -41,7 +41,9 @@ export type LabelChange =
 
 /**
  * Decide what a typed label means for a version. Blank clears the label; the route refuses a
- * label that would change nothing (409), so an unchanged label sends nothing. Pure.
+ * label that would change nothing (409), so an unchanged label sends nothing. The field starts
+ * with the stored label as it is, so a field still equal to it is untouched even when the stored
+ * label has surrounding spaces; a label that differs only by those spaces is sent trimmed. Pure.
  *
  * @param raw The label as typed.
  * @param current The version's label now, or null for none.
@@ -49,6 +51,7 @@ export type LabelChange =
  *   change nothing, otherwise the label to send (null to clear).
  */
 export function labelChange(raw: string, current: string | null): LabelChange {
+  if (raw === (current ?? "")) return { kind: "unchanged" };
   if (labelProblem(raw)) return { kind: "invalid" };
   const label = raw.trim() === "" ? null : raw.trim();
   if (label === (current?.trim() ? current : null)) return { kind: "unchanged" };
@@ -78,6 +81,8 @@ export function buildLabelDialog(params: LabelDialogParams): DialogParts {
   input.autocomplete = "off";
   input.value = current ?? "";
   const help = node("p", "help", labels.versionsEditLabelHelp);
+  help.id = "label-help";
+  input.setAttribute("aria-describedby", help.id);
   const error = node("p", "error");
   error.setAttribute("role", "alert");
   const buttons = dialogActions(labels, labels.versionsEditLabelSave, "save");

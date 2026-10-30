@@ -108,11 +108,13 @@ Feature: File version history and retention
     When I open the file's details
     Then I should see the bytes used by its version history after the size, with the number of versions
 
-  # Pending API-S-038: no route reports a library's used bytes or the disk's free space yet,
-  # so the sidebar's Storage used block keeps the facts UI-F2.18 left it with.
-  Scenario: History size is reported per library
-    When I open the library's storage used
-    Then version history should be included in the total
+  # The sidebar's Storage used block is not part of Task UI-F2.11. A UI task wires it from the
+  # library facts route (GET /libraries/{library}/facts, API-S-038, contract 0.30.0) and
+  # GET /files/library-history-size; until then it shows no figure it has not read.
+  Scenario: The Storage used block shows no figure that was not read
+    Given no library facts have been read for the sidebar
+    When I look at the Storage used block
+    Then it should show no used, history or free figure
 
   Scenario: The difference from thinning drives is in the parity register
     When I read the drive-parity table in the capability register

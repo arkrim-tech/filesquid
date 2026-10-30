@@ -44,7 +44,14 @@ function clientOver(bytes: Uint8Array) {
       const part = range
         ? bytes.slice(range.start, (range.end ?? bytes.byteLength - 1) + 1)
         : bytes;
-      return { response: new Response(part as BodyInit), partial: range !== undefined };
+      const contentRange = range
+        ? { start: range.start, end: range.start + part.byteLength - 1, size: bytes.byteLength }
+        : undefined;
+      return {
+        response: new Response(part as BodyInit),
+        partial: range !== undefined,
+        contentRange,
+      };
     },
   );
   return { request, read } as unknown as DownloadClient & {
@@ -83,9 +90,11 @@ describe("ClientDownloadSource", () => {
 
   it("reads a version above the desktop cap with ranged reads of at most 8 MiB", async () => {
     const size = DESKTOP_ANSWER_CAP + 5;
-    const c = clientOver(new Uint8Array(size));
+    const bytes = Uint8Array.from({ length: size }, (_, i) => i % 251);
+    const c = clientOver(bytes);
     const blob = await new ClientDownloadSource(c).readVersionFile(FILE);
     expect(blob.size).toBe(size);
+    expect(Buffer.from(await blobBytes(blob)).equals(Buffer.from(bytes))).toBe(true);
     const ranges = c.read.mock.calls.map(
       (call) => (call[1] as { range: { start: number; end: number } }).range,
     );
@@ -106,18 +115,57 @@ describe("ClientDownloadSource", () => {
     expect(c.read).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ["a whole 200 answer that ignored the Range", { partial: false, contentRange: undefined }],
+    ["a 206 without a Content-Range", { partial: true, contentRange: undefined }],
+    ["a 206 for another range", { partial: true, contentRange: { start: 1, end: RANGE_CHUNK } }],
+    [
+      "a 206 for a shorter range",
+      { partial: true, contentRange: { start: 0, end: RANGE_CHUNK - 2 } },
+    ],
+  ])("refuses %s instead of saving a corrupted file", async (_name, answer) => {
+    const size = DESKTOP_ANSWER_CAP + 5;
+    const c = clientOver(new Uint8Array(size));
+    c.read.mockResolvedValueOnce({
+      response: new Response(new Uint8Array(RANGE_CHUNK)),
+      ...answer,
+    } as never);
+    await expect(new ClientDownloadSource(c).readVersionFile(FILE)).rejects.toBeInstanceOf(
+      TypeError,
+    );
+    expect(c.read).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses a 206 whose body is not the length its Content-Range names", async () => {
+    const size = DESKTOP_ANSWER_CAP + 5;
+    const c = clientOver(new Uint8Array(size));
+    const contentRange = { start: 0, end: RANGE_CHUNK - 1, size };
+    c.read.mockResolvedValueOnce({
+      response: new Response(new Uint8Array(RANGE_CHUNK - 1)),
+      partial: true,
+      contentRange,
+    });
+    await expect(new ClientDownloadSource(c).readVersionFile(FILE)).rejects.toBeInstanceOf(
+      TypeError,
+    );
+  });
+
   it("passes the abort signal on and stops reading when it aborts", async () => {
     const size = DESKTOP_ANSWER_CAP + 5;
     const c = clientOver(new Uint8Array(size));
     const abort = new AbortController();
-    c.read.mockImplementationOnce(async () => {
+    const seen: (AbortSignal | undefined)[] = [];
+    c.read.mockImplementationOnce(async (_path, options) => {
+      seen.push((options as { signal?: AbortSignal }).signal);
       abort.abort();
-      return { response: new Response(new Uint8Array(RANGE_CHUNK)), partial: true };
+      const contentRange = { start: 0, end: RANGE_CHUNK - 1, size };
+      return { response: new Response(new Uint8Array(RANGE_CHUNK)), partial: true, contentRange };
     });
     await expect(
       new ClientDownloadSource(c).readVersionFile(FILE, { signal: abort.signal }),
     ).rejects.toMatchObject({ name: "AbortError" });
     expect(c.read).toHaveBeenCalledTimes(1);
+    expect(seen).toEqual([abort.signal]);
   });
 
   it("surfaces the API's refusal", async () => {

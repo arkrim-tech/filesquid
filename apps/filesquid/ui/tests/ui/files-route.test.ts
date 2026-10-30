@@ -102,8 +102,7 @@ describe("bindFilesRoute", () => {
     stop = bindFilesRoute(host, {
       labels,
       source: fixture(),
-      history: new FakePanelSource(),
-      download: new FakePanelSource(),
+      filePanel: { history: new FakePanelSource(), download: new FakePanelSource() },
     });
     await settle();
     expect(host.querySelector("fs-file-panel")).toBeNull();
@@ -128,8 +127,7 @@ describe("bindFilesRoute", () => {
     stop = bindFilesRoute(host, {
       labels,
       source: fixture(),
-      history: new FakePanelSource(),
-      download: new FakePanelSource(),
+      filePanel: { history: new FakePanelSource(), download: new FakePanelSource() },
     });
     await settle();
     await click(control(browser() as FsFileBrowser, "readme.txt"));
@@ -152,8 +150,7 @@ describe("bindFilesRoute", () => {
     stop = bindFilesRoute(host, {
       labels,
       source: fixture(),
-      history: new FakePanelSource(),
-      download: new FakePanelSource(),
+      filePanel: { history: new FakePanelSource(), download: new FakePanelSource() },
     });
     await settle();
     await click(control(browser() as FsFileBrowser, "readme.txt"));
@@ -178,8 +175,7 @@ describe("bindFilesRoute", () => {
     stop = bindFilesRoute(host, {
       labels,
       source: fixture(),
-      history,
-      download: history,
+      filePanel: { history, download: history },
       metadata,
     });
     await settle();

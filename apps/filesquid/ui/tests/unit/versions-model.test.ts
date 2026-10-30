@@ -130,6 +130,17 @@ describe("labelChange (UI-F2.11)", () => {
     expect(labelChange("", "   ")).toEqual({ kind: "unchanged" });
   });
 
+  it("leaves a stored label with surrounding spaces alone when the field is untouched", () => {
+    expect(labelChange("  Client review ", "  Client review ")).toEqual({ kind: "unchanged" });
+  });
+
+  it("sends the trimmed label when only the surrounding spaces of a stored label were removed", () => {
+    expect(labelChange("Client review", "  Client review ")).toEqual({
+      kind: "set",
+      label: "Client review",
+    });
+  });
+
   it("is invalid over 512 bytes or with a control character", () => {
     expect(labelChange("é".repeat(257), null)).toEqual({ kind: "invalid" });
     expect(labelChange("a\u0007b", null)).toEqual({ kind: "invalid" });

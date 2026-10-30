@@ -9,12 +9,17 @@
  * first committed answer again, before the revision is checked, as the API's receipts do. The label
  * edit is the same kind of command over `PUT`: a label that changes nothing is a 409, a committed
  * one publishes a version that holds the labels record (it appears among the object's versions
- * but not in the file's history) and sets the label of the version it names. The download route
- * answers a small body as an attachment named by the display name. The listing, the preview and the shell's routes come
+ * but not in the file's history) and sets the label of the version it names; a repeated
+ * operation ID answers its first outcome again, and the same ID with another route or input is a
+ * 400, as the receipts of both commands do. The download route answers a small body as an
+ * attachment named by the display name; a ranged `files/content` read of a version above the
+ * desktop's 16 MiB answer cap is answered with a 206, its `Content-Range` and a body of that
+ * length, and recorded. The listing, the preview and the shell's routes come
  * from `serveFiles` and `serveNavigation`; these routes are registered after them, so they take
  * precedence.
  */
 import type { Page, Route } from "@playwright/test";
+import { DESKTOP_ANSWER_CAP } from "../../../src/files/download-source";
 import { MemoryFileSource } from "../../../src/files/memory-source";
 import { PNG, serveFiles } from "./files-api";
 
@@ -80,6 +85,8 @@ export interface PanelApi {
   readonly labelRevisions: string[];
   /** The query of every download the page sent. */
   readonly downloads: Record<string, string>[];
+  /** The `Range` header of every ranged content read the page sent. */
+  readonly contentReads: string[];
   /** Publish a version from "another writer": the object's head moves under the page. */
   moveHead(): void;
   /** Answer the details route with this status and code instead (an error state). */
@@ -194,6 +201,7 @@ export async function servePanel(page: Page, fixture: PanelFixture): Promise<Pan
     labelEdits: [],
     labelRevisions: [],
     downloads: [],
+    contentReads: [],
     moveHead: () => {
       const version = `v${fixture.versions.length + extra.length + 1}`;
       labelCommits.add(version);
@@ -249,7 +257,7 @@ export async function servePanel(page: Page, fixture: PanelFixture): Promise<Pan
     api.restores.push(input);
     api.revisions.push(envelope.expected_revision);
     const receipt = receipts.get(envelope.operation_id);
-    if (receipt && receipt.input !== JSON.stringify(input)) {
+    if (receipt && receipt.input !== `restorations:${JSON.stringify(input)}`) {
       const body = { code: "invalid_request", message: "refused", retryable: false };
       return route.fulfill({ status: 400, json: body });
     }
@@ -266,7 +274,7 @@ export async function servePanel(page: Page, fixture: PanelFixture): Promise<Pan
     extra.push({ version, created, message: null, user: null, label: input.label ?? null });
     const result = { library_id: PANEL_LIBRARY, object_id: PANEL_OBJECT, version, created };
     const answer = { ...operation, kind: "committed", result };
-    receipts.set(envelope.operation_id, { input: JSON.stringify(input), answer });
+    receipts.set(envelope.operation_id, { input: `restorations:${JSON.stringify(input)}`, answer });
     return json(route, answer);
   });
   await page.route(/\/api\/v1\/files\/download\?/, (route) => {
@@ -288,6 +296,13 @@ export async function servePanel(page: Page, fixture: PanelFixture): Promise<Pan
     };
     api.labelEdits.push(input);
     api.labelRevisions.push(envelope.expected_revision);
+    const key = `labels:${JSON.stringify(input)}`;
+    const receipt = receipts.get(envelope.operation_id);
+    if (receipt && receipt.input !== key) {
+      const body = { code: "invalid_request", message: "refused", retryable: false };
+      return route.fulfill({ status: 400, json: body });
+    }
+    if (receipt) return json(route, receipt.answer);
     const head = `v${fixture.versions.length + extra.length}`;
     const current = records(fixture, extra, overrides).find((r) => r.version === input.version);
     const operation = { operation_id: envelope.operation_id, error: null };
@@ -303,7 +318,27 @@ export async function servePanel(page: Page, fixture: PanelFixture): Promise<Pan
     labelCommits.add(version);
     extra.push({ version, created, message: null, user: null, label: null });
     const result = { library_id: PANEL_LIBRARY, object_id: PANEL_OBJECT, version, created };
-    return json(route, { ...operation, kind: "committed", result });
+    const answer = { ...operation, kind: "committed", result };
+    receipts.set(envelope.operation_id, { input: key, answer });
+    return json(route, answer);
+  });
+  await page.route(/\/api\/v1\/files\/content\?/, (route) => {
+    const url = new URL(route.request().url());
+    const range = /^bytes=(\d+)-(\d+)$/.exec(route.request().headers().range ?? "");
+    const asked = fixture.versions[Number(url.searchParams.get("version")?.slice(1)) - 1];
+    // Only a ranged read of a version above the desktop cap is this route's; the rest is the
+    // listing fake's (previews).
+    if (!range || !asked || asked[2] <= DESKTOP_ANSWER_CAP) return route.fallback();
+    api.contentReads.push(route.request().headers().range as string);
+    const [start, end] = [Number(range[1]), Number(range[2])];
+    return route.fulfill({
+      status: 206,
+      body: Buffer.alloc(end - start + 1, 0x61),
+      headers: {
+        "content-type": "application/octet-stream",
+        "content-range": `bytes ${start}-${end}/${asked[2]}`,
+      },
+    });
   });
   return api;
 }

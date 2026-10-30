@@ -222,16 +222,22 @@ function createNavigationView(shell: HTMLElement, options: NavigationRouteOption
   return view;
 }
 
+/** The sources the file panel reads beyond the browser's file source (UI-F2.3, UI-F2.11). */
+export interface FilePanelSources {
+  /** Reads histories, versions and history sizes. */
+  readonly history: HistorySource;
+  /** Reads the whole file of one version, for Download this version. */
+  readonly download: DownloadSource;
+}
+
 /**
- * What the files route needs: the labels and the file source of the browser, and the history
- * and download sources of the file panel (UI-F2.3, UI-F2.11); without both the route mounts no
- * file panel.
+ * What the files route needs: the labels and the file source of the browser, and optionally the
+ * {@link FilePanelSources} of the file panel; without them the route mounts no file panel. The
+ * two sources are one option, so the types never allow a panel with only one of them.
  */
 export interface FilesRouteOptions extends Pick<FileBrowserOptions, "labels" | "source"> {
-  /** Reads histories, versions and history sizes for the file panel. */
-  readonly history?: HistorySource;
-  /** Reads the whole file of one version for the file panel's Download this version. */
-  readonly download?: DownloadSource;
+  /** The history and download sources of the file panel. */
+  readonly filePanel?: FilePanelSources;
   /** Reads and writes statements for the file panel's Description tab (UI-F2.4). */
   readonly metadata?: MetadataSource;
 }
@@ -285,8 +291,7 @@ function createFileBrowser(
 ): FsFileBrowser {
   const browser = document.createElement("fs-file-browser") as FsFileBrowser;
   browser.configure({ labels: options.labels, source: options.source, href: locationHash });
-  const { history, download } = options;
-  if (history && download) bindFilePanel(shell, browser, { ...options, history, download });
+  if (options.filePanel) bindFilePanel(shell, browser, { ...options, ...options.filePanel });
   browser.addEventListener("fs-location-change", (event) => {
     const { location } = (event as CustomEvent<{ location: FileLocation }>).detail;
     const hash = locationHash(location);

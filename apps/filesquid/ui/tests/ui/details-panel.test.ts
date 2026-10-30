@@ -223,4 +223,17 @@ describe("<fs-details-panel>", () => {
     expect(root(panel).querySelectorAll(".row")).toHaveLength(8);
     expect(warn).toHaveBeenCalled();
   });
+
+  it("does not warn about the history size when switching file cancels its read", async () => {
+    const source = new FakePanelSource();
+    const wait = gate();
+    source.gates.size = wait;
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const panel = await mount(source);
+    panel.fileRef = { ...PANEL_FILE, version: "v6" };
+    await settle();
+    wait.open();
+    await settle();
+    expect(warn).not.toHaveBeenCalled();
+  });
 });

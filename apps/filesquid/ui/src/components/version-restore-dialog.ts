@@ -19,6 +19,7 @@ import { formatLabel, type LabelTable } from "../theme/labels";
 import { formatModified, formatSize, validLabel, type FileRef } from "../files/model";
 import { restoreKeepText, type VersionRow } from "../files/versions";
 import { icon } from "./icons";
+import { node } from "./library-parts";
 
 export { MAX_LABEL_BYTES } from "../files/model";
 
@@ -88,18 +89,6 @@ const STYLE = `
 
 /** CSS text of the restore dialog. */
 export const RESTORE_DIALOG_STYLE = STYLE;
-
-/** Create an element with a class and optional text. */
-export function node<K extends keyof HTMLElementTagNameMap>(
-  tag: K,
-  className: string,
-  text?: string,
-): HTMLElementTagNameMap[K] {
-  const element = document.createElement(tag);
-  element.className = className;
-  if (text !== undefined) element.textContent = text;
-  return element;
-}
 
 /**
  * Check a typed label as the restorations route does ({@link validLabel}): blank means no

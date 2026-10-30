@@ -12,6 +12,7 @@ import type {
   FileHistoryEntry,
   FileHistorySize,
   ObjectVersions,
+  VersionRecord,
 } from "../../src/files/history-source";
 import type { RestoreOptions, SourceOptions, WriteOptions } from "../../src/files/source";
 
@@ -98,6 +99,11 @@ export class FakePanelSource {
     label: string | null;
     revision: string;
   }[] = [];
+  /**
+   * The versions label edits committed: each holds the labels record, so it is a version of the
+   * object but changes no file and is not in the file's history.
+   */
+  readonly labelCommits: VersionRecord[] = [];
   /** Every download, in order: the file version asked for. */
   readonly downloads: FileRef[] = [];
   /** Every restore, in order, with the revision it expected. */
@@ -176,7 +182,9 @@ export class FakePanelSource {
       object_id: object.object_id,
       head: this.head,
       display_name: PANEL_FILE.display_name,
-      versions: this.entries.map((e) => e.version),
+      versions: [...this.entries.map((e) => e.version), ...this.labelCommits].sort(
+        (a, b) => Number(a.version.slice(1)) - Number(b.version.slice(1)),
+      ),
     };
   }
 
@@ -271,6 +279,7 @@ export class FakePanelSource {
     const next = `v${Number(this.head.slice(1)) + 1}`;
     this.head = next;
     const created = "2026-10-16T13:00:00Z";
+    this.labelCommits.push({ version: next, created, message: null, user: null, label: null });
     return { library_id: object.library_id, object_id: object.object_id, version: next, created };
   }
 

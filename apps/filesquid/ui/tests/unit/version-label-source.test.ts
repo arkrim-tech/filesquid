@@ -7,7 +7,7 @@
  */
 import { describe, expect, it, vi } from "vitest";
 import { ApiError } from "../../src/api/client";
-import { MemoryFileSource } from "../../src/files/memory-source";
+import { MAX_LABELLED_VERSIONS, MemoryFileSource } from "../../src/files/memory-source";
 import { ClientFileSource, type FileClient } from "../../src/files/source";
 
 const OBJECT = { library_id: "lib", object_id: "obj" };
@@ -121,6 +121,7 @@ describe("MemoryFileSource.setVersionLabel", () => {
     const s = memory();
     await expect(s.setVersionLabel(OBJECT, "v1", "x", { revision: "v0" })).rejects.toMatchObject({
       status: 409,
+      code: "conflict",
     });
     for (const bad of ["", "   ", "a\u0007b", "x".repeat(513)]) {
       await expect(s.setVersionLabel(OBJECT, "v1", bad, { revision: "v1" })).rejects.toMatchObject({
@@ -132,8 +133,23 @@ describe("MemoryFileSource.setVersionLabel", () => {
 
   it("answers not_found for a version that does not exist", async () => {
     const s = memory();
-    await expect(s.setVersionLabel(OBJECT, "v9", "x", { revision: "v1" })).rejects.toBeInstanceOf(
-      ApiError,
-    );
+    const refusal = s.setVersionLabel(OBJECT, "v9", "x", { revision: "v1" });
+    await expect(refusal).rejects.toBeInstanceOf(ApiError);
+    await expect(refusal).rejects.toMatchObject({ status: 404, code: "not_found" });
+  });
+
+  it("refuses a label past the 1,000 labelled versions an object may have, as conflict", async () => {
+    const s = memory();
+    for (let n = 1; n <= MAX_LABELLED_VERSIONS; n += 1) {
+      await s.setVersionLabel(OBJECT, `v${n}`, `Label ${n}`, { revision: s.head });
+    }
+    const next = `v${MAX_LABELLED_VERSIONS + 1}`;
+    await expect(
+      s.setVersionLabel(OBJECT, next, "One too many", { revision: s.head }),
+    ).rejects.toMatchObject({ status: 409, code: "conflict" });
+    // Changing or clearing a label that exists is still allowed at the cap.
+    await s.setVersionLabel(OBJECT, "v1", "Renamed", { revision: s.head });
+    await s.setVersionLabel(OBJECT, "v2", null, { revision: s.head });
+    await s.setVersionLabel(OBJECT, next, "Fits again", { revision: s.head });
   });
 });

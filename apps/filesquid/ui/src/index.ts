@@ -301,6 +301,7 @@ export {
   bindSettingsRoute,
   memoryTokenStore,
   parseNavigationHash,
+  type FilePanelSources,
   type FilesRouteOptions,
   type NavigationRouteOptions,
   type RouteHost,

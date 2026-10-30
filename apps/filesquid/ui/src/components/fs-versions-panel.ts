@@ -409,7 +409,11 @@ export class FsVersionsPanel extends HTMLElement {
     this.closeMenu(false);
     if (action === "restore") this.chooseRestore(button, row);
     else if (action === "edit-label") this.chooseEditLabel(button, row);
-    else void this.runDownload(button, row);
+    else {
+      // The chosen item left the page with the menu; the row's button takes focus back.
+      focusElement(button);
+      void this.runDownload(button, row);
+    }
   }
 
   /** Close the menu; when `focus`, return focus to its button. */
@@ -659,7 +663,11 @@ export class FsVersionsPanel extends HTMLElement {
       console.warn("FileSquid could not download a version", errorName(failure));
       this.showNotice(downloadFailure(options.labels, row.version, failure));
     } finally {
-      button.removeAttribute("aria-busy");
+      // An aborted download finishes after the one that replaced it began; only the download
+      // that is still the current one (or none) ends the busy mark.
+      if (this.downloadAbort === abort || this.downloadAbort === undefined) {
+        button.removeAttribute("aria-busy");
+      }
     }
   }
 

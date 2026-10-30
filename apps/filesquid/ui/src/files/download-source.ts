@@ -7,10 +7,13 @@
  * `file.download`) when it fits one desktop answer, which the desktop scheme caps at 16 MiB
  * (DE-S-005). A larger version is read with ranged `GET /api/v1/files/content` calls of at most
  * 8 MiB, at most {@link MAX_DOWNLOAD_READS} of them, so the loop is bounded; a version beyond
- * that bound is refused as `payload_too_large` before any byte is read. Every method only
- * reads: its name says so.
+ * that bound is refused as `payload_too_large` before any byte is read. Each ranged answer must
+ * be a 206 whose `Content-Range` names exactly the range asked for and whose body has that
+ * length; any other answer (a host that ignored `Range`, a shifted or short range) is refused as
+ * a `TypeError` instead of being appended, so a saved file is never silently corrupted. Every
+ * method only reads: its name says so.
  */
-import { ApiError, type FileSquidClient } from "../api/client";
+import { ApiError, type FileSquidClient, type ReadResult } from "../api/client";
 import type { FileRef } from "./model";
 import type { SourceOptions } from "./source";
 
@@ -44,6 +47,28 @@ function versionQuery(file: FileRef): string {
 /** Throw an `AbortError` when the signal has aborted. */
 function throwIfAborted(signal?: AbortSignal): void {
   if (signal?.aborted) throw new DOMException("aborted", "AbortError");
+}
+
+/**
+ * Check that a ranged answer is the range asked for. Pure.
+ *
+ * @param answer The answer of `FileSquidClient.read`.
+ * @param start First byte asked for.
+ * @param end Last byte asked for, inclusive.
+ * @param bytes Length of the body received.
+ * @throws TypeError when the answer is not a 206, names another range, or has another length.
+ */
+function expectRange(answer: ReadResult, start: number, end: number, bytes: number): void {
+  const named = answer.contentRange;
+  if (!answer.partial || !named) {
+    throw new TypeError("The host did not answer the ranged read with a 206 and a Content-Range");
+  }
+  if (named.start !== start || named.end !== end) {
+    throw new TypeError(`The host answered bytes ${named.start}-${named.end}, not ${start}-${end}`);
+  }
+  if (bytes !== end - start + 1) {
+    throw new TypeError(`The host sent ${bytes} bytes for the range ${start}-${end}`);
+  }
 }
 
 /** A {@link DownloadSource} over `FileSquidClient` and the file routes. */
@@ -91,8 +116,10 @@ export class ClientDownloadSource implements DownloadSource {
       throwIfAborted(signal);
       const start = index * RANGE_CHUNK;
       const end = Math.min(start + RANGE_CHUNK, size) - 1;
-      const { response } = await this.client.read(path, { range: { start, end }, signal });
-      parts.push(new Blob([await response.arrayBuffer()]));
+      const answer = await this.client.read(path, { range: { start, end }, signal });
+      const body = await answer.response.arrayBuffer();
+      expectRange(answer, start, end, body.byteLength);
+      parts.push(new Blob([body]));
     }
     throwIfAborted(signal);
     return new Blob(parts);

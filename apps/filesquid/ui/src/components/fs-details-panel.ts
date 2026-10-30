@@ -3,8 +3,9 @@
  * tab of the file panel (UI-S-031, mockup `resources/ui-mockups/v3/35-panel-file-info.svg`). It
  * shows the storage facts of the opened file version, each owned by the OCFL module (UI-S-003):
  * the original file name, extension, MIME type, size, digests, OCFL object and version, read
- * through `GET /api/v1/files/details` and `GET /api/v1/files/versions` only. The stored name, the
- * logical path and any content location never reach the DOM (UI-S-019, API-S-005).
+ * through `GET /api/v1/files/details` and `GET /api/v1/files/versions`, and the bytes its
+ * history keeps through `GET /api/v1/files/history-size` (UI-F2.11; the row is left out when that
+ * read fails). The stored name, the logical path and any content location never reach the DOM (UI-S-019, API-S-005).
  *
  * It is a panel of the file panel's named slots: it receives the file as its `fileRef`
  * property and holds no reference to any other panel, so it mounts alone. Its table is the
@@ -146,7 +147,9 @@ async function readHistorySize(
   try {
     return await source.historySize(file, { signal });
   } catch (error) {
-    console.warn("FileSquid could not read the history size", errorName(error));
+    // A read that another file's panel cancelled is not a failure.
+    if (!signal.aborted)
+      console.warn("FileSquid could not read the history size", errorName(error));
     return undefined;
   }
 }

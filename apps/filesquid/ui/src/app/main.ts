@@ -88,11 +88,6 @@ if (shell) {
 if (shell) {
   const files = { labels, source: new ClientFileSource(client) };
   const history = new ClientHistorySource(client);
-  const download = new ClientDownloadSource(client);
-  bindFilesRoute(shell, {
-    ...files,
-    history,
-    download,
-    metadata: new ClientMetadataSource(client),
-  });
+  const filePanel = { history, download: new ClientDownloadSource(client) };
+  bindFilesRoute(shell, { ...files, filePanel, metadata: new ClientMetadataSource(client) });
 }

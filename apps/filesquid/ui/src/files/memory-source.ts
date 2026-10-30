@@ -6,8 +6,11 @@
  * an upload that creates the file's own object (API-S-026) and refuses the facts the API
  * refuses, and the API's refusals as `ApiError` (`not_found`, `conflict`, `invalid_request`,
  * `range_not_satisfiable`). It also answers the history reads of the file panel (UI-F2.3) as
- * `GET /files/history`, `/files/versions` and `/files/history-size` do. Tests and demos use it;
- * the live sources are `ClientFileSource` and `ClientHistorySource`.
+ * `GET /files/history`, `/files/versions` and `/files/history-size` do, sets and clears version
+ * labels as `PUT /files/labels` does (UI-F2.11: one new version, an unchanged label or a stale
+ * head refused 409, at most {@link MAX_LABELLED_VERSIONS} labelled versions), and serves a
+ * version's whole file as a download ({@link DownloadSource}). Tests and demos use it; the live
+ * sources are `ClientFileSource`, `ClientHistorySource` and `ClientDownloadSource`.
  */
 import { ApiError } from "../api/client";
 import { newOperationId, type ByteRange } from "../api/commands";
@@ -105,6 +108,9 @@ interface Snapshot {
   /** The version's label, as a restore sets it; null for none. */
   readonly label: string | null;
 }
+
+/** Most versions of one object that may carry a label (API-F2.5: 1,000). */
+export const MAX_LABELLED_VERSIONS = 1000;
 
 /** Route named in the fixture's errors. */
 const ROUTE = "/api/v1/files";
@@ -486,6 +492,10 @@ export class MemoryFileSource implements FileSource, HistorySource, DownloadSour
     this.expect(options.revision);
     const target = this.snapshot(version);
     if (target.label === label) throw refusal(409, "conflict");
+    const labelled = this.snapshots.filter((snapshot) => snapshot.label !== null).length;
+    if (target.label === null && label !== null && labelled >= MAX_LABELLED_VERSIONS) {
+      throw refusal(409, "conflict");
+    }
     this.snapshots[this.snapshots.indexOf(target)] = { ...target, label };
     const created = new Date(BASE_TIME + this.snapshots.length * 60_000).toISOString();
     this.snapshots.push({ created, files: this.latest().files, label: null });

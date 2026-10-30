@@ -83,6 +83,30 @@ describe("Download this version", () => {
     expect(source.downloads.map((d) => d.version)).toEqual(["v7"]);
   });
 
+  it("returns focus to the row's menu button after choosing Download", async () => {
+    const source = new FakePanelSource();
+    const panel = await mount(source);
+    await choose(panel, "v5", "download");
+    await settle();
+    expect(root(panel).activeElement).toBe(row(panel, "v5").querySelector("button.more"));
+  });
+
+  it("keeps the menu button busy for the download that replaced an aborted one", async () => {
+    const source = new FakePanelSource();
+    const wait = gate();
+    source.gates.download = wait;
+    const panel = await mount(source);
+    await choose(panel, "v5", "download");
+    await choose(panel, "v5", "download");
+    await settle();
+    const more = row(panel, "v5").querySelector("button.more");
+    expect(more?.getAttribute("aria-busy")).toBe("true");
+    wait.open();
+    await settle();
+    expect(more?.hasAttribute("aria-busy")).toBe(false);
+    expect(source.downloads).toHaveLength(1);
+  });
+
   it("announces the download while it runs and marks the menu button busy", async () => {
     const source = new FakePanelSource();
     const wait = gate();
@@ -241,10 +265,35 @@ describe("Edit label", () => {
     expect(source.calls.label).toBe(0);
     expect(input.getAttribute("aria-invalid")).toBe("true");
     expect(dialog.querySelector(".error")?.textContent).toBe(labels.versionsRestoreLabelInvalid);
+    expect(root(panel).querySelector('[role="dialog"]')).toBe(dialog);
     input.value = "tab\there";
     dialog.querySelector<HTMLButtonElement>("button.save")?.click();
     await settle();
     expect(source.calls.label).toBe(0);
+    expect(input.getAttribute("aria-invalid")).toBe("true");
+    expect(root(panel).querySelector('[role="dialog"]')).toBe(dialog);
+  });
+
+  it("names the help line as the description of the field", async () => {
+    const panel = await mount();
+    const dialog = await openLabel(panel, "v5");
+    const input = dialog.querySelector("input.label-input") as HTMLInputElement;
+    const help = dialog.querySelector(".help") as HTMLElement;
+    expect(help.id).not.toBe("");
+    expect(input.getAttribute("aria-describedby")).toBe(help.id);
+  });
+
+  it("sends nothing for a stored label with surrounding spaces the field still holds", async () => {
+    const source = new FakePanelSource();
+    source.entries = source.entries.map((entry, i) =>
+      i === 4 ? { ...entry, version: { ...entry.version, label: "  Client review " } } : entry,
+    );
+    const panel = await mount(source);
+    const dialog = await openLabel(panel, "v5");
+    dialog.querySelector<HTMLButtonElement>("button.save")?.click();
+    await settle();
+    expect(source.calls.label).toBe(0);
+    expect(root(panel).querySelector('[role="dialog"]')).toBeNull();
   });
 
   it("keeps the dialog open with the refusal's words when the head moved meanwhile", async () => {
@@ -327,6 +376,7 @@ describe("Edit label", () => {
     dialog.querySelector<HTMLButtonElement>("button.save")?.click();
     await settle();
     await settle();
+    expect((await source.versions(PANEL_FILE)).versions.map((v) => v.version)).toContain("v8");
     await choose(panel, "v5", "restore");
     root(panel).querySelector<HTMLButtonElement>("button.restore")?.click();
     await settle();
