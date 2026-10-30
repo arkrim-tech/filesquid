@@ -8,6 +8,7 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     include: ["tests/unit/**/*.test.ts", "tests/ui/**/*.test.ts"],
+    globalSetup: ["tests/support/pin-timezone.mjs"],
     setupFiles: ["allure-vitest/setup"],
     reporters: [
       "default",

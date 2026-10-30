@@ -11,9 +11,12 @@
  * for a 503 (the host has no navigation service yet); error, offline or denied otherwise. No
  * trail is shown in any of them, so nothing is guessed.
  *
- * Files: the file listing of a destination needs a listing by navigation node that the API
- * does not offer yet (`<fs-file-browser>` lists one OCFL object), so the view says that the
- * files cannot be listed here yet; the browser takes this place when the API offers it.
+ * Files (UI-F2.8): a library, a collection or a virtual collection shows its files in a
+ * `<fs-drive-view>` over the view operation of API-S-011 when the host gives the view its
+ * `drive` options; the page title is then the drive view's, and a `fs-destination-context`
+ * event (`detail.node`, `detail.kind`, or no detail when none is shown) tells the shell's New
+ * menu where uploads would go. A folder, which the view operation does not list, and a view
+ * without `drive` options say that the files cannot be listed here yet.
  */
 import type { LabelTable } from "../theme/labels";
 import {
@@ -27,6 +30,7 @@ import {
 } from "../navigation/model";
 import { A11Y_STYLE } from "./a11y-style";
 import { failureState, type ViewState } from "./view-state";
+import type { DriveViewOptions, FsDriveView } from "./fs-drive-view";
 import { RETRY_EVENT, type FsStates } from "./fs-states";
 import type { FsBreadcrumb } from "./fs-breadcrumb";
 
@@ -40,11 +44,17 @@ export interface NavigationViewOptions {
   online?: () => boolean;
   /** The route of a node; defaults to `navigationHref`. */
   href?: (node: NavigationNode) => string;
+  /** What the file view of a library, collection or virtual collection needs; none, no view. */
+  drive?: Omit<DriveViewOptions, "labels" | "online">;
 }
+
+/** The kinds of node the view operation lists (API-S-011). */
+const VIEWABLE: ReadonlySet<string> = new Set(["library", "collection", "virtual_collection"]);
 
 const STYLE = `
   :host { display: block; font-family: var(--fs-font-sans); color: var(--fs-on-surface); }
   section { display: grid; gap: var(--fs-space-3); min-width: 0; }
+  section.drive { gap: 0; }
   h2 { margin: 0; font-family: var(--fs-font-heading); font-size: var(--fs-font-size-title); font-weight: 700; color: var(--fs-on-surface); overflow-wrap: anywhere; }
   .files { margin: 0; color: var(--fs-on-surface-variant); font-size: var(--fs-font-size-body); }
   [hidden] { display: none !important; }
@@ -58,6 +68,8 @@ export class FsNavigationView extends HTMLElement {
   private trail?: readonly NavigationNode[];
   private generation = 0;
   private stopFollowing?: () => void;
+  private drive?: FsDriveView;
+  private filterText = "";
 
   constructor() {
     super();
@@ -89,6 +101,17 @@ export class FsNavigationView extends HTMLElement {
   set node(handle: string | undefined) {
     this.handle = handle;
     if (this.isConnected) void this.reload();
+  }
+
+  /** The sidebar filter text, handed to the file view (UI-S-007). */
+  get filter(): string {
+    return this.filterText;
+  }
+
+  /** Narrow the file view to rows whose name contains `text`. */
+  set filter(text: string) {
+    this.filterText = text;
+    if (this.drive) this.drive.filter = text;
   }
 
   /** Follow the source and read the destination while attached. */
@@ -211,8 +234,41 @@ export class FsNavigationView extends HTMLElement {
     crumb.items = breadcrumbItems(trail, options.labels, href);
     states.hidden = state === undefined;
     if (state) states.state = state;
-    body.replaceChildren(...(state ? [] : destination(trail.at(-1), options.labels)));
+    const current = trail.at(-1);
+    const viewable = !state && current !== undefined && options.drive && VIEWABLE.has(current.kind);
+    root.querySelector("section")?.classList.toggle("drive", viewable === true);
+    if (viewable) this.showDrive(body, current, options);
+    else {
+      this.drive = undefined;
+      body.replaceChildren(...(state ? [] : destination(current, options.labels)));
+    }
+    this.announceContext(state ? undefined : current);
     this.dataset.state = state?.kind ?? "ready";
+  }
+
+  /** Show the file view of a node, keeping the one on screen when it is the same element. */
+  private showDrive(body: HTMLElement, node: NavigationNode, options: NavigationViewOptions): void {
+    if (!this.drive) {
+      const drive = document.createElement("fs-drive-view") as unknown as FsDriveView;
+      drive.configure({
+        ...(options.drive as NonNullable<NavigationViewOptions["drive"]>),
+        labels: options.labels,
+        online: options.online,
+      });
+      drive.filter = this.filterText;
+      this.drive = drive;
+      body.replaceChildren(drive);
+    }
+    this.drive.heading = nodeName(node, options.labels);
+    this.drive.node = node.node;
+  }
+
+  /** Tell the shell which node is shown, or that none is. */
+  private announceContext(node: NavigationNode | undefined): void {
+    const detail = node ? { node: node.node, kind: node.kind } : undefined;
+    this.dispatchEvent(
+      new CustomEvent("fs-destination-context", { detail, bubbles: true, composed: true }),
+    );
   }
 }
 

@@ -14,18 +14,35 @@ export type LabelTable = Readonly<Record<string, string>>;
 export type Scheme = "light" | "dark";
 
 /**
- * True for the browser's own network line for a 503 answer from the navigation listing. The
- * desktop and server hosts answer `GET /api/v1/navigation` with 503 `unavailable` until they
- * install the navigation service (DE-1.1), and the UI shows that as its unavailable state; the
- * browser still logs the refused fetch as a console error. Only that line, from that route, is
- * excused; the app's own messages and every other route's errors still fail a test.
+ * True for the browser's own network line for a refused fetch of a route the UI reads at start
+ * that the host may not serve yet. The desktop and server hosts answer `GET /api/v1/navigation`
+ * with 503 `unavailable` until they install the navigation service (DE-1.1), and the UI shows
+ * that as its unavailable state. `GET /api/v1/preferences` (UI-F2.8, API-S-011) and
+ * `GET /api/v1/libraries/recent` (API-S-038) answer 503 until a host installs a preference
+ * store or a library registry. The production-build (preview) specs run with no host at all and
+ * leave them to the preview server's proxy, which answers 500 to 504; the UI keeps working on
+ * both (the choices apply until the page closes, file actions stay off). A 503 from those two
+ * routes is excused everywhere; the proxy's 500 to 504 only in the preview suite
+ * (`FILESQUID_E2E_PREVIEW=1`, set by `playwright.preview.config.ts`), so the server-backed suite
+ * still fails on a real 500 from them. The browser logs each refused fetch
+ * as a console error. Only those lines, from those routes, are excused; the app's own messages
+ * and every other route's errors still fail a test.
  *
  * @param text - The console message text.
  * @param url - The URL the message is attributed to.
+ * @param preview - Whether the page runs against the static preview server with no host.
  * @returns Whether it is that line.
  */
-export function isNavigationUnavailable(text: string, url: string): boolean {
-  return /status of 503 \(/.test(text) && /\/api\/v1\/navigation(\?|$)/.test(url);
+export function isNavigationUnavailable(
+  text: string,
+  url: string,
+  preview: boolean = process.env.FILESQUID_E2E_PREVIEW === "1",
+): boolean {
+  const navigation = /status of 503 \(/.test(text) && /\/api\/v1\/navigation(\?|$)/.test(url);
+  const status = preview ? /status of 50[0-4] \(/ : /status of 503 \(/;
+  const optional =
+    status.test(text) && /\/api\/v1\/(preferences|libraries\/recent)(\?|$)/.test(url);
+  return navigation || optional;
 }
 
 /**

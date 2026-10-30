@@ -104,6 +104,18 @@ describe("<fs-app-shell>", () => {
     expect(seen).toHaveBeenCalledOnce();
   });
 
+  it("sends fs-new from the New button itself, so a menu opens below it and focus returns to it", async () => {
+    const shell = mount();
+    await settle();
+    const button = shell.shadowRoot?.querySelector<HTMLButtonElement>("button.new");
+    let origin: EventTarget | undefined;
+    const listen = (event: Event) => (origin = event.composedPath()[0]);
+    document.addEventListener("fs-new", listen);
+    button?.click();
+    document.removeEventListener("fs-new", listen);
+    expect(origin).toBe(button);
+  });
+
   it("offers a navigation slot in its nav, with the static destinations as fallback (UI-F2.1a)", async () => {
     const shell = mount();
     await settle();
@@ -170,6 +182,19 @@ describe("<fs-app-shell>", () => {
     expect(bar?.style.inlineSize).toBe("2.6%");
     shell.storage = undefined;
     expect(block?.querySelector<HTMLElement>(".storage-facts")?.hidden).toBe(true);
+  });
+
+  it("shows no free-space caption and no bar when the free space is unknown", async () => {
+    const shell = mount();
+    await settle();
+    const block = (shell.shadowRoot as ShadowRoot).querySelector<HTMLElement>(".storage");
+    shell.storage = { usedBytes: 2 ** 30 };
+    expect(block?.querySelector(".storage-value")?.textContent).toBe("1 GB");
+    expect(block?.querySelector<HTMLElement>(".storage-free")?.hidden).toBe(true);
+    expect(block?.querySelector<HTMLElement>(".storage-bar")?.hidden).toBe(true);
+    shell.storage = { usedBytes: 2 ** 30, freeBytes: 2 ** 31 };
+    expect(block?.querySelector<HTMLElement>(".storage-free")?.hidden).toBe(false);
+    expect(block?.querySelector<HTMLElement>(".storage-bar")?.hidden).toBe(false);
   });
 
   it("lists the library, Settings and Logs rows after the tree; Logs only on the desktop host", async () => {

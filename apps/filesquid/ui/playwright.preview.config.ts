@@ -7,6 +7,10 @@ import { defineConfig, devices } from "@playwright/test";
 
 const PORT = 4173;
 
+// The preview has no host: strict-dom excuses the browser's line for the optional start-up reads
+// (preferences, recent libraries) only in this suite.
+process.env.FILESQUID_E2E_PREVIEW = "1";
+
 export default defineConfig({
   testDir: "tests/e2e/preview",
   outputDir: "tests/test-results",
@@ -15,7 +19,7 @@ export default defineConfig({
     ["junit", { outputFile: "tests/allure-results/playwright-preview-junit.xml" }],
     ["allure-playwright", { resultsDir: "tests/allure-results/playwright" }],
   ],
-  use: { baseURL: `http://127.0.0.1:${PORT}` },
+  use: { baseURL: `http://127.0.0.1:${PORT}`, timezoneId: "UTC" },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
   webServer: {
     command: `npm run build && npx vite preview --host 127.0.0.1 --port ${PORT} --strictPort`,

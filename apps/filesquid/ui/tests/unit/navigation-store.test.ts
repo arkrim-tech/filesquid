@@ -31,6 +31,17 @@ function saved(data: Map<string, string>): unknown {
 }
 
 describe("NavigationStore", () => {
+  it("does not read the device again once the choices are kept through the API", () => {
+    const { storage } = fakeStorage();
+    const getItem = vi.spyOn(storage, "getItem");
+    const store = new NavigationStore({ storage });
+    store.useRemote(() => undefined);
+    store.replace({ pinned: [{ node: "c1", kind: "collection" }], order: [], collapsed: [] });
+    store.start();
+    expect(getItem).not.toHaveBeenCalled();
+    expect(store.preferences.pinned).toEqual([{ node: "c1", kind: "collection" }]);
+  });
+
   it("uses the namespaced key filesquid.navigation", () => {
     expect(NAVIGATION_STORAGE_KEY).toBe("filesquid.navigation");
   });
