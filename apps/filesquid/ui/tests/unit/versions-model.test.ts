@@ -4,6 +4,7 @@
  * relative times, the count and keep wording, and shortened digests and identifiers.
  */
 import { describe, expect, it } from "vitest";
+import { labelChange } from "../../src/components/version-label-dialog";
 import {
   MAX_VERSION_ROWS,
   laterVersions,
@@ -12,6 +13,7 @@ import {
   restoreKeepText,
   shortDigest,
   shortIdentifier,
+  versionActions,
   versionCountText,
   versionRows,
   versionTotal,
@@ -79,6 +81,69 @@ describe("versionRows", () => {
     expect(rows).toHaveLength(MAX_VERSION_ROWS);
     expect(versionTotal(history(many))).toBe(MAX_VERSION_ROWS + 3);
     expect(rows[0]?.version).toBe(`v${MAX_VERSION_ROWS + 3}`);
+  });
+});
+
+describe("versionActions (UI-F2.11)", () => {
+  const base = {
+    version: "v3",
+    label: null,
+    created: "t",
+    size: 1,
+    removed: false,
+    current: false,
+  };
+
+  it("offers Restore as new version, Download this version and Edit label, in that order", () => {
+    expect(versionActions(base)).toEqual(["restore", "download", "edit-label"]);
+  });
+
+  it("does not restore the current version, which is the content shown", () => {
+    expect(versionActions({ ...base, current: true })).toEqual(["download", "edit-label"]);
+  });
+
+  it("offers only Edit label on a version that removed the file", () => {
+    expect(versionActions({ ...base, removed: true, size: null })).toEqual(["edit-label"]);
+  });
+
+  it("never offers a delete, expiry or thinning action", () => {
+    const all = [base, { ...base, current: true }, { ...base, removed: true }].flatMap(
+      versionActions,
+    );
+    expect(all.join(" ")).not.toMatch(/delete|expir|thin/);
+  });
+});
+
+describe("labelChange (UI-F2.11)", () => {
+  it("sets a trimmed label", () => {
+    expect(labelChange("  Client review ", null)).toEqual({ kind: "set", label: "Client review" });
+  });
+
+  it("clears the label for blank input when there is one", () => {
+    expect(labelChange("   ", "Client review")).toEqual({ kind: "set", label: null });
+  });
+
+  it("is unchanged for the same label, or blank when none was set, as the route refuses those", () => {
+    expect(labelChange("Client review", "Client review")).toEqual({ kind: "unchanged" });
+    expect(labelChange("  Client review  ", "Client review")).toEqual({ kind: "unchanged" });
+    expect(labelChange("", null)).toEqual({ kind: "unchanged" });
+    expect(labelChange("", "   ")).toEqual({ kind: "unchanged" });
+  });
+
+  it("leaves a stored label with surrounding spaces alone when the field is untouched", () => {
+    expect(labelChange("  Client review ", "  Client review ")).toEqual({ kind: "unchanged" });
+  });
+
+  it("sends the trimmed label when only the surrounding spaces of a stored label were removed", () => {
+    expect(labelChange("Client review", "  Client review ")).toEqual({
+      kind: "set",
+      label: "Client review",
+    });
+  });
+
+  it("is invalid over 512 bytes or with a control character", () => {
+    expect(labelChange("é".repeat(257), null)).toEqual({ kind: "invalid" });
+    expect(labelChange("a\u0007b", null)).toEqual({ kind: "invalid" });
   });
 });
 
