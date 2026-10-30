@@ -156,7 +156,9 @@ impl<L: LibraryLocations> LibraryCommands<L> {
 
     /// Rename the open library `library` to `name` in `registry` under the open-library
     /// lock, so the revision check, the rename and the revision advance are one step; answer
-    /// whether the name changed. Registry I/O under the lock, without an await.
+    /// whether the name changed. A library this host never opened is `library_not_found`,
+    /// one it remembers but has not open now `library_not_open`. Registry I/O under the
+    /// lock, without an await.
     fn rename_at(
         &self,
         registry: &dyn LibraryRegistry,
@@ -164,6 +166,7 @@ impl<L: LibraryLocations> LibraryCommands<L> {
         name: &str,
         expected: &str,
     ) -> Result<bool, LocalLibraryError> {
+        registry.entry(library).ok_or_else(library_not_found)?;
         let mut open = self.lock();
         let bound = open.get_mut(library).ok_or_else(library_not_open)?;
         if bound.revision != expected {

@@ -144,6 +144,7 @@ async fn a_library_is_created_with_its_name_and_the_facts_answer_it() {
                 "name": "Family archive",
                 "free_bytes": 1_000_000,
                 "free_bytes_reason": null,
+                "revision": "1",
             })
         );
         assert_redacted(&rig, &[&answer], &["Family archive"]);
