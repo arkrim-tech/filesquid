@@ -224,11 +224,14 @@ describe("<fs-versions-panel>", () => {
     source.failures.restore = new ApiError(409, "/api/v1/files/restorations", { code: "conflict" });
     const panel = await mount(source);
     const dialog = await openRestore(panel, "v5");
+    dialog.querySelector<HTMLButtonElement>("button.restore")?.focus();
     dialog.querySelector<HTMLButtonElement>("button.restore")?.click();
     await settle();
     expect(root(panel).querySelector('[role="dialog"]')).toBe(dialog);
     expect(dialog.querySelector(".error")?.textContent).toBe(labels.fileConflict);
     expect(dialog.querySelector<HTMLButtonElement>("button.restore")?.disabled).toBe(false);
+    // Disabling the buttons dropped focus; it returns to the field so Escape still works.
+    expect(root(panel).activeElement).toBe(dialog.querySelector("input.label-input"));
   });
 
   it("disables the buttons while the restore runs", async () => {

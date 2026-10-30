@@ -71,7 +71,7 @@ Feature: File version history and retention
     Then the button should be pressed and the tabs hidden
     And I should see Back, "7 versions" and the eyebrow "History 96.3 MB · newest first"
     And the rows should list v7 to v1 with the label or "No label" and "{relative time} · {size}"
-    And only v7 should carry the "Current" chip and offer no menu
+    And only v7 should carry the "Current" chip, and every row should have a menu
     And the note "FileSquid keeps every version." should explain that nothing is thinned
     When I choose Back
     Then the tabs should return and focus should be on the history button
@@ -104,15 +104,90 @@ Feature: File version history and retention
     Then the dialog should stay open with "The files changed or another change is in progress. Reload and try again."
     And Escape should close it and return focus to the menu button of v5
 
-  Scenario: History size is reported
+  Scenario: History size is reported per file
     When I open the file's details
-    Then I should see the bytes used by its version history
+    Then I should see the bytes used by its version history after the size, with the number of versions
+
+  # Pending API-S-038: no route reports a library's used bytes or the disk's free space yet,
+  # so the sidebar's Storage used block keeps the facts UI-F2.18 left it with.
+  Scenario: History size is reported per library
     When I open the library's storage used
     Then version history should be included in the total
 
   Scenario: The difference from thinning drives is in the parity register
     When I read the drive-parity table in the capability register
     Then it should state no version expiry, no version deletion and no free-space cap with a reason
+
+  # Task UI-F2.11: download, edit label and history size (UI-S-009, UI-S-031 mockup 26, PRD F-065)
+  Scenario: The row menu offers restore, download and edit label and nothing that deletes
+    Given the Versions view of "harbour-masterplan-v7.pdf" whose head is v7
+    When I open the menu of v5
+    Then it should offer "Restore as new version", "Download this version" and "Edit label" in that order
+    And it should not offer delete, expiry or thinning
+    When I open the menu of the current version v7
+    Then it should offer "Download this version" and "Edit label" but not restore
+
+  Scenario: Download this version saves that version's file under its display name
+    Given the Versions view of "harbour-masterplan-v7.pdf"
+    When I choose "Download this version" in the menu of v4
+    Then the whole file of v4 should be requested from the API once
+    And the browser should save it as "harbour-masterplan-v7.pdf"
+    And "Downloading v4 of harbour-masterplan-v7.pdf…" should have been announced while it ran
+
+  Scenario: A version above the desktop answer cap downloads with ranged reads
+    Given a version of 40 MiB and a host that caps every answer at 16 MiB
+    When I download that version
+    Then it should be read with ranged reads of at most 8 MiB each and saved whole
+
+  Scenario: A refused download says so and saves nothing
+    Given the API refuses the download of v4
+    When I choose "Download this version" in the menu of v4
+    Then an alert should say "Could not download v4. Nothing was changed."
+    And no file should be saved
+
+  Scenario: Edit label opens a dialog holding the version's label
+    Given the Versions view of "harbour-masterplan-v7.pdf" whose head is v7
+    When I choose "Edit label" in the menu of v5
+    Then a dialog should ask "Edit label for v5" and name the file
+    And the field should hold "Client review"
+    And it should offer Cancel and one primary Save
+
+  Scenario: Saving a new label sends one command with the head and shows the label
+    Given the edit label dialog for v6 is open and v6 has no label
+    When I type "  Sent to the client " and choose Save
+    Then exactly one label command for v6 should be sent with "Sent to the client" and the head v7 as its expected revision
+    And "Label of v6 saved." should be announced
+    And v6 should show the label "Sent to the client" and the version count should stay "7 versions"
+
+  Scenario: Emptying the field removes the label
+    Given the edit label dialog for v5 is open
+    When I empty the field and choose Save
+    Then one label command for v5 should be sent that clears the label
+    And "Label of v5 removed." should be announced
+    And v5 should show "No label"
+
+  Scenario: An unchanged label sends nothing
+    Given the edit label dialog for v5 is open
+    When I choose Save without changing the label
+    Then no label command should be sent and the dialog should close
+
+  Scenario: A label the route would refuse is refused before any call
+    Given the edit label dialog for v5 is open
+    When I type a label longer than 512 bytes, or one with a control character, and choose Save
+    Then no label command should be sent
+    And the field should be marked invalid with "Use at most 512 bytes and no control characters."
+
+  Scenario: A head that moved meanwhile is refused in the dialog
+    Given the edit label dialog for v5 is open
+    And another change was committed to the object since the Versions view read its head
+    When I choose Save
+    Then the dialog should stay open with "The files changed or another change is in progress. Reload and try again."
+    And focus should be in the field so Escape closes the dialog and returns focus to the menu button of v5
+
+  Scenario: A label set later is recoverable and never affects retention
+    Given I set the label of v2 to "First draft" after it was committed
+    Then the label should show in the Versions view
+    And no version should have been removed, expired or thinned
 
   # Source
   # - resources/prd.md F-065

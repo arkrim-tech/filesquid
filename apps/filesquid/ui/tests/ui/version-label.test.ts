@@ -254,12 +254,15 @@ describe("Edit label", () => {
     source.head = "v9";
     const input = dialog.querySelector<HTMLInputElement>("input.label-input") as HTMLInputElement;
     input.value = "Reviewed";
+    dialog.querySelector<HTMLButtonElement>("button.save")?.focus();
     dialog.querySelector<HTMLButtonElement>("button.save")?.click();
     await settle();
     expect(root(panel).querySelector('[role="dialog"]')).toBe(dialog);
     expect(dialog.querySelector(".error")?.textContent).toBe(labels.fileConflict);
     expect(dialog.querySelector<HTMLButtonElement>("button.save")?.disabled).toBe(false);
     expect(source.labelEdits).toEqual([]);
+    // Disabling the buttons dropped focus; it returns to the field so Escape still works.
+    expect(root(panel).activeElement).toBe(input);
   });
 
   it("disables the buttons while the label is saved", async () => {

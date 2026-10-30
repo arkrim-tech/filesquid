@@ -567,13 +567,18 @@ export class FsVersionsPanel extends HTMLElement {
     }
   }
 
-  /** Disable or enable the dialog's controls while the restore runs. */
+  /**
+   * Disable or enable the dialog's controls while a write runs. Disabling the focused button
+   * drops focus to the page, so enabling them again (a refused write) returns it to the field:
+   * Escape and Tab keep working inside the dialog.
+   */
   private setBusy(busy: boolean): void {
     const dialog = this.dialog;
     if (!dialog) return;
     dialog.busy = busy;
     const { close, cancel, submit, input } = dialog.parts;
     for (const control of [close, cancel, submit, input]) control.disabled = busy;
+    if (!busy) focusElement(input);
   }
 
   /**
