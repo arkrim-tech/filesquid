@@ -39,7 +39,10 @@ export type IconName =
   | "chevron-back"
   | "more-vertical"
   | "edit"
-  | "download";
+  | "download"
+  | "list"
+  | "grid"
+  | "check";
 
 /** The path data of each icon on the 24-unit grid. */
 const PATHS: Readonly<Record<IconName, string>> = {
@@ -77,6 +80,9 @@ const PATHS: Readonly<Record<IconName, string>> = {
   "more-vertical": "M12 5h.01M12 12h.01M12 19h.01",
   edit: "M4 20h4L19 9l-4-4L4 16zM13.5 6.5l4 4",
   download: "M12 3v12M7 10l5 5 5-5M5 21h14",
+  list: "M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01",
+  grid: "M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z",
+  check: "M5 12.5l4.5 4.5L19 7.5",
 };
 
 /** Default size of an icon in CSS pixels. */

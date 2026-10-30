@@ -17,6 +17,9 @@ import pkg from "../../package.json";
 import { CONTRACT_VERSION } from "../api/contract-version";
 import {
   ClientFileSource,
+  ClientPreferencesSource,
+  ClientViewSource,
+  singleOpenLibrary,
   ClientDownloadSource,
   ClientHistorySource,
   ClientMetadataSource,
@@ -24,7 +27,10 @@ import {
   ClientNavigationSource,
   LibraryRegistry,
   applyLocale,
+  PreferencesService,
+  bindDriveRoute,
   bindFilesRoute,
+  bindStorage,
   bindLibraryRoute,
   bindMonitorRoute,
   bindNavigationRoute,
@@ -36,10 +42,13 @@ import {
   libraryRepairHref,
   memoryTokenStore,
   resolveLocale,
+  sharedNavigationStore,
   type Distribution,
   type FsAppShell,
   type FsNavTree,
+  type FsNewMenu,
 } from "../index";
+import { deviceStorage } from "./device-storage";
 
 /** FileSquid's own brand: the official mark, with a white outline on dark surfaces. */
 const filesquid: Distribution = {
@@ -60,18 +69,35 @@ const tokens = memoryTokenStore(() => {
   void shell?.refreshHealth();
   navigation.reconnect();
   void tree.reload();
+  void preferences.start(); // reads again when the first read was refused before the token
 });
 const client = createHostClient(window, () => tokens.get());
 const navigation = new ClientNavigationSource(client);
 const desktop = detectHost(window).isTauri;
+// Per-user preferences (UI-F2.8, UI-S-017): read once through the API; the navigation tree's
+// pins, order and collapsed nodes move there too, from the device key, once.
+const preferences = new PreferencesService({
+  source: new ClientPreferencesSource(client),
+  navigation: sharedNavigationStore(window),
+  storage: deviceStorage(window, "the navigation choices"),
+});
+void preferences.start();
+const files = new ClientFileSource(client);
+const viewSource = new ClientViewSource(client, singleOpenLibrary(client, window));
+const drive = { source: viewSource, preferences, files, navigation };
+const newMenu = document.createElement("fs-new-menu") as FsNewMenu;
+newMenu.configure({ labels });
+shell?.append(newMenu);
 shell?.configure({ distribution: filesquid, client, theme });
 tree.slot = "navigation";
 tree.configure({ labels, source: navigation });
 shell?.append(tree);
-if (shell) bindNavigationRoute(shell, { labels, source: navigation, tree });
+if (shell) bindNavigationRoute(shell, { labels, source: navigation, tree, drive });
+if (shell) bindDriveRoute(shell, { labels, navigation, drive, newMenu });
+if (shell) bindStorage(shell, client);
 if (shell) {
   const settings = { labels, client, theme, distribution: filesquid };
-  bindSettingsRoute(shell, { ...settings, contractVersion: CONTRACT_VERSION });
+  bindSettingsRoute(shell, { ...settings, contractVersion: CONTRACT_VERSION, preferences });
 }
 const libraries = {
   labels,
@@ -86,8 +112,8 @@ if (shell) {
   bindMonitorRoute(shell, { ...monitor, repairHref: libraryRepairHref });
 }
 if (shell) {
-  const files = { labels, source: new ClientFileSource(client) };
   const history = new ClientHistorySource(client);
   const filePanel = { history, download: new ClientDownloadSource(client) };
-  bindFilesRoute(shell, { ...files, filePanel, metadata: new ClientMetadataSource(client) });
+  const browser = { labels, source: files, filePanel, metadata: new ClientMetadataSource(client) };
+  bindFilesRoute(shell, browser);
 }

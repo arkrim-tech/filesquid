@@ -21,7 +21,9 @@ const sources = readdirSync(dir)
 const ELEMENTS = [
   "fs-app-shell.ts",
   "fs-breadcrumb.ts",
+  "fs-destination-picker.ts",
   "fs-details-panel.ts",
+  "fs-drive-view.ts",
   "fs-file-browser.ts",
   "fs-file-panel.ts",
   "fs-file-preview.ts",
@@ -29,7 +31,9 @@ const ELEMENTS = [
   "fs-metadata-panel.ts",
   "fs-monitor.ts",
   "fs-nav-tree.ts",
+  "fs-new-menu.ts",
   "fs-ocfl-findings.ts",
+  "fs-settings.ts",
   "fs-states.ts",
   "fs-theme-control.ts",
   "fs-versions-panel.ts",
@@ -84,6 +88,36 @@ function untokenisedSizes(css: string): string[] {
     })
     .map(([declaration]) => (declaration ?? "").trim());
 }
+
+describe("Drive layout constants", () => {
+  const css = (name: string) => sources.find((s) => s.name === name)?.css ?? "";
+  it("ends the Recent activity text before the actions column (track 10)", () => {
+    expect(css("drive-row-view.ts")).toMatch(/\.recent \.row \.activity \{ grid-column: 7 \/ 10;/);
+    expect(css("drive-row-view.ts")).toMatch(/\.row \.actions-cell \{ grid-column: 10;/);
+  });
+  it("keeps the Recent activity text in visible columns on a narrow screen", () => {
+    const rowView = css("drive-row-view.ts");
+    expect(rowView).toMatch(
+      /@media \(max-width: 40rem\)[^@]*\.recent \.row \.activity \{ grid-column: 5 \/ 10;/,
+    );
+    expect(rowView).toMatch(
+      /@media \(max-width: 40rem\)[^@]*\.recent \.row \.collection \{ display: none;/,
+    );
+  });
+  it("keeps the Browsing status note rendered, so a live region announces what is put in it", () => {
+    expect(css("settings-browsing.ts")).not.toMatch(/\.pref-note:empty\s*\{\s*display: none/);
+    expect(css("settings-browsing.ts")).toMatch(
+      /\.pref-note:not\(\.pref-status\):empty \{ display: none/,
+    );
+  });
+  it("lets the Browsing rows shrink and stack so text scaling never scrolls sideways", () => {
+    const browsing = css("settings-browsing.ts");
+    expect(browsing).toMatch(/grid-template-columns: minmax\(0, 12rem\) minmax\(0, 1fr\)/);
+    expect(browsing).toMatch(
+      /@media \(max-width: 40rem\) \{ \.pref-row \{ grid-template-columns: minmax\(0, 1fr\)/,
+    );
+  });
+});
 
 describe("component stylesheets", () => {
   it("cover every component source", () => {

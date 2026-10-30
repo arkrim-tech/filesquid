@@ -4,6 +4,9 @@
  */
 import { FsAppShell } from "./components/fs-app-shell";
 import { FsBreadcrumb } from "./components/fs-breadcrumb";
+import { FsDestinationPicker } from "./components/fs-destination-picker";
+import { FsNewMenu } from "./components/fs-new-menu";
+import { FsDriveView } from "./components/fs-drive-view";
 import { FsFileBrowser } from "./components/fs-file-browser";
 import { FsFilePreview } from "./components/fs-file-preview";
 import { FsDetailsPanel } from "./components/fs-details-panel";
@@ -241,6 +244,50 @@ export {
 } from "./navigation/store";
 export { MemoryNavigationSource, type FixtureNode } from "./navigation/source";
 export { ClientNavigationSource, type NavigationClient } from "./navigation/client-source";
+export { FsDriveView, type DriveViewOptions, type ZipDownload } from "./components/fs-drive-view";
+export {
+  FsDestinationPicker,
+  type DestinationChoice,
+  type DestinationPickerOptions,
+} from "./components/fs-destination-picker";
+export {
+  FsNewMenu,
+  NEW_ACTION_EVENT,
+  type NewAction,
+  type NewMenuOptions,
+} from "./components/fs-new-menu";
+export { FILTER_EVENT } from "./components/fs-app-shell";
+export { DriveList, type DriveItem, type DriveLayout } from "./components/drive-list";
+export { Selection, MAX_SELECTED, type SelectionState } from "./drive/selection";
+export {
+  ZIP_MAX_BYTES,
+  ZIP_MAX_FILES,
+  driveRow,
+  nextSort,
+  relativeTime as driveRelativeTime,
+  scopeText,
+  zipCheck,
+  type DriveRow,
+  type ViewQuery,
+} from "./drive/model";
+export { ClientViewSource, type ViewSource } from "./drive/source";
+export { singleOpenLibrary } from "./drive/library";
+export { MemoryViewSource } from "./drive/memory-source";
+export {
+  DestinationUnavailableError,
+  DriveActions,
+  UnavailableActionError,
+  canAct,
+} from "./drive/actions";
+export { DEFAULT_PREFERENCES, parsePreferences, type UserPreferences } from "./preferences/model";
+export {
+  ClientPreferencesSource,
+  MemoryPreferencesSource,
+  type PreferencesSource,
+} from "./preferences/source";
+export { PreferencesService, type PreferencesMode } from "./preferences/service";
+export { bindDriveRoute, firstLibrary, type DriveRouteOptions } from "./app/drive-route";
+export { bindStorage, readStorage, type StorageClient } from "./app/storage-route";
 export {
   MAX_CHANGE_PARENTS,
   MAX_PAGE_NODES,
@@ -359,6 +406,11 @@ export function defineElements(): void {
   if (!customElements.get("fs-file-browser")) {
     customElements.define("fs-file-browser", FsFileBrowser);
   }
+  if (!customElements.get("fs-destination-picker")) {
+    customElements.define("fs-destination-picker", FsDestinationPicker);
+  }
+  if (!customElements.get("fs-drive-view")) customElements.define("fs-drive-view", FsDriveView);
+  if (!customElements.get("fs-new-menu")) customElements.define("fs-new-menu", FsNewMenu);
   if (!customElements.get("fs-details-panel")) {
     customElements.define("fs-details-panel", FsDetailsPanel);
   }
