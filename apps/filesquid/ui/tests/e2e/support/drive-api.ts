@@ -86,7 +86,7 @@ export interface DriveApi {
 export const LIBRARY_ID = "lib-1";
 
 /** A contract `ViewRow` for a row of the fixture. */
-function viewRow(row: DriveRow): Record<string, unknown> {
+export function viewRow(row: DriveRow): Record<string, unknown> {
   if (row.kind === "folder") {
     return { kind: "folder", node: row.node, node_kind: row.nodeKind, name: row.name };
   }

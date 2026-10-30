@@ -40,6 +40,37 @@ export const RECENTLY_DELETED_ROUTE = "#/recently-deleted";
 /** Hash of the Logs view (UI-S-025, UI-S-032); UI-F2.16 binds it. */
 export const LOGS_ROUTE = "#/logs";
 
+/** Hash prefix of the search results (UI-S-030); the URI-encoded query follows. */
+export const SEARCH_ROUTE_PREFIX = "#/search/";
+
+/**
+ * The address of the results for a query. Pure.
+ *
+ * @param query The query the global search runs.
+ * @returns `#/search/<encoded query>`.
+ */
+export function searchHash(query: string): string {
+  return `${SEARCH_ROUTE_PREFIX}${encodeURIComponent(query)}`;
+}
+
+/**
+ * The query of a search address, or undefined for any other hash, an empty query or one whose
+ * escapes do not decode (logged). Pure apart from the console message.
+ *
+ * @param hash A location hash.
+ * @returns The query, or undefined.
+ */
+export function parseSearchHash(hash: string): string | undefined {
+  if (!hash.startsWith(SEARCH_ROUTE_PREFIX)) return undefined;
+  try {
+    const query = decodeURIComponent(hash.slice(SEARCH_ROUTE_PREFIX.length));
+    return query.trim() === "" ? undefined : query;
+  } catch (error) {
+    console.warn("FileSquid ignored a search route whose query does not decode", error);
+    return undefined;
+  }
+}
+
 /**
  * Keep a token typed in at run time (the server host's administrator token) in memory only:
  * no localStorage, no sessionStorage, no URL. It is gone when the page reloads or closes.
