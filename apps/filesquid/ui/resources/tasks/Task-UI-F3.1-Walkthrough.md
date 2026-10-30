@@ -252,6 +252,18 @@ Performance summary (milliseconds; frame rows are frame intervals)
 
 The three `FAIL` rows are the records of Finding 4 (open and back idle, open under events); their two tests declare them a known gap and passed because the gap held. The `warm-filter` and `warm-layout` rows repeat one sample for feedback and result because the control and the items appear in the same frame.
 
+Review fixes after this run changed only the known-gap rule (`known-gap.ts`), the first-preview wait, the folder class's timeout parameter, the fake host's query limits and the digest's byte copy. The six specs they touch were run again on the final code (4.0 minutes):
+
+```text
+  ✓  1 [chromium] › tests/performance/20-browse.perf.spec.ts:104:3 › warm browse, Large catalog › opening folders and going back (cache miss every time) (57.7s)
+  ✓  2 [chromium] › tests/performance/50-preview.perf.spec.ts:149:1 › a prepared display-size image paints at p95 <= 100 ms, over every image of the folder (30.3s)
+  ✓  3 [chromium] › tests/performance/50-preview.perf.spec.ts:177:1 › a 12-megapixel original: first useful equals final, within 2 s warm (32.3s)
+  ✓  4 [chromium] › tests/performance/50-preview.perf.spec.ts:205:1 › text reads one ranged request of at most 64 KiB, painted at p95 <= 100 ms (24.1s)
+  ✓  5 [chromium] › tests/performance/50-preview.perf.spec.ts:320:1 › content that cannot be read shows the error state within 2 s, never a spinner (4.1s)
+  ✓  6 [chromium] › tests/performance/70-load.perf.spec.ts:87:1 › background work: opening folders under the same stream (1.3m)
+  6 passed (4.0m)
+```
+
 ### Pre-commit hook (`bash scripts/pre-commit.sh`)
 
 ```text
@@ -273,7 +285,7 @@ Cascaded documents:
 - `resources/srs.md`: the SRS-NFR-002 and SRS-NFR-003 tests lists name the new feature.
 - `apps/filesquid/ui/resources/plan.md`: the UI-F3.1 row's Description (the browser scope), Related Tests and Status; box ticked.
 - `resources/implementation-plan-checklist.md`: the UI-F3.1 box ticked (global FS-3.4 left open).
-- `README.md`: the Run tests section (`test:perf`, the third `test:e2e` suite, the 15-minute run time, the known gap).
+- `README.md`: the Run tests section (`test:perf`, the third `test:e2e` suite, the 17-minute run time, the known gap).
 - `apps/filesquid/ui/tests/features/production_build_browsing_performance_NFR-002.feature`: written with the feature-writer skill.
 
 No conflict between the PRD, SRS, ADRs and plan needed a Conflict Artifact.

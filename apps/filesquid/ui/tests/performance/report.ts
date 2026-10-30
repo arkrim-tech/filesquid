@@ -10,6 +10,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { expect, test, type TestInfo } from "@playwright/test";
 import { BUDGETS } from "./budgets";
+import { partitionFailures, type KnownGap } from "./known-gap";
 import { frameStats, judge, summarise, type FrameStats, type Limit, type Summary } from "./stats";
 
 /** Where the suite's raw results go. */
@@ -213,53 +214,24 @@ export async function publish(info: TestInfo, records: readonly Measurement[]): 
   }
 }
 
-/** A budget the product is known to miss, recorded for the owner (Task UI-F3.1, Finding 4). */
-export interface KnownGap {
-  /** The records that make up the gap. */
-  readonly ids: readonly string[];
-  /** Why, in a sentence, with where it is recorded. */
-  readonly reason: string;
-}
-
 /**
- * The known gap of the Large catalog's navigation tree (owner decision needed, Task UI-F3.1
- * Walkthrough, Finding 4). The tree draws every node of a level up to its cap of 10,000 nodes,
- * about 60,000 elements, and that costs about 50 ms of every frame that changes the current
- * destination, so opening a folder and going back miss the 100 ms result gate on the Large
- * catalog (the Small catalog holds it). A virtualised tree is the fix.
- *
- * @param ids - The records of the classes that open folders.
- * @returns The gap.
- */
-export function treeGap(...ids: string[]): KnownGap {
-  return {
-    ids,
-    reason:
-      "Large catalog: the 10,000-node navigation tree keeps opening folders above the 100 ms gate",
-  };
-}
-
-/**
- * Fail the test for every record whose budget did not hold, naming each failure. The records of
- * a known gap are the exception: they are expected to miss, and the test fails the day they all
- * hold, as the cue to delete the gap. Only the gap is exempt; every other record, and every
- * functional assertion the caller makes, stays strict.
+ * Fail the test for every record whose budget did not hold, naming each failure. A known gap
+ * is the one exception, and a narrow one: the latency limits (a percentile or the maximum)
+ * that the records of the gap miss are tolerated and annotated, and the test fails the day the
+ * gap closes, as the cue to delete it. Too few samples, every record outside the gap and every
+ * functional assertion the caller makes stay strict (see {@link partitionFailures}).
  *
  * @param records - The published measurements.
  * @param gap - The known gap among them, if any.
  */
 export function assertBudgets(records: readonly Measurement[], gap?: KnownGap): void {
-  const inGap = (record: Measurement) => gap?.ids.includes(record.id) === true;
-  const describe = (record: Measurement) =>
-    record.failures.map((failure) => `${record.id}: ${failure} (${record.budget})`);
-  expect(
-    records.filter((record) => !inGap(record)).flatMap(describe),
-    "performance budgets",
-  ).toEqual([]);
+  const { strict, tolerated } = partitionFailures(records, gap);
+  expect(strict, "performance budgets").toEqual([]);
   if (gap === undefined) return;
-  const missed = records.filter(inGap).flatMap(describe);
   test
     .info()
-    .annotations.push({ type: "known-gap", description: `${gap.reason}: ${missed.join("; ")}` });
-  expect(missed.length, `the known gap is closed, remove it: ${gap.reason}`).toBeGreaterThan(0);
+    .annotations.push({ type: "known-gap", description: `${gap.reason}: ${tolerated.join("; ")}` });
+  expect(tolerated.length, `the known gap is closed, remove it: ${gap.reason}`).toBeGreaterThan(0);
 }
+
+export { treeGap, type KnownGap } from "./known-gap";

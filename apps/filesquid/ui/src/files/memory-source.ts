@@ -762,7 +762,8 @@ export class ContentIdentity {
     let at = known.findIndex((other) => sameBytes(other, bytes));
     if (at < 0) {
       at = known.length;
-      known.push(bytes);
+      // A copy: the caller owns `bytes` and may change it, which must not renumber a content.
+      known.push(bytes.slice());
       this.bySum.set(sum, known);
     }
     return `fixture-${sum}-${at}`;

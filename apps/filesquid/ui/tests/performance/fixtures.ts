@@ -299,7 +299,10 @@ function queryWords(q: string): string[] {
     .split(/\s+/)
     .filter((word) => word !== "");
   const openQuote = (q.match(/"/g) ?? []).length % 2 === 1;
-  const refused = words.length === 0 || openQuote || words.some((word) => word.includes(":"));
+  // The API's limits (`MAX_QUERY_BYTES`, `MAX_QUERY_TERMS` of `search_query.rs`).
+  const tooBig = Buffer.byteLength(q) > 1_024 || words.length > 32;
+  const refused =
+    words.length === 0 || openQuote || tooBig || words.some((word) => word.includes(":"));
   if (refused) throw new FixtureError(400, "invalid_request");
   return words;
 }

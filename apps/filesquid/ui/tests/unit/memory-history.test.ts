@@ -77,6 +77,16 @@ describe("MemoryFileSource history reads", () => {
     expect(identity.digestOf(b)).toBe(identity.digestOf(new Uint8Array([3, 2, 1])));
   });
 
+  it("keeps its own copy of a content, so changing the caller's array later renumbers nothing", () => {
+    const identity = new ContentIdentity(() => "same-sum");
+    const kept = new Uint8Array([1, 2, 3]);
+    const first = identity.digestOf(kept);
+    const second = identity.digestOf(new Uint8Array([9, 9, 9]));
+    kept.fill(9);
+    expect(identity.digestOf(new Uint8Array([1, 2, 3]))).toBe(first);
+    expect(identity.digestOf(new Uint8Array([9, 9, 9]))).toBe(second);
+  });
+
   it("counts each distinct content of the history once", async () => {
     const s = source();
     await s.remove(OBJECT, "Docs/a.txt", { revision: "v1" });

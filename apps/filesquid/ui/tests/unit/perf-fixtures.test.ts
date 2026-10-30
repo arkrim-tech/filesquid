@@ -309,6 +309,15 @@ describe("the search operation", () => {
     }
   });
 
+  it("refuses a query over 1,024 bytes or 32 terms, as the API does, and takes one at the limits", () => {
+    const refused = (q: string) => () => catalogue.searchPage({ q, sort: "relevance" }, null, 200);
+    expect(refused("a".repeat(1_025))).toThrow(FixtureError);
+    expect(refused(Array.from({ length: 33 }, () => "x").join(" "))).toThrow(FixtureError);
+    expect(refused("é".repeat(513))).toThrow(FixtureError);
+    expect(refused("a".repeat(1_024))).not.toThrow();
+    expect(refused(Array.from({ length: 32 }, () => "x").join(" "))).not.toThrow();
+  });
+
   it("searches the node it is narrowed to, never the big collection", () => {
     const names = catalogue
       .viewPage(
@@ -344,6 +353,13 @@ describe("the search operation", () => {
     const kinds = onTop.rows.map((row) => row.kind === "file");
     expect(kinds).toContain(false);
     expect(kinds.indexOf(true) === -1 || kinds.lastIndexOf(false) < kinds.indexOf(true)).toBe(true);
+    // Mixed: the order is the sort's alone. Names descending put the files ("scan.pdf",
+    // "IMG_...") before the folders ("Album ...") that "0" also matches, which on top reverses.
+    const query = { q: "0", sort: "name", direction: "descending" } as const;
+    const top = catalogue.searchPage({ ...query, folders: "on_top" }, null, 200).rows[0];
+    const mixed = catalogue.searchPage({ ...query, folders: "mixed" }, null, 200).rows[0];
+    expect(top?.kind).toBe("folder");
+    expect(mixed?.kind).toBe("file");
   });
 
   it("folds names and queries alike: canonically equivalent Unicode finds the same rows", () => {

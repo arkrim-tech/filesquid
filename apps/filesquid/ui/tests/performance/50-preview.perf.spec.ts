@@ -71,6 +71,9 @@ async function openPreview(
   await expect(page.locator("fs-file-browser")).toHaveAttribute("data-state", "ready");
   await page.getByRole("button", { name: first, exact: true }).click();
   await expect(page.locator("fs-file-browser h2.viewer-title")).toHaveText(first);
+  // The first preview is loaded before any step starts, so the exact request counts below
+  // cannot race a slow first read that the first Next would abort.
+  await expect(page.locator("fs-file-preview")).toHaveAttribute("data-state", "ready");
   return { page, probe, host, catalogue, errors, files };
 }
 

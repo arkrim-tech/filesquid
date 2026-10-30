@@ -48,12 +48,6 @@ export interface Counts {
   readonly warmup: number;
   /** Samples kept. */
   readonly count: number;
-  /**
-   * How long a sample may wait for its predicate, when a case needs longer than the default
-   * (the background-event case: a reload of the navigation tree can queue a view request for
-   * seconds, and that wait is the measurement, not a reason to stop the run).
-   */
-  readonly timeoutMs?: number;
 }
 
 /** The warm-up and sample size of the declared profile. */
@@ -239,13 +233,19 @@ export interface FolderResult {
  *
  * @param session - A session opened with the default preferences (folders on top).
  * @param counts - Warm-up (even) and sample sizes; `count` is the number of steps kept.
+ * @param timeoutMs - How long a sample may wait for its predicate. Longer than the default only
+ *   for the background-event case, where a reload of the navigation tree can queue a view
+ *   request for seconds and that wait is the measurement, not a reason to stop the run.
  * @returns Both measurements.
  */
-export async function folderClass(session: Session, counts: Counts = WARM): Promise<FolderResult> {
+export async function folderClass(
+  session: Session,
+  counts: Counts = WARM,
+  timeoutMs: number = BUDGETS.sampleTimeoutMs,
+): Promise<FolderResult> {
   const { catalogue } = session;
   const parentNames = names(session, BIG_QUERY);
   const opened = new Set<string>();
-  const timeoutMs = counts.timeoutMs ?? BUDGETS.sampleTimeoutMs;
   let current = { node: "", title: "", names: [] as string[] };
   const result = await runSamples({
     session,

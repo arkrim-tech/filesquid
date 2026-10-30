@@ -6,7 +6,6 @@
  * level reads (forced garbage collection and heap, CPU throttling).
  */
 import { expect, type CDPSession, type Page } from "@playwright/test";
-import { BUDGETS } from "./budgets";
 import { BIG_NODE, Catalogue, type ViewParams } from "./fixtures";
 import { serveHost, type Host } from "./host";
 import { Probe, type ArmSpec, type Pred } from "./probe";
@@ -148,11 +147,10 @@ export async function runSamples(loop: Loop): Promise<LoopResult> {
   const { page, probe } = loop.session;
   for (let i = 0; i < loop.warmup + loop.count; i += 1) {
     await loop.prepare?.(i);
-    const result = await probe.measure(loop.spec(i), () => loop.trigger(i));
+    const spec = loop.spec(i);
+    const result = await probe.measure(spec, () => loop.trigger(i));
     if (result.timedOut || result.readyMs === null) {
-      throw new Error(
-        `sample ${i} never reached its predicate within ${BUDGETS.sampleTimeoutMs} ms`,
-      );
+      throw new Error(`sample ${i} never reached its predicate within ${spec.timeoutMs} ms`);
     }
     if (i >= loop.warmup) {
       ack.push(result.ackMs ?? result.readyMs);

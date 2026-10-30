@@ -94,7 +94,7 @@ test("background work: opening folders under the same stream", async ({ page }, 
     // A reload of the navigation tree can queue a view request for seconds (the page opens six
     // connections to the host at most); that wait is what is measured, so a sample may take up
     // to 20 s before the run stops.
-    const folders = await folderClass(session, { ...WARM, timeoutMs: 20_000 });
+    const folders = await folderClass(session, WARM, 20_000);
     const records = [
       record(
         "background-open-folder-feedback-large",
