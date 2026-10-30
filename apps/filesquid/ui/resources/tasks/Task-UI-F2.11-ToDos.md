@@ -1,0 +1,27 @@
+# Task UI-F2.11 ToDos
+
+- [ ] Branch `feat/ui-f2.11-versions-panel-labels` from origin/main; `npm ci` in `apps/filesquid/ui`; Plan and ToDos written
+- [ ] Failing tests written and shown failing (unit, UI, Playwright)
+- [ ] Label keys added to the default table, `REQUIRED_LABEL_KEYS` and the ImageSquid table (`distribution-tables.test.ts` passes)
+- [ ] `FileSource.setVersionLabel` over `PUT /files/labels` as a command (envelope, scope, expected revision, `null` clears, label 1 to 512 bytes, not blank, no control characters)
+- [ ] `MemoryFileSource.setVersionLabel`: unchanged label 409, stale head 409, invalid 400, one new version
+- [ ] `DownloadSource` and `ClientDownloadSource`: download route up to 16 MiB, ranged reads of at most 8 MiB above it, at most 4,096 reads, abort, errors surfaced
+- [ ] `saveFileToDevice` revokes its object URL
+- [ ] Row menu: Restore as new version, Download this version, Edit label per row kind; current version has Download and Edit label; removal has Edit label only; no delete, expiry or thinning word
+- [ ] Menu geometry of mockup 26 (232 px wide, 34 px items, 8 px radius, 5 px item radius, within 2 px) in light and dark
+- [ ] Edit label dialog: prefilled, blank clears, unchanged closes without a call, invalid label kept in the dialog, refusal kept in the dialog, Escape and Tab inside, one filled primary button, focus returns to the menu button
+- [ ] Restore still a command (envelope, expected revision) with its optional label
+- [ ] Status announcements for saved, removed and downloading; visible alert for a failed download
+- [ ] History size row in File info; failed read leaves the row out
+- [ ] Versions eyebrow "HISTORY {size} · NEWEST FIRST" unchanged; footer note says "Deleted files expire." and never "Nothing expires"
+- [ ] Colours through tokens in light and dark (surface, card, raised, overlay, outline, outline-strong, control outline, heading, body, secondary, muted, placeholder, active tint and text, icons, error, primary, focus ring, brand)
+- [ ] Type: dialog title 22 px 700 Georgia, buttons 14 px 600, meta at least 13 px, eyebrow 11 px 400 upper case 0.1em, chips 11 px 500 mono
+- [ ] Spacing scale, radii (buttons 7, inputs 6, dialogs 10, menus 8, items 5, chips 4), panel 320 px, 1.6 px icons
+- [ ] Playwright against build plus preview, 1440 x 900, light and dark: strict DOM, labels from the table, computed styles, bounding boxes within 2 px, no console errors
+- [ ] Gherkin scenarios for F-065 written with the feature-writer skill (label, download, history size, no delete)
+- [ ] TSDoc on every export; functions under 60 lines
+- [ ] prettier, eslint, tsc, `npm test`, Playwright (`FILESQUID_E2E=1`) green
+- [ ] Walkthrough written; Plan and ToDos deleted
+- [ ] UI-F2.11 ticked in `resources/plan.md` and the root checklist; `update_mvp_progress.py` run; FS-2.5 left open
+- [ ] Docs cascaded (UI SRS, plan row Status, F-065 feature, README if commands changed)
+- [ ] `bash scripts/pre-commit.sh` passes; pushed; PR opened; head SHA handed back
