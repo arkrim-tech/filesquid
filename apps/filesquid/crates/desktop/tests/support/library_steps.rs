@@ -213,6 +213,8 @@ impl LibraryRig {
         let mut fresh = Self::launch_in(self.dir.clone());
         fresh.library = self.library.take();
         fresh.root = self.root.take();
+        // Operation IDs stay unique across the restart: receipts from before it may persist.
+        fresh.operations = self.operations;
         std::mem::swap(self, &mut fresh);
         fresh.remove_on_drop = false;
     }

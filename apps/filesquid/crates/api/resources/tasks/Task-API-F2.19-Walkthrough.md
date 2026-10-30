@@ -6,7 +6,7 @@ Branch `feat/api-f2.19-library-envelopes`, module `filesquid-api` ([plan row](..
 
 | SRS ID and title | Covered by |
 |---|---|
-| [API-S-002](../srs.md) Versioned API contract owned by this crate; every mutation route takes a `CommandEnvelope` and answers a `CommandOutcome`; a conflict is HTTP 409 with a `conflict` outcome; a repeated operation ID of a command that changed something answers its first outcome with no second change; the job controls, the location-choices route and the repair route are the only mutation routes without an envelope | `integration_library_commands` (10 tests), `library_command_envelopes_API-S-002.feature` (7 scenarios), `unit_contract` |
+| [API-S-002](../srs.md) Versioned API contract owned by this crate; every mutation route takes a `CommandEnvelope` and answers a `CommandOutcome`; a conflict is HTTP 409 with a `conflict` outcome; a repeated operation ID of a command that changed something answers its first outcome with no second change. **Covered here for the library mutation routes only** (create, open, copy, rebuild, rename), and their exemptions (the location-choices and repair routes). Not covered: the preferences route and the metadata set, remove and register routes still take plain bodies, outside this task (see below), so API-S-002 as a whole stays open for them | `integration_library_commands` (10 tests), `library_command_envelopes_API-S-002.feature` (7 scenarios), `unit_contract` |
 | [API-S-019](../srs.md) Library domain commands: create-library sends expected revision `0`; a command whose expected revision is not the library's current revision is `conflict` with no change; the stored receipt is answered before the revision is checked; a command that changes nothing stores no receipt | `a_stale_expected_revision_is_a_conflict_outcome_with_no_change`, `a_repeated_operation_id_answers_its_first_answer_with_no_second_change`, `a_repeated_create_answers_the_same_library_once_written`, `a_repeated_open_and_a_refusal_store_no_receipt` |
 | [API-S-025](../srs.md) Local library and repair routes: the rebuild runs as a durable job answered `pending`; a request for a library whose job is unfinished answers that job and submits none; every refusal journaled once; opaque IDs only | `a_rebuild_with_an_unfinished_job_answers_that_job_under_a_new_operation_id`, `every_library_mutation_route_refuses_a_body_without_an_envelope`, `integration_library_routes` (30 tests, now on envelopes), the API-S-025 feature |
 | [API-S-034](../srs.md) Library location choices: not a library command, takes no envelope; [API-S-023](../srs.md) the repair route keeps its consent body | `the_location_choices_and_repair_routes_keep_their_bodies`, scenario "The repair route keeps its consent body" |
@@ -29,7 +29,7 @@ Branch `feat/api-f2.19-library-envelopes`, module `filesquid-api` ([plan row](..
 
 - **Rename (after PR #139, API-F2.18, merged into this branch).** `POST /api/v1/libraries/renames` takes `{"envelope", "input": RenameLibraryRequest}` with scope `library:<library_id>` and the expected revision of the library, which must be open on this host (a remembered library that is not open now is `404 library_not_open`, since it has no revision to compare). A changed name advances the revision under the same lock that checks it, and the `committed` answer carries the facts at the new revision; a rename to the current name changes nothing, stores no receipt and is not journaled, as before. An open that renames an already-open library with the name it gives (API-F2.18's `library.rename` on open) also advances the revision and stores a receipt. `LibraryFacts` gains `revision` (the open library's, `null` for a remembered library that is not open), so UI-1.3's facts reader learns the expected revision of a library the page did not open; API-S-038 states it.
 
-Outside this task, pending the owner's decision: the preferences route and the metadata set and remove routes keep their plain bodies.
+Outside this task, pending the owner's decision: the preferences route and the metadata set, remove and register routes keep their plain bodies, so they do not yet meet API-S-002; this walkthrough claims API-S-002 for the library mutation routes only.
 
 TDD: `integration_library_commands` was written first and failed (10 of 10) before the routes changed; the route tests, the feature steps, the desktop tests and the UI tests then moved to envelopes.
 
@@ -182,6 +182,52 @@ test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fin
 ```
 
 The head-commit hook run (`FULL=1 bash scripts/pre-commit.sh` with a private Cargo target, `Test scope: full`) is recorded in the pull request.
+
+## Cubic review round (2026-10-30)
+
+The 22 Cubic threads on the first head were worked through:
+
+- **Revision checks under one lock.** `LibraryCommands::rename` now takes the binding lock that create, open and copy hold, so a rename can no longer land between an open's revision check and its revision advance (`a_rename_waits_for_a_running_open_so_its_revision_check_sees_it`).
+- **An open that renames expects the current revision.** An open naming an already-open library with a new name renames it, so it is refused as `conflict` for `0` and needs the library's current revision; an open that renames nothing still accepts `0` (`an_open_that_renames_an_open_library_expects_its_current_revision`, scenarios "Opening an open library under a new name expects its current revision" and "A repeated open that renamed answers its first answer with no second rename"). API-S-025 states the exception; the `Task API-F2.19` references were dropped from API-S-025 and API-S-038.
+- **Desktop name alignment.** The desktop aligns the registry name and the library entity's title only for a bind that changed the library, and retitles the entity only for a rename that changed the name, so neither runs outside the revision a command answered.
+- **Rebuild job ID.** `submit_rebuild` mints the job ID itself (`jobs::mint_job_id`, then `Jobs::submit_as`), so a failed mint is again an unjournaled refusal the route journals as `library.rebuild`.
+- **Tests.** The refusal cases of `an_envelope_of_another_schema_or_scope_is_refused` and `an_operation_id_of_another_command_is_refused` assert one journaled refusal each; the desktop test host keeps its operation counter across a restart.
+- **UI.** `ClientLibrarySource` keeps the envelope of a command that has not answered `committed` or `pending` and resends it for the same route, scope, expected revision and input, at most 32 kept (`MAX_RETAINED_COMMANDS`); `parseRebuildJob` builds the job view again from every checked field (operation ID, state, counts, RFC 3339 times, control, total, error code and the result report); the unreachable last-rebuild report path (`rememberRebuild`, `lastRebuild` and the page's restore) is removed; the Playwright fake refuses a `null` envelope.
+- **Not changed, with reasons on the threads.** Revisions stay process-local, `1` on every fresh bind, as API-S-025 states (persisting them is an owner decision); the UI's open keeps expecting `0`, since it sends no name and so never renames.
+
+`cargo test -p filesquid-api --locked --test integration_library_commands`:
+
+```text
+Running tests/integration/library_commands.rs (integration_library_commands-0737aacb11453b4b)
+running 13 tests
+test a_repeated_create_answers_the_same_library_once_written ... ok
+test a_rename_waits_for_a_running_open_so_its_revision_check_sees_it ... ok
+test a_rebuild_with_an_unfinished_job_answers_that_job_under_a_new_operation_id ... ok
+test a_rename_takes_an_envelope_advances_the_revision_and_replays_its_answer ... ok
+test a_repeated_open_and_a_refusal_store_no_receipt ... ok
+test a_repeated_operation_id_answers_its_first_answer_with_no_second_change ... ok
+test a_stale_expected_revision_is_a_conflict_outcome_with_no_change ... ok
+test an_envelope_of_another_schema_or_scope_is_refused ... ok
+test an_open_that_renames_an_open_library_expects_its_current_revision ... ok
+test an_operation_id_of_another_command_is_refused ... ok
+test every_library_mutation_route_refuses_a_body_without_an_envelope ... ok
+test create_open_copy_and_rebuild_answer_an_outcome_for_the_same_operation ... ok
+test the_location_choices_and_repair_routes_keep_their_bodies ... ok
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
+```
+
+`cargo test -p filesquid-api --locked`: 942 tests passed, 398 scenarios (296 passed, 102 skipped, as before). `cargo test -p filesquid-desktop --locked`: 181 tests passed.
+
+`npx vitest run` over the library tests of `@filesquid/ui`:
+
+```text
+✓ tests/unit/library-client.test.ts (38 tests) 102ms
+ ✓ tests/ui/library-detail.test.ts (20 tests) 340ms
+ ✓ tests/ui/library-start.test.ts (22 tests) 356ms
+ ✓ tests/unit/library-errors.test.ts (14 tests) 16ms
+ Test Files  4 passed (4)
+      Tests  94 passed (94)
+```
 
 ## Sync Execution Report
 

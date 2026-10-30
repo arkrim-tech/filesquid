@@ -7,7 +7,15 @@
  * `TypeError`.
  */
 import { describe, expect, it } from "vitest";
-import { ApiError, ClientLibrarySource, FileSquidClient } from "../../src/index";
+import {
+  ApiError,
+  ClientLibrarySource,
+  FileSquidClient,
+  MAX_RETAINED_COMMANDS,
+  type CommandEnvelope,
+  type LibraryClient,
+} from "../../src/index";
+import type { CommandAnswer } from "../../src/api/commands";
 import { CANDIDATES, COPY_REPORT, LIBRARY, REBUILD_JOB } from "../support/library-fakes";
 
 /** One request as the fake fetch saw it. */
@@ -238,6 +246,45 @@ describe("ClientLibrarySource", () => {
     }
   });
 
+  it("builds a rebuild's job view again from its checked fields", async () => {
+    const job = {
+      ...REBUILD_JOB.job,
+      state: "running",
+      control: "pause",
+      total: 9,
+      error_code: "unavailable",
+      lease_holder: "worker-1",
+    };
+    const pending = setup({ ...REBUILD_JOB, job }, 200, "pending");
+    const answer = await pending.source.rebuild("a", "1");
+    expect(answer.job).toEqual({
+      ...REBUILD_JOB.job,
+      state: "running",
+      control: "pause",
+      total: 9,
+      error_code: "unavailable",
+    });
+  });
+
+  it.each([
+    ["no operation id", { operation_id: undefined }],
+    ["an unknown state", { state: "sleeping" }],
+    ["a non-boolean paused", { paused: "no" }],
+    ["a negative done count", { done: -1 }],
+    ["a fractional attempt count", { attempts: 1.5 }],
+    ["a created time that is not RFC 3339", { created: "yesterday" }],
+    ["no updated time", { updated: undefined }],
+    ["an unknown control", { control: "stop" }],
+    ["a negative total", { total: -2 }],
+    ["an empty error code", { error_code: "" }],
+    ["a malformed result", { result: { objects: "x" } }],
+    ["no result", { result: undefined }],
+  ])("rejects a rebuild job view with %s", async (_name, change) => {
+    const job = { ...REBUILD_JOB.job, ...change };
+    const pending = setup({ ...REBUILD_JOB, job }, 200, "pending");
+    await expect(pending.source.rebuild("a", "1")).rejects.toBeInstanceOf(TypeError);
+  });
+
   it("rejects malformed copy, rebuild, candidate and repair answers", async () => {
     await expect(setup({ objects: 1 }).source.copy("a", "b", "1")).rejects.toBeInstanceOf(
       TypeError,
@@ -249,5 +296,71 @@ describe("ClientLibrarySource", () => {
     );
     const request = { library_id: "a", object_ids: ["o"] };
     await expect(setup({ objects: [{}] }).source.repair(request)).rejects.toBeInstanceOf(TypeError);
+  });
+});
+
+/** A library client whose commands answer from `answers` in order and record each envelope. */
+function scripted(answers: (CommandAnswer | Error)[]) {
+  const envelopes: CommandEnvelope[] = [];
+  const client: LibraryClient = {
+    request: () => Promise.reject(new Error("no request expected")),
+    command: <T>(_path: string, envelope: CommandEnvelope) => {
+      envelopes.push(envelope);
+      const next = answers.shift() ?? new Error("no answer scripted");
+      if (next instanceof Error) return Promise.reject(next);
+      return Promise.resolve({ ...next, operation_id: envelope.operation_id } as CommandAnswer<T>);
+    },
+  };
+  return { source: new ClientLibrarySource(client), envelopes };
+}
+
+/** A committed outcome carrying `result`; the operation id is the one sent. */
+function committed(result: unknown): CommandAnswer {
+  return { operation_id: "", kind: "committed", error: null, result };
+}
+
+describe("ClientLibrarySource retries", () => {
+  it("resends the same operation id when a create's answer was lost, then releases it", async () => {
+    const lost = new TypeError("Failed to fetch");
+    const { source, envelopes } = scripted([lost, committed(LIBRARY), committed(LIBRARY)]);
+    await expect(source.create("loc-1")).rejects.toBe(lost);
+    await expect(source.create("loc-1")).resolves.toEqual(LIBRARY);
+    await source.create("loc-1");
+    const ids = envelopes.map((envelope) => envelope.operation_id);
+    expect(ids[1]).toBe(ids[0]);
+    expect(ids[2]).not.toBe(ids[0]);
+  });
+
+  it("keeps the operation id of a copy refused with 503 or a conflict outcome", async () => {
+    const outage = new ApiError(503, "/api/v1/libraries/snapshot-copies", { retryable: true });
+    const conflict: CommandAnswer = { operation_id: "", kind: "conflict", error: null };
+    const { source, envelopes } = scripted([outage, conflict, committed(COPY_REPORT)]);
+    await expect(source.copy("lib-1", "loc-2", "1")).rejects.toBe(outage);
+    await expect(source.copy("lib-1", "loc-2", "1")).rejects.toBeInstanceOf(ApiError);
+    await expect(source.copy("lib-1", "loc-2", "1")).resolves.toEqual(COPY_REPORT);
+    expect(new Set(envelopes.map((envelope) => envelope.operation_id)).size).toBe(1);
+  });
+
+  it("sends a fresh operation id for another input or another expected revision", async () => {
+    const lost = new TypeError("Failed to fetch");
+    const { source, envelopes } = scripted([lost, lost, lost]);
+    await expect(source.copy("lib-1", "loc-2", "1")).rejects.toBe(lost);
+    await expect(source.copy("lib-1", "loc-3", "1")).rejects.toBe(lost);
+    await expect(source.copy("lib-1", "loc-2", "2")).rejects.toBe(lost);
+    expect(new Set(envelopes.map((envelope) => envelope.operation_id)).size).toBe(3);
+  });
+
+  it(`keeps at most ${MAX_RETAINED_COMMANDS} unanswered commands, dropping the oldest`, async () => {
+    const lost = new TypeError("Failed to fetch");
+    const count = MAX_RETAINED_COMMANDS + 1;
+    const { source, envelopes } = scripted(Array.from({ length: count + 2 }, () => lost));
+    for (let i = 0; i < count; i += 1) {
+      await expect(source.open(`loc-${i}`)).rejects.toBe(lost);
+    }
+    await expect(source.open("loc-0")).rejects.toBe(lost);
+    await expect(source.open(`loc-${count - 1}`)).rejects.toBe(lost);
+    const ids = envelopes.map((envelope) => envelope.operation_id);
+    expect(ids[count]).not.toBe(ids[0]);
+    expect(ids[count + 1]).toBe(ids[count - 1]);
   });
 });

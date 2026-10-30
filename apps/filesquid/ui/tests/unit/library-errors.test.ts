@@ -92,24 +92,13 @@ describe("libraryFailure", () => {
 });
 
 describe("LibraryRegistry", () => {
-  it("remembers the view and the last rebuild of a library", () => {
+  it("remembers the latest view of a library", () => {
     const registry = new LibraryRegistry();
     expect(registry.get("lib-1")).toBeUndefined();
     registry.remember(LIBRARY);
     expect(registry.get("lib-1")).toEqual(LIBRARY);
-    registry.rememberRebuild("lib-1", { objects: [], unreadable: [] });
-    expect(registry.lastRebuild("lib-1")).toEqual({ objects: [], unreadable: [] });
     registry.remember({ ...LIBRARY, objects: 9 });
     expect(registry.get("lib-1")?.objects).toBe(9);
-    expect(registry.lastRebuild("lib-1")).toBeDefined();
-  });
-
-  it("keeps at most 64 rebuild reports even for libraries it never saw", () => {
-    const registry = new LibraryRegistry();
-    const report = { objects: [], unreadable: [] };
-    for (let i = 0; i < 70; i += 1) registry.rememberRebuild(`l${i}`, report);
-    expect(registry.lastRebuild("l5")).toBeUndefined();
-    expect(registry.lastRebuild("l6")).toBeDefined();
   });
 
   it("keeps at most 64 libraries, dropping the oldest", () => {

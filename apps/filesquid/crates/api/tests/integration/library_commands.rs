@@ -262,14 +262,20 @@ async fn an_envelope_of_another_schema_or_scope_is_refused() {
         "0",
         json!({ "location_id": dest }),
     );
-    for (uri, body) in [
-        (CREATE, other_schema),
-        (COPY, wrong_scope),
-        (COPY, not_opaque),
-        (OPEN, library_scope),
+    for (uri, operation, body) in [
+        (CREATE, CREATE_OPERATION, other_schema),
+        (COPY, COPY_OPERATION, wrong_scope),
+        (COPY, COPY_OPERATION, not_opaque),
+        (OPEN, OPEN_OPERATION, library_scope),
     ] {
+        let before = count(&rig, operation, Outcome::Failed);
         let answer = rig.post(uri, body).await;
         assert_error(&answer, 400, "invalid_request");
+        assert_eq!(
+            count(&rig, operation, Outcome::Failed),
+            before + 1,
+            "{uri}: journaled once"
+        );
     }
     assert!(rig.files(&dest).is_empty(), "nothing was written");
 }
@@ -283,10 +289,12 @@ async fn an_operation_id_of_another_command_is_refused() {
     let body = library_command(&library, &shared, "1", input);
     assert_committed(&rig.post(COPY, body).await, &shared);
     let other = rig.locations.register("other");
+    let before = count(&rig, CREATE_OPERATION, Outcome::Failed);
     let answer = rig
         .post(CREATE, location_command(&other, &shared, "0", None))
         .await;
     assert_error(&answer, 400, "invalid_request");
+    assert_eq!(count(&rig, CREATE_OPERATION, Outcome::Failed), before + 1);
     assert!(rig.files(&other).is_empty(), "nothing was written");
 }
 
@@ -376,6 +384,77 @@ async fn a_rename_takes_an_envelope_advances_the_revision_and_replays_its_answer
     let input = json!({ "library_id": library, "destination_location_id": dest });
     let copy = library_command(&library, &same, "2", input);
     assert_committed(&rig.post(COPY, copy).await, &same);
+    assert_eq!(count(&rig, RENAME_OPERATION, Outcome::Succeeded), 1);
+}
+
+/// The open command of the folder `location` holding `library`, naming it `name`.
+fn renaming_open(
+    location: &str,
+    library: &str,
+    operation: &str,
+    revision: &str,
+    name: &str,
+) -> Value {
+    let mut body = location_command(location, operation, revision, Some(library));
+    body["input"]["name"] = json!(name);
+    body
+}
+
+#[tokio::test]
+async fn an_open_that_renames_an_open_library_expects_its_current_revision() {
+    let (rig, library, location) = library(Mount::Desktop).await;
+    let stale = operation_id();
+    let body = renaming_open(&location, &library, &stale, "0", "Renamed by open");
+    let before = count(&rig, OPEN_OPERATION, Outcome::Failed);
+    assert_conflict(&rig.post(OPEN, body).await, &stale);
+    assert_eq!(count(&rig, OPEN_OPERATION, Outcome::Failed), before + 1);
+    let read = rig.get(&format!("/api/v1/libraries/{library}/facts")).await;
+    assert_ne!(read.json()["name"], "Renamed by open", "nothing changed");
+    assert_eq!(read.json()["revision"], "1", "{}", read.text());
+
+    let renamed = operation_id();
+    let body = renaming_open(&location, &library, &renamed, "1", "Renamed by open");
+    let first = rig.post(OPEN, body.clone()).await;
+    let view = assert_committed(&first, &renamed);
+    assert_eq!(view["revision"], "2", "the rename advances it: {view}");
+    let again = rig.post(OPEN, body).await;
+    assert_eq!(
+        again.json(),
+        first.json(),
+        "the stored answer, no second change"
+    );
+    assert_eq!(count(&rig, RENAME_OPERATION, Outcome::Succeeded), 1);
+
+    let unnamed = operation_id();
+    let body = location_command(&location, &unnamed, "0", Some(&library));
+    let plain = assert_committed(&rig.post(OPEN, body).await, &unnamed);
+    assert_eq!(
+        plain["revision"], "2",
+        "an open that renames nothing: {plain}"
+    );
+}
+
+#[tokio::test]
+async fn a_rename_waits_for_a_running_open_so_its_revision_check_sees_it() {
+    let (rig, library, location) = library(Mount::Desktop).await;
+    let opened = operation_id();
+    let open = renaming_open(&location, &library, &opened, "1", "By open");
+    let renamed = operation_id();
+    let rename = rename_body(&library, &renamed, "1", "By rename");
+    let (open, rename) = tokio::join!(rig.post(OPEN, open), rig.post(RENAME, rename));
+    let committed = [&open, &rename]
+        .iter()
+        .filter(|answer| answer.json()["kind"] == "committed")
+        .count();
+    assert_eq!(
+        committed,
+        1,
+        "one expected revision 1 wins: {} {}",
+        open.text(),
+        rename.text()
+    );
+    let read = rig.get(&format!("/api/v1/libraries/{library}/facts")).await;
+    assert_eq!(read.json()["revision"], "2", "{}", read.text());
     assert_eq!(count(&rig, RENAME_OPERATION, Outcome::Succeeded), 1);
 }
 

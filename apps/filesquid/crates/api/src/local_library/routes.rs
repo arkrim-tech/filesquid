@@ -20,19 +20,21 @@
 //! Readability is the navigation access the host installed (API-S-021), which must admit the
 //! host's repository and the library, else this release's host access.
 //!
-//! **Command envelopes (Task API-F2.19; API-S-002, API-S-019).** The four mutation routes
-//! take `{"envelope": CommandEnvelope, "input": ...}` ([`crate::envelope`]) and answer a
-//! `CommandOutcome` for the envelope's operation ID with the route's former answer as
-//! `result`: `committed` for create, open and copy, `pending` with the job for a rebuild. The
-//! scope is `location:<location_id>` for create and open and `library:<library_id>` for copy
-//! and rebuild. The expected revision is compared by the operations under their binding lock
-//! (create `0`; open `0`, or the current revision of a library already open there; copy and
-//! rebuild the current revision); a stale one, like every other 409 refusal, is HTTP 409 with
-//! a `conflict` outcome beside the `ApiError` fields. A repeated operation ID of a command
-//! that changed something (a create, a fresh open, a copy, a rebuild that submitted its job)
-//! answers its first answer again with no second change; a command that changed nothing (an
-//! open of an open library, a rebuild that answered an unfinished job, a refusal) stores no
-//! receipt. The repair route keeps its consent body and the location-choices route its
+//! **Command envelopes (Task API-F2.19; API-S-002, API-S-019).** The five mutation routes
+//! (create, open, copy, rebuild and rename) take `{"envelope": CommandEnvelope, "input": ...}`
+//! ([`crate::envelope`]) and answer a `CommandOutcome` for the envelope's operation ID with the
+//! route's former answer as `result`: `committed` for create, open, copy and rename, `pending`
+//! with the job for a rebuild. The scope is `location:<location_id>` for create and open and
+//! `library:<library_id>` for copy, rebuild and rename. The expected revision is compared by
+//! the operations under their binding lock (create `0`; open `0`, or the current revision of a
+//! library already open there, and only the current one when the open renames it; copy,
+//! rebuild and rename the current revision); a stale one, like every other 409 refusal, is
+//! HTTP 409 with a `conflict` outcome beside the `ApiError` fields. A repeated operation ID of
+//! a command that changed something (a create, a fresh open, an open that renamed, a copy, a
+//! rebuild that submitted its job, a rename that changed the name) answers its first answer
+//! again with no second change; a command that changed nothing (an open of an open library, a
+//! rebuild that answered an unfinished job, a rename to the current name, a refusal) stores
+//! no receipt. The repair route keeps its consent body and the location-choices route its
 //! purpose: neither is an envelope route.
 //!
 //! The operations journal their own outcomes and refusals. A handler journals only what it

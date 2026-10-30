@@ -100,12 +100,14 @@ impl DesktopLibraries {
 
     /// Serve the bound library of `view` for `actor`: its files from its folder's root and
     /// leases, its catalog index (named as [`Self::align_name`] says, with `requested` the
-    /// name the bind request gave), its validation and its history. A part that cannot be
+    /// name the bind request gave, only when the bind `changed` the library, so the names are
+    /// aligned under the revision that bind answered and an open that changed nothing changes
+    /// no name), its validation and its history. A part that cannot be
     /// served is logged as a warning with its error code only (the journal layer journals
     /// it); the library stays open in the commands. Creates directories in the data
     /// directory; the catalog attach (which may rebuild a whole index) and the name
     /// alignment run on blocking threads.
-    async fn serve(&self, actor: &str, view: &LibraryView, requested: Option<&str>) {
+    async fn serve(&self, actor: &str, view: &LibraryView, requested: Option<&str>, changed: bool) {
         let location = self.commands.location_of(&view.library_id);
         let root = location
             .as_deref()
@@ -115,7 +117,7 @@ impl DesktopLibraries {
             return;
         };
         let identity = location.and_then(|location| self.locations.identity_of(&location));
-        if self.attach(&view.library_id, &root, identity).await {
+        if self.attach(&view.library_id, &root, identity).await && changed {
             self.align_name(actor, &view.library_id, requested).await;
         }
         if open_fs_library_root(
@@ -235,8 +237,8 @@ impl DesktopLibraries {
         }
     }
 
-    /// Bind with `bind` for `actor`, then serve the bound library, `requested` being the
-    /// name the bind request gave.
+    /// Bind with `bind` (a create, which always changes the library) for `actor`, then serve the
+    /// bound library, `requested` being the name the bind request gave.
     async fn bind_and_serve(
         &self,
         actor: &str,
@@ -246,7 +248,7 @@ impl DesktopLibraries {
         >,
     ) -> Result<LibraryView, filesquid_api::local_library::LocalLibraryError> {
         let view = bind.await?;
-        self.serve(actor, &view, requested.as_deref()).await;
+        self.serve(actor, &view, requested.as_deref(), true).await;
         Ok(view)
     }
 }
@@ -293,7 +295,9 @@ impl LibraryOperations for DesktopLibraries {
         Box::pin(async move {
             let requested = request.name.clone();
             let opened = self.commands.open(&actor, request, &expected).await?;
-            self.serve(&actor, &opened.view, requested.as_deref()).await;
+            let (view, changed) = (&opened.view, opened.changed);
+            self.serve(&actor, view, requested.as_deref(), changed)
+                .await;
             Ok(opened)
         })
     }
@@ -346,10 +350,11 @@ impl LibraryOperations for DesktopLibraries {
         Box::pin(async move { self.commands.repair(&caller, request).await })
     }
 
-    /// The commands' rename (the registry, journaled `library.rename`), then the retitle of
-    /// the library entity, so the navigation title follows (API-S-038); a retitle the
-    /// catalog refuses is journaled by it and logged, and the facts still answer the
-    /// registry's name.
+    /// The commands' rename (the registry, journaled `library.rename`), then, when the name
+    /// changed, the retitle of the library entity, so the navigation title follows
+    /// (API-S-038) under the revision the rename advanced; a rename to the current name
+    /// changes nothing, so it retitles nothing. A retitle the catalog refuses is journaled by
+    /// it and logged, and the facts still answer the registry's name.
     fn rename(
         &self,
         actor: String,
@@ -359,7 +364,9 @@ impl LibraryOperations for DesktopLibraries {
         Box::pin(async move {
             let (library_id, name) = (request.library_id.clone(), request.name.clone());
             let renamed = self.commands.rename(&actor, request, &expected).await?;
-            self.retitle(&actor, &library_id, &name).await;
+            if renamed.1 {
+                self.retitle(&actor, &library_id, &name).await;
+            }
             Ok(renamed)
         })
     }

@@ -99,10 +99,11 @@ const COMMAND_ROUTES = [
 /** The envelope of a command body, or undefined when the body carries no valid one. */
 function envelopeOf(body: unknown): { operation_id: string } | undefined {
   const record = (body ?? {}) as Record<string, unknown>;
-  const envelope = record.envelope as Record<string, unknown> | undefined;
+  const envelope = record.envelope as Record<string, unknown> | null | undefined;
   const keys = Object.keys(record);
   const shaped =
-    envelope !== undefined &&
+    typeof envelope === "object" &&
+    envelope !== null &&
     keys.every((key) => key === "envelope" || key === "input") &&
     envelope.schema_version === 1 &&
     typeof envelope.operation_id === "string" &&

@@ -12,12 +12,7 @@
 import { RETRY_EVENT } from "./fs-states";
 import { formatSize } from "../files/model";
 import { libraryFailure, type LibraryAction } from "../libraries/errors";
-import {
-  LIBRARY_ROUTE,
-  libraryRepairHref,
-  type RebuildReport,
-  type SnapshotCopyReport,
-} from "../libraries/model";
+import { LIBRARY_ROUTE, libraryRepairHref, type SnapshotCopyReport } from "../libraries/model";
 import { formatLabel, type LabelTable } from "../theme/labels";
 import {
   Feedback,
@@ -69,35 +64,6 @@ function copyReport(report: SnapshotCopyReport, labels: LabelTable): Node[] {
     }),
   );
   return [...nodes, node("p", undefined, title), sentences(lines)];
-}
-
-/**
- * The lines that report a rebuild from files. Pure.
- *
- * @param report What the rebuild read.
- * @param labels The active label table.
- * @returns The nodes to show, in order.
- */
-function rebuildReport(report: RebuildReport, labels: LabelTable): Node[] {
-  const invalid = report.objects.filter((object) => object.error_codes.length > 0);
-  const total = formatLabel(labels.libraryRebuilt, {
-    objects: String(report.objects.length),
-    unreadable: String(report.unreadable.length),
-    invalid: String(invalid.length),
-  });
-  const lines = [
-    ...invalid.map((object) =>
-      formatLabel(labels.libraryRebuiltInvalid, {
-        object: object.object_id,
-        codes: codesText(object.error_codes),
-      }),
-    ),
-    ...report.unreadable.map((item) =>
-      formatLabel(labels.libraryUnreadable, { code: item.error_code }),
-    ),
-  ];
-  const nodes: Node[] = [node("p", undefined, total)];
-  return lines.length > 0 ? [...nodes, sentences(lines)] : nodes;
 }
 
 /** Custom element that shows one library's page. */
@@ -165,7 +131,7 @@ export class FsLibraryDetail extends HTMLElement {
     this.busy = false;
     this.last = undefined;
     this.destination = undefined;
-    const { labels, registry } = options;
+    const { labels } = options;
     this.note = new Feedback(labels, "repair-note");
     this.actions = new Feedback(labels, "actions");
     this.repairSlot = node("div", "repair-slot");
@@ -174,8 +140,6 @@ export class FsLibraryDetail extends HTMLElement {
       ["copy", this.resultBox("copy")],
       ["rebuild", this.resultBox("rebuild")],
     ]);
-    const known = registry.lastRebuild(id);
-    if (known) this.showResult("rebuild", rebuildReport(known, labels));
     const side = node("div", "side");
     side.append(this.actionsSection(), this.repairSlot);
     const columns = node("div", "columns");

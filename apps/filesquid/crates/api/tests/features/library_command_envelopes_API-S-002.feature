@@ -4,8 +4,9 @@
 # with no second change. The library mutation routes (create, open, copy, rebuild, rename) take
 # the envelope (owner decision 1 of 2026-10-23); the location-choices route and the repair route
 # keep their bodies.
-# API-S-019: create-library sends expected revision 0; a command whose expected revision is not
-# the library's current revision is refused as conflict with no change; the stored receipt is
+# API-S-019: create-library sends expected revision 0; open sends 0 or the current revision of
+# an open library, and only the current one when it renames that library; a command whose
+# expected revision is not the library's current revision is refused as conflict with no change; the stored receipt is
 # answered before the revision is checked; a command that changes nothing stores no receipt.
 # API-S-025: the rebuild runs as a durable job answered pending; a request for a library whose
 # rebuild job is unfinished answers that job and submits none.
@@ -39,7 +40,24 @@ Feature: Command envelopes on the library routes
     And the library should be at revision "2"
     And "library.rename" should be journaled 1 time as a success
 
+  Scenario: Opening an open library under a new name expects its current revision
+    Given the desktop owner's library with a complete object and an object without a version inventory
+    When the owner opens the library's folder naming it "Family archive" as operation "op-open-1" expecting "0"
+    Then the library answer should be HTTP 409 with a conflict outcome of operation "op-open-1"
+    And exactly one refusal "conflict" should be journaled for "library.root.open"
+    When the owner opens the library's folder naming it "Family archive" as operation "op-open-2" expecting "1"
+    Then the answer should be a committed library outcome of operation "op-open-2"
+    And the library should be at revision "2"
+    And "library.rename" should be journaled 1 time as a success
+
   # Edge cases
+  Scenario: A repeated open that renamed answers its first answer with no second rename
+    Given the desktop owner's library with a complete object and an object without a version inventory
+    When the owner opens the library's folder naming it "Family archive" as operation "op-open-3" expecting "1"
+    And the owner opens the library's folder naming it "Family archive" as operation "op-open-3" expecting "1"
+    Then the library answer should be the first answer of operation "op-open-3"
+    And "library.rename" should be journaled 1 time as a success
+
   Scenario: A repeated copy answers its first answer with no second write
     Given the desktop owner's library with a complete object and an object without a version inventory
     When the owner copies the library to an empty folder as operation "op-copy-1" expecting "1"

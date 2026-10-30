@@ -12,8 +12,11 @@
 //! [`INITIAL_REVISION`]; a later command that changes the bound library advances it. Create
 //! expects [`NEW_REVISION`] (the library must not exist); open expects [`NEW_REVISION`] for a
 //! library not open here, or its current revision when it is already open, and then answers
-//! it again; copy and rebuild expect the current revision. Anything else is `conflict` and
-//! changes nothing.
+//! it again; an open that gives an already-open library a new name renames it, so it must
+//! expect that library's current revision; copy, rebuild and rename expect the current
+//! revision. Anything else is `conflict` and changes nothing. Create, open, copy and rename
+//! run under one binding lock, so the revision one of them checked cannot change before it
+//! commits (a rebuild's check is one step under the open-library lock).
 
 use super::error::LocalLibraryError;
 use super::facts::{
@@ -90,9 +93,10 @@ pub struct LibraryCommands<L: LibraryLocations> {
     /// What the host remembers of the libraries it bound (API-S-038); without one, the
     /// facts, recent and rename routes are unavailable.
     registry: Option<Arc<dyn LibraryRegistry>>,
-    /// Serialises create, open and copy, so two of them cannot bind one location or library
-    /// twice between the check and the binding, and no library is opened in a copy's
-    /// destination while the copy runs.
+    /// Serialises create, open, copy and rename, so two of them cannot bind one location or
+    /// library twice between the check and the binding, no library is opened in a copy's
+    /// destination while the copy runs, and no rename lands between an open's revision check
+    /// and its revision advance.
     binding: tokio::sync::Mutex<()>,
 }
 
@@ -124,7 +128,8 @@ impl<L: LibraryLocations> LibraryCommands<L> {
     /// Rename a library open on this host, for `actor`, when the caller expects its current
     /// revision, and answer its facts: a changed name advances the revision; a rename that
     /// changes nothing answers the facts, advances nothing and is not journaled. Answers the
-    /// facts and whether the name changed.
+    /// facts and whether the name changed. The check and the rename run under the binding
+    /// lock, so a rename never lands between an open's revision check and its advance.
     ///
     /// # Errors
     ///
@@ -138,11 +143,13 @@ impl<L: LibraryLocations> LibraryCommands<L> {
         expected: &str,
     ) -> Result<(LibraryFacts, bool), LocalLibraryError> {
         let library = &request.library_id;
+        let serialised = self.binding.lock().await;
         let checked = self.registry().and_then(|registry| {
             name_or_refusal(Some(&request.name))?;
             let changed = self.rename_at(registry.as_ref(), library, &request.name, expected)?;
             Ok((registry, changed))
         });
+        drop(serialised);
         let (registry, changed) = self.refused(actor, RENAME_OPERATION, Some(library), checked)?;
         if changed {
             self.service
@@ -553,7 +560,8 @@ impl<L: LibraryLocations> LibraryCommands<L> {
     /// The library ID and root a create or open would bind, checking the IDs, the location,
     /// what is already open (a second location ID for an open library's folder, or one
     /// inside or around it, is refused, so one OCFL root is never bound twice), the
-    /// expected revision and the bound. Nothing is written.
+    /// expected revision and the bound: an open that would give an already-open library a new
+    /// name must expect its current revision, never [`NEW_REVISION`]. Nothing is written.
     fn plan_binding(
         &self,
         request: &LocationRequest,
@@ -573,7 +581,12 @@ impl<L: LibraryLocations> LibraryCommands<L> {
         if let Some((library, revision)) = bound {
             let same = request.library_id.as_ref().is_none_or(|id| *id == library);
             if binding == Binding::Open && same {
-                check_expected(expected, &[NEW_REVISION, &revision])?;
+                let accepted = if self.renames(&library, request.name.as_deref()) {
+                    vec![revision.as_str()]
+                } else {
+                    vec![NEW_REVISION, revision.as_str()]
+                };
+                check_expected(expected, &accepted)?;
                 return Ok(Planned::AlreadyOpen(library, root));
             }
             return Err(location_in_use());
@@ -595,6 +608,17 @@ impl<L: LibraryLocations> LibraryCommands<L> {
             return Err(too_many_libraries());
         }
         Ok(Planned::Fresh(library_id, root))
+    }
+
+    /// Whether binding `library` again with `name` would rename it: a name is given and the
+    /// registry remembers the library under another one. Registry read, without an await.
+    fn renames(&self, library: &LibraryId, name: Option<&str>) -> bool {
+        let known = self
+            .registry
+            .as_ref()
+            .and_then(|registry| registry.entry(library));
+        name.zip(known)
+            .is_some_and(|(name, known)| known.name != name)
     }
 
     /// The roots of an open library and a copy destination that overlaps no open library,

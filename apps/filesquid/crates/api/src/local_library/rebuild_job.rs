@@ -27,7 +27,7 @@ use super::locations::LibraryRequest;
 use super::operations::LibraryOperations;
 use super::rebuild::{RebuildEnd, RebuildEntry, RebuildProgress, RebuildReport, RebuildStep};
 use crate::jobs::{
-    Halt, Job, JobError, JobRunner, JobSpec, JobState, JobView, Jobs, RunningJob,
+    mint_job_id, Halt, Job, JobError, JobRunner, JobSpec, JobState, JobView, Jobs, RunningJob,
     MAX_RECOVERED_JOBS, MAX_RESULT_BYTES,
 };
 use filesquid_core::LibraryId;
@@ -117,7 +117,8 @@ impl SubmitRefusal {
 /// out is never duplicated.
 ///
 /// # Errors
-/// A store failure; [`JobError::Unavailable`] when the bound is reached.
+/// A store failure (journaled by the job service); [`JobError::Unavailable`] when the bound
+/// is reached or no job ID can be minted (both the caller's to journal).
 pub fn submit_rebuild(
     jobs: &Jobs,
     library: &LibraryId,
@@ -136,12 +137,13 @@ pub fn submit_rebuild(
         let error = JobError::Unavailable("too many unfinished rebuild jobs".into());
         return Err(SubmitRefusal::unjournaled(error));
     }
+    let id = mint_job_id().map_err(SubmitRefusal::unjournaled)?;
     let spec = JobSpec {
         kind: REBUILD_JOB_KIND.to_string(),
         operation_id,
         source,
     };
-    jobs.submit(spec).map_err(|error| SubmitRefusal {
+    jobs.submit_as(id, spec).map_err(|error| SubmitRefusal {
         error,
         journaled: true,
     })

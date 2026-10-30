@@ -7,12 +7,19 @@
  * denials) pass through unchanged as `ApiError` for the views to word.
  *
  * Create, open, copy and rebuild are commands (API-F2.19, API-S-002): each goes through
- * `FileSquidClient.command()` with an envelope carrying a fresh operation id, the scope the
+ * `FileSquidClient.command()` with an envelope carrying an operation id, the scope the
  * route derives from its input (`location:<id>` for create and open, `library:<id>` for copy
  * and rebuild) and the expected revision (`0` for create and open; the library's `revision`
  * as last read for copy and rebuild). A `conflict` outcome is raised as the `ApiError` 409
  * `conflict` the views already word; any other outcome than the one the route answers is a
  * contract break (`TypeError`).
+ *
+ * **Retries keep their operation id.** A command that did not answer `committed` or `pending`
+ * (a lost answer, a 5xx, an operation still in flight, a conflict) keeps its envelope, and the
+ * next call with the same route, scope, expected revision and input sends it again, so a
+ * command the host already committed answers its stored receipt instead of being refused as
+ * `location_in_use` or `destination_not_empty`. A command that answered releases its envelope;
+ * at most {@link MAX_RETAINED_COMMANDS} are kept, the oldest dropped first.
  */
 import { ApiError, type RequestOptions } from "../api/client";
 import { commandEnvelope, type CommandAnswer, type CommandEnvelope } from "../api/commands";
@@ -44,6 +51,9 @@ export interface LibraryClient {
   /** Send a command `{ envelope, input }` and parse its outcome. */
   command<T>(path: string, envelope: CommandEnvelope, input?: unknown): Promise<CommandAnswer<T>>;
 }
+
+/** Most unanswered command envelopes kept for a retry (AGENTS.md §22). */
+export const MAX_RETAINED_COMMANDS = 32;
 
 /** HTTP status of a `conflict` answer, as the views word it. */
 const HTTP_CONFLICT = 409;
@@ -79,6 +89,9 @@ const ROUTES = {
 
 /** A library source over the FileSquid API. */
 export class ClientLibrarySource implements LibrarySource {
+  /** Envelopes of commands that have not answered yet, by command identity, oldest first. */
+  private readonly retained = new Map<string, CommandEnvelope>();
+
   /** @param client The API client (`FileSquidClient`, or a fake in tests). */
   constructor(private readonly client: LibraryClient) {}
 
@@ -214,14 +227,38 @@ export class ClientLibrarySource implements LibrarySource {
     return resultOf(answer, path, "committed");
   }
 
-  /** Send the command `{ envelope, input }` of `path` under a fresh operation id. Network I/O. */
-  private send(
+  /**
+   * Send the command `{ envelope, input }` of `path`: under the envelope kept from an earlier
+   * attempt of the same command that did not answer, else under a fresh operation id. The
+   * envelope is released once the command answers `committed` or `pending`. Network I/O.
+   */
+  private async send(
     path: string,
     scope: string,
     expectedRevision: string,
     input: unknown,
   ): Promise<CommandAnswer> {
-    const envelope = commandEnvelope({ scope, expectedRevision });
-    return this.client.command<unknown>(path, envelope, input);
+    const key = JSON.stringify([path, scope, expectedRevision, input]);
+    const envelope = this.retain(key, () => commandEnvelope({ scope, expectedRevision }));
+    const answer = await this.client.command<unknown>(path, envelope, input);
+    if (answer.kind === "committed" || answer.kind === "pending") this.retained.delete(key);
+    return answer;
+  }
+
+  /**
+   * The envelope kept under `key`, else a new one from `make`, kept until its command answers;
+   * the oldest kept envelope is dropped beyond {@link MAX_RETAINED_COMMANDS}. Pure apart from
+   * the map.
+   */
+  private retain(key: string, make: () => CommandEnvelope): CommandEnvelope {
+    const envelope = this.retained.get(key) ?? make();
+    this.retained.delete(key);
+    this.retained.set(key, envelope);
+    while (this.retained.size > MAX_RETAINED_COMMANDS) {
+      const oldest = this.retained.keys().next().value;
+      if (oldest === undefined) break;
+      this.retained.delete(oldest);
+    }
+    return envelope;
   }
 }

@@ -20,7 +20,6 @@ import {
   COPY_REPORT,
   FakeLibrarySource,
   LIBRARY,
-  REBUILD,
   apiError,
 } from "../support/library-fakes";
 
@@ -250,7 +249,8 @@ describe("<fs-library-detail>", () => {
     expect(source.calls).toEqual(["candidates:lib-1", "rebuild:lib-1", "candidates:lib-1"]);
     expect(source.revisions).toEqual(["1"]);
     const result = rootOf(page).querySelector('[data-result="rebuild"]');
-    expect([...(result?.querySelectorAll("p, li") ?? [])]).toEqual([]);
+    expect(result).not.toBeNull();
+    expect(result?.children.length).toBe(0);
     expect(text(page, '[data-for="actions"] .status')).toBe(labels.libraryWorking);
   });
 
@@ -268,14 +268,6 @@ describe("<fs-library-detail>", () => {
       "copy:lib-1:loc-1",
     ]);
     expect(source.revisions).toEqual(["1", "1"]);
-  });
-
-  it("shows the report the recover flow kept for this library", async () => {
-    const registry = new LibraryRegistry();
-    registry.remember(LIBRARY);
-    registry.rememberRebuild("lib-1", REBUILD);
-    const { page } = await mount(new FakeLibrarySource(), registry);
-    expect(rootOf(page).querySelector('[data-result="rebuild"]')).not.toBeNull();
   });
 
   it("shows an error state with Retry when the candidates cannot be read", async () => {

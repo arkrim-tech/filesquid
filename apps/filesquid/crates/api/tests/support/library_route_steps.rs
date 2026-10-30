@@ -146,6 +146,22 @@ async fn open(w: &mut MonitorWorld) {
     w.routes.answer = Some(rig.post("/api/v1/libraries/openings", body).await);
 }
 
+#[when(
+    expr = "the owner opens the library's folder naming it {string} as operation {string} expecting {string}"
+)]
+async fn open_named_as(w: &mut MonitorWorld, name: String, operation: String, revision: String) {
+    let library = Some(w.routes.library.as_str());
+    let mut body = location_command(&w.routes.location, &operation, &revision, library);
+    body["input"]["name"] = json!(name);
+    let answer = w
+        .routes
+        .rig()
+        .post("/api/v1/libraries/openings", body)
+        .await;
+    w.routes.keep_first(&operation, &answer);
+    w.routes.answer = Some(answer);
+}
+
 #[then(expr = "the answer should name the same library with {int} objects")]
 fn same_library(w: &mut MonitorWorld, objects: u64) {
     let body = w.routes.answer().result();
