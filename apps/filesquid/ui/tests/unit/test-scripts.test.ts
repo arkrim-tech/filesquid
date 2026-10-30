@@ -1,8 +1,9 @@
 /**
  * The cross-platform test scripts in `tests/support/` (test-cleanup rule): the results cleaner
  * removes stale results, ignores what is already gone, refuses to run with no path and fails
- * when a removal fails; the e2e runner runs both Playwright suites in order and fails if either
- * fails (driven here with a stub CLI, so no browser starts).
+ * when a removal fails; the e2e runner runs the three Playwright suites in order (server-backed,
+ * production-build proofs, performance budgets of UI-F3.1) and fails if any fails (driven here
+ * with a stub CLI, so no browser starts).
  */
 import { execFileSync, spawnSync } from "node:child_process";
 import {
@@ -26,7 +27,9 @@ const STUB_CLI = `
 import { appendFileSync } from "node:fs";
 appendFileSync(process.env.STUB_LOG, process.argv.slice(2).join(" ") + "\\n");
 const preview = process.argv.includes("playwright.preview.config.ts");
-process.exitCode = Number(preview ? process.env.STUB_PREVIEW : process.env.STUB_SERVER);
+const performance = process.argv.includes("playwright.performance.config.ts");
+const status = performance ? process.env.STUB_PERFORMANCE : preview ? process.env.STUB_PREVIEW : process.env.STUB_SERVER;
+process.exitCode = Number(status);
 `;
 
 let dir = "";
@@ -98,7 +101,7 @@ describe("clean-results.mjs", () => {
 });
 
 /** Run the e2e runner against the stub CLI; returns its status and the logged invocations. */
-function runStubbed(server: number, preview: number, ...extra: string[]) {
+function runStubbed(server: number, preview: number, performance: number, ...extra: string[]) {
   const cli = join(dir, "stub-cli.mjs");
   const log = join(dir, "calls.txt");
   writeFileSync(cli, STUB_CLI);
@@ -108,6 +111,7 @@ function runStubbed(server: number, preview: number, ...extra: string[]) {
     STUB_LOG: log,
     STUB_SERVER: String(server),
     STUB_PREVIEW: String(preview),
+    STUB_PERFORMANCE: String(performance),
   };
   const result = spawnSync(process.execPath, [RUNNER, ...extra], { cwd: dir, env });
   const calls = existsSync(log) ? readFileSync(log, "utf8").trim().split("\n") : [];
@@ -115,27 +119,38 @@ function runStubbed(server: number, preview: number, ...extra: string[]) {
 }
 
 describe("run-e2e.mjs", () => {
-  it("runs the server-backed suite, then the preview suite, and passes when both pass", () => {
-    const { status, calls } = runStubbed(0, 0);
+  it("runs the server-backed suite, the preview suite, then the performance suite", () => {
+    const { status, calls } = runStubbed(0, 0, 0);
     expect(status).toBe(0);
-    expect(calls).toEqual(["test", "test -c playwright.preview.config.ts"]);
+    expect(calls).toEqual([
+      "test",
+      "test -c playwright.preview.config.ts",
+      "test -c playwright.performance.config.ts",
+    ]);
   });
 
-  it("still runs the preview suite when the server-backed suite fails, and fails", () => {
-    const { status, calls } = runStubbed(1, 0);
+  it("still runs the later suites when the server-backed suite fails, and fails", () => {
+    const { status, calls } = runStubbed(1, 0, 0);
     expect(status).toBe(1);
-    expect(calls).toHaveLength(2);
+    expect(calls).toHaveLength(3);
   });
 
   it("fails when only the preview suite fails", () => {
-    expect(runStubbed(0, 1).status).toBe(1);
+    expect(runStubbed(0, 1, 0).status).toBe(1);
   });
 
-  it("passes extra arguments to both suites", () => {
-    const { calls } = runStubbed(0, 0, "--grep", "theme");
+  it("fails when only the performance suite fails, so a missed budget fails the run", () => {
+    const { status, calls } = runStubbed(0, 0, 1);
+    expect(status).toBe(1);
+    expect(calls).toHaveLength(3);
+  });
+
+  it("passes extra arguments to every suite", () => {
+    const { calls } = runStubbed(0, 0, 0, "--grep", "theme");
     expect(calls).toEqual([
       "test --grep theme",
       "test -c playwright.preview.config.ts --grep theme",
+      "test -c playwright.performance.config.ts --grep theme",
     ]);
   });
 });

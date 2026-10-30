@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="640" height="56" viewBox="0 0 640 56" role="img" aria-label="MVP progress: 81% complete across 28 tasks">
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="56" viewBox="0 0 640 56" role="img" aria-label="MVP progress: 82% complete across 28 tasks">
   <style>
     text { font: 600 14px -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; fill: #1f2328; }
     .track { fill: #d0d7de; }
@@ -33,11 +33,11 @@ Task FS-2.5 [ ] 200h: API-F2.2 [ ] API-F2.3 [ ] API-F2.5 [x] API-F2.13 [x] API-F
 Task FS-2.8 [ ] 79h: CO-0.11 [x] IO-1.5 [x] PV-0.1 [x] MD-0.9 [x] PV-0.2 [x] API-F2.8 [x] DE-0.10 [ ] API-F2.9 [ ] API-F2.20 [x]
 Task FS-2.9 [ ] 70h: API-F2.10 [x] IO-1.6 [x] API-F2.12 [ ] CLI-0.2 [x] API-F2.11 [x] CL-1.9 [x] DE-0.11 [ ] UI-F2.15 [ ] UI-F2.16 [ ]
 Task FS-3.1 [ ] 16h: DE-F3.1 [ ]
-Task FS-3.4 [ ] 24h: DE-F3.2 [ ] UI-F3.1 [ ]
+Task FS-3.4 [ ] 24h: DE-F3.2 [ ] UI-F3.1 [x]
 Task FS-3.9 [ ] 12h:
   </metadata>
   <text x="20" y="18">MVP (early access): 28 tasks</text>
-  <text x="620" y="18" text-anchor="end">81% complete</text>
+  <text x="620" y="18" text-anchor="end">82% complete</text>
   <g clip-path="url(#bar)">
     <rect class="track" x="20" y="28" width="600" height="18"/>
     <rect x="20.00" y="28" width="32.82" height="18" fill="#1a7f37"><title>Task FS-0.0: 64 of 64 hours</title></rect>
@@ -91,7 +91,7 @@ Task FS-3.9 [ ] 12h:
     <line class="divider" x1="557.44" y1="28" x2="557.44" y2="46"/>
     <rect x="593.33" y="28" width="0.00" height="18" fill="#1a7f37"><title>Task FS-3.1: 0 of 16 hours</title></rect>
     <line class="divider" x1="593.33" y1="28" x2="593.33" y2="46"/>
-    <rect x="601.54" y="28" width="0.00" height="18" fill="#1a7f37"><title>Task FS-3.4: 0 of 24 hours</title></rect>
+    <rect x="601.54" y="28" width="6.15" height="18" fill="#1a7f37"><title>Task FS-3.4: 12 of 24 hours</title></rect>
     <line class="divider" x1="601.54" y1="28" x2="601.54" y2="46"/>
     <rect x="613.85" y="28" width="0.00" height="18" fill="#1a7f37"><title>Task FS-3.9: 0 of 12 hours</title></rect>
     <line class="divider" x1="613.85" y1="28" x2="613.85" y2="46"/>

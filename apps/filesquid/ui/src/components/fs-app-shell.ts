@@ -101,7 +101,7 @@ const STYLE = `
   .views a, .tools a, .deleted a { position: relative; }
   .views a[aria-current="page"], .tools a[aria-current="page"], .deleted a[aria-current="page"] { position: relative; background: var(--fs-primary-container); color: var(--fs-on-primary-container); font-weight: 500; }
   .views a[aria-current="page"]::before, .tools a[aria-current="page"]::before, .deleted a[aria-current="page"]::before { content: ""; position: absolute; inset-block: 0; inset-inline-start: 0; inline-size: 2.5px; background: var(--fs-brand); }
-  .tree { flex: 1 1 auto; min-height: 0; overflow: auto; }
+  .tree { flex: 1 1 auto; min-height: 0; overflow: auto; contain: layout paint style; }
   .deleted { margin-block-start: var(--fs-space-2); padding-block-start: var(--fs-space-2); border-block-start: 1px solid var(--fs-outline); }
   .views a[aria-current="page"] .icon, .tools a[aria-current="page"] .icon, .deleted a[aria-current="page"] .icon { color: var(--fs-primary); }
   .deleted .count { margin-inline-start: auto; color: var(--fs-on-surface-muted); }

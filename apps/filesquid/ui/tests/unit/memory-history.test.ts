@@ -47,6 +47,24 @@ describe("MemoryFileSource history reads", () => {
     expect(history.entries[1]?.digest).toBeNull();
   });
 
+  it("stands in a short digest however large the content, and tells contents apart", async () => {
+    // A hex digest of a 700 KB image blocked the fake host for 160 ms on every history read, and
+    // the performance harness measured the fake (Task UI-F3.1).
+    const one = new Uint8Array(700_000).fill(7);
+    const two = new Uint8Array(700_000).fill(7);
+    two[350_000] = 8;
+    const digestOf = async (content: Uint8Array): Promise<string> => {
+      const s = new MemoryFileSource({ ...OBJECT, files: [{ path: "a.bin", content }] });
+      const history = await s.history({ ...FILE, path: "a.bin" });
+      return history.entries[0]?.digest ?? "";
+    };
+    const first = await digestOf(one);
+    expect(first.length).toBeGreaterThan(0);
+    expect(first.length).toBeLessThanOrEqual(64);
+    expect(await digestOf(one)).toBe(first);
+    expect(await digestOf(two)).not.toBe(first);
+  });
+
   it("counts each distinct content of the history once", async () => {
     const s = source();
     await s.remove(OBJECT, "Docs/a.txt", { revision: "v1" });

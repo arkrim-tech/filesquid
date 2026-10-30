@@ -1,11 +1,13 @@
 /**
- * Run both Playwright suites one after the other and fail if either fails: the server-backed
- * suite (`playwright.config.ts`), then the static `vite preview` suite
- * (`playwright.preview.config.ts`). They share a port, so they never run together. Unlike a
- * `&&` chain, a failure in the first suite does not hide the result of the second.
+ * Run the three Playwright suites one after the other and fail if any fails: the server-backed
+ * suite (`playwright.config.ts`), the static `vite preview` suite
+ * (`playwright.preview.config.ts`), then the browsing performance budgets of Task UI-F3.1
+ * (`playwright.performance.config.ts`, also served by `vite preview`). They share a port, so
+ * they never run together. Unlike a `&&` chain, a failure in one suite does not hide the result
+ * of the next.
  *
  * Usage: `node tests/support/run-e2e.mjs [extra playwright arguments]`
- * Exits with 0 only when both suites pass.
+ * Exits with 0 only when every suite passes.
  */
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
@@ -19,7 +21,7 @@ const cli =
   createRequire(import.meta.url).resolve("@playwright/test/cli");
 
 /** Config files in run order; `undefined` selects the default config. */
-const CONFIGS = [undefined, "playwright.preview.config.ts"];
+const CONFIGS = [undefined, "playwright.preview.config.ts", "playwright.performance.config.ts"];
 
 /**
  * Run one Playwright suite.

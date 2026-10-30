@@ -696,9 +696,20 @@ function sameStored(a: Stored, b: Stored): boolean {
   return sameBytes(a.bytes, b.bytes);
 }
 
-/** A stand-in digest of some bytes: their hex, so two contents never share one. */
+/**
+ * A stand-in digest of some bytes: their length and two 32-bit FNV-1a sums (one forward, one
+ * backward), so it stays short however large the content is, and two fixture contents do not
+ * share one in practice. A hex dump of a 700 KB image cost 160 ms on every history read.
+ */
 function digestOf(bytes: Uint8Array): string {
-  return `fixture-${Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+  let forward = 0x811c9dc5;
+  let backward = 0x811c9dc5;
+  for (let i = 0; i < bytes.length; i += 1) {
+    forward = Math.imul(forward ^ (bytes[i] ?? 0), 0x01000193);
+    backward = Math.imul(backward ^ (bytes[bytes.length - 1 - i] ?? 0), 0x01000193);
+  }
+  const hex = (n: number): string => (n >>> 0).toString(16).padStart(8, "0");
+  return `fixture-${bytes.length}-${hex(forward)}${hex(backward)}`;
 }
 
 /** A fixture file as stored in `v1`. */

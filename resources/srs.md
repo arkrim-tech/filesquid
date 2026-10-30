@@ -1361,7 +1361,7 @@ The system MUST satisfy [PRD NFR-001](./prd.md#nfr-001-preservation-and-transact
 
 ### SRS-NFR-002: Benchmark envelope and responsiveness
 
-The system MUST satisfy [PRD NFR-002](./prd.md#nfr-002-benchmark-envelope-and-responsiveness) as written. Numerical budgets in NFR-002/003 remain proposed until measured on packaged `filesquid-desktop` and `filesquid-server` builds, and on the encrypted browser host when it ships ([FileSquid U-11](./product-vision.md#platform-ownership-and-access)). The requirement applies to every host and every distribution.
+The system MUST satisfy [PRD NFR-002](./prd.md#nfr-002-benchmark-envelope-and-responsiveness) as written. Numerical budgets in NFR-002/003 remain proposed until measured on packaged `filesquid-desktop` and `filesquid-server` builds, and on the encrypted browser host when it ships ([FileSquid U-11](./product-vision.md#platform-ownership-and-access)). The requirement applies to every host and every distribution. The production UI build's own contribution is asserted as budgets in a browser by [UI-S-035](../apps/filesquid/ui/resources/srs.md) (Task UI-F3.1); that is not the packaged-build measurement this paragraph requires.
 
 **Source**
 - [NFR-002](./prd.md#nfr-002-benchmark-envelope-and-responsiveness)
@@ -1370,6 +1370,7 @@ The system MUST satisfy [PRD NFR-002](./prd.md#nfr-002-benchmark-envelope-and-re
 
 **Tests**
 - [`benchmark_envelope_and_responsiveness_NFR-002.feature`](../apps/filesquid/crates/server/tests/features/benchmark_envelope_and_responsiveness_NFR-002.feature)
+- [`production_build_browsing_performance_NFR-002.feature`](../apps/filesquid/ui/tests/features/production_build_browsing_performance_NFR-002.feature)
 
 ### SRS-NFR-003: Bounded processing and migration endurance
 
