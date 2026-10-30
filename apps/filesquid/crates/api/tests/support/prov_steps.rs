@@ -12,7 +12,8 @@
 //! the crash reconciliation at library open (DE-S-011); and sharing with a preview.
 
 use crate::files_fixture::{
-    command_body, operation_id, send, upload_facts, Answer, FilesRig, LIBRARY, OBJECT,
+    command_body, operation_id, send, upload_facts, Answer, FilesRig, HOME_COLLECTION, LIBRARY,
+    OBJECT,
 };
 use crate::MonitorWorld;
 use axum::http::{Method, StatusCode};
@@ -326,7 +327,9 @@ async fn operate(w: &mut MonitorWorld, operation: String) {
             w.prov.keep(op, &answer);
         }
         "copy" => {
-            let input = json!({ "library_id": LIBRARY, "file_id": file_id });
+            let input = json!({
+                "library_id": LIBRARY, "file_id": file_id, "collection_id": HOME_COLLECTION
+            });
             command(w, Method::POST, "/api/v1/files/copies", input).await;
         }
         "rename" => rename_file(w).await,
