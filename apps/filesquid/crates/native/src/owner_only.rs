@@ -89,3 +89,27 @@ fn refuse_symlink(path: &Path) -> io::Result<()> {
         Err(err) => Err(err),
     }
 }
+
+/// Open the operational SQLite store at `path` as every operational store does: its folders
+/// resolved, the file created owner-only, opened never through a symbolic link
+/// (`SQLITE_OPEN_NOFOLLOW`) with a 5 s busy timeout. `what` names the store in an error, which
+/// never names the path. Filesystem and database I/O.
+///
+/// # Errors
+/// The file cannot be created or opened.
+#[cfg(feature = "desktop")]
+pub(crate) fn open_operational_db(path: &Path, what: &str) -> Result<rusqlite::Connection, String> {
+    use rusqlite::OpenFlags;
+    let unopened = |err: io::Error| format!("{what} could not be opened ({})", err.kind());
+    let path = resolve_folders(path).map_err(unopened)?;
+    create_owner_only(&path).map_err(unopened)?;
+    let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
+        | OpenFlags::SQLITE_OPEN_CREATE
+        | OpenFlags::SQLITE_OPEN_NO_MUTEX
+        | OpenFlags::SQLITE_OPEN_NOFOLLOW;
+    let conn = rusqlite::Connection::open_with_flags(&path, flags)
+        .map_err(|err| format!("{what} could not be opened ({err})"))?;
+    conn.busy_timeout(std::time::Duration::from_secs(5))
+        .map_err(|err| format!("{what} could not be opened ({err})"))?;
+    Ok(conn)
+}

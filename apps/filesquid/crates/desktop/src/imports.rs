@@ -21,14 +21,14 @@ use filesquid_api::imports::{
     ImportAnswer, ImportRequest, ImportSource, ImportStartError, ImportStarter, PlanBook,
     PlanItemPage,
 };
-use filesquid_api::jobs::{JobItemState, Jobs};
+use filesquid_api::jobs::Jobs;
 use filesquid_api::journal::now_ms;
 use filesquid_api::library::mint_uuid_v4;
 use filesquid_api::local_library::{FreeSpace, LibraryRegistry};
 use filesquid_core::LibraryId;
 use filesquid_metadata::import::ImportMethod;
 use filesquid_native::import::index::ImportIndex;
-use filesquid_native::import::items::{items_of_manifest, SqliteJobItems};
+use filesquid_native::import::items::{items_of_manifest, keep_reviewed_in, SqliteJobItems};
 use filesquid_native::import::job::submit_import;
 use filesquid_native::import::plans::{ImportPlan, SqliteImportPlans};
 use filesquid_native::import::review::{fingerprint_of_plan, review, Reviewed};
@@ -184,23 +184,17 @@ impl DesktopImports {
     }
 
     /// Keep the plan, the manifest and the items of job `job_id`, the files the library
-    /// already holds as `skipped`. Writes the plans and the items.
+    /// already holds as `skipped`, in one transaction, so no recovery or crash finds the job's
+    /// plan without the manifest and items the owner reviewed. Writes the operational store.
     fn keep(&self, job_id: &str, operation_id: &str, pending: &Pending) -> Result<(), String> {
-        let starting = &self.starting;
-        starting.plans.save(job_id, operation_id, &pending.plan)?;
         let manifest = &pending.reviewed.manifest;
-        starting.plans.save_manifest(job_id, manifest)?;
         let items = items_of_manifest(manifest);
-        starting
-            .items
-            .keep(job_id, &items)
-            .map_err(|err| err.to_string())?;
-        for index in &pending.reviewed.present {
-            let skipped = JobItemState::Skipped;
-            let set = starting.items.set(job_id, *index, skipped, 0, None);
-            set.map_err(|err| err.to_string())?;
-        }
-        Ok(())
+        let present = &pending.reviewed.present;
+        self.starting
+            .plans
+            .save_reviewed((job_id, operation_id), &pending.plan, manifest, |tx| {
+                keep_reviewed_in(tx, job_id, &items, present)
+            })
     }
 
     /// Fail the job `job_id` (source identity `source`) whose plan could not be kept, logging
@@ -356,6 +350,16 @@ fn unreviewed(code: &str) -> ImportStartError {
     ImportStartError::Unavailable
 }
 
+/// The refusal of a start whose sources cannot be listed as they were reviewed: a selection
+/// that grew past the file cap changed since its review (`source_changed`); anything else
+/// cannot be checked now. Pure but for the log.
+fn changed_listing(code: &str) -> ImportStartError {
+    match code {
+        "too_many_files" => ImportStartError::SourceChanged,
+        other => unreviewed(other),
+    }
+}
+
 impl ImportStarter for DesktopImports {
     fn replay(&self, request: &ImportRequest) -> Result<Option<ImportAnswer>, ImportStartError> {
         match self.book.replay(request, now_ms())? {
@@ -386,7 +390,7 @@ impl ImportStarter for DesktopImports {
     fn start_plan(&self, _actor: &str, plan_id: &str) -> Result<ImportAnswer, ImportStartError> {
         let pending = self.lock_pending().get(plan_id).cloned();
         let pending = pending.ok_or(ImportStartError::PlanNotFound)?;
-        let fingerprint = fingerprint_of_plan(&pending.plan).map_err(unreviewed)?;
+        let fingerprint = fingerprint_of_plan(&pending.plan).map_err(changed_listing)?;
         self.book
             .start(plan_id, &fingerprint, now_ms(), |operation, _| {
                 self.start_once(operation, &pending)

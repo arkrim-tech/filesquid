@@ -134,7 +134,13 @@ impl HostLocations {
             folder,
             last_opened_ms: entry.last_opened_ms,
         };
-        if let Err(reason) = store.save(&row) {
+        let retained: Vec<LibraryId> = self
+            .libraries
+            .entries()
+            .into_iter()
+            .map(|entry| entry.library_id)
+            .collect();
+        if let Err(reason) = store.save(&row, &retained) {
             tracing::warn!(
                 target: "filesquid::native",
                 error_code = "unavailable",

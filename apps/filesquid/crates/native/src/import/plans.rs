@@ -196,21 +196,33 @@ impl SqliteImportPlans {
         let tx = conn
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(failed)?;
-        tx.execute(
-            "INSERT INTO import_plans
-             (job_id, operation_id, library_id, method, collection_id, folder)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![
-                job_id,
-                operation_id,
-                plan.library_id,
-                method_name(plan.method),
-                plan.collection_id,
-                plan.folder
-            ],
-        )
-        .map_err(failed)?;
-        insert_sources(&tx, job_id, &plan.sources)?;
+        insert_plan(&tx, job_id, operation_id, plan)?;
+        tx.commit().map_err(failed)
+    }
+
+    /// Keep the reviewed import of `job_id` (Task DE-1.8): its `plan`, its `manifest` and,
+    /// through `items`, its per-file items, in one transaction, so a recovery or a crash never
+    /// finds the plan without the manifest the owner reviewed. Writes the database.
+    ///
+    /// # Errors
+    /// Too many sources or entries, or any write failed; nothing is stored then.
+    pub fn save_reviewed(
+        &self,
+        (job_id, operation_id): (&str, &str),
+        plan: &ImportPlan,
+        manifest: &[ManifestEntry],
+        items: impl FnOnce(&Transaction<'_>) -> Result<(), String>,
+    ) -> Result<(), String> {
+        if plan.sources.len() > MAX_PLAN_SOURCES || manifest.len() > MAX_MANIFEST_ENTRIES {
+            return Err("the plan or its manifest is too large".to_string());
+        }
+        let mut conn = self.lock()?;
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(failed)?;
+        insert_plan(&tx, job_id, operation_id, plan)?;
+        insert_manifest(&tx, job_id, manifest)?;
+        items(&tx)?;
         tx.commit().map_err(failed)
     }
 
@@ -356,6 +368,31 @@ fn add_missing_columns(conn: &Connection) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// Insert `plan` of `job_id`, asked by `operation_id`, with its sources, in `tx`. Writes the
+/// database.
+fn insert_plan(
+    tx: &Transaction<'_>,
+    job_id: &str,
+    operation_id: &str,
+    plan: &ImportPlan,
+) -> Result<(), String> {
+    tx.execute(
+        "INSERT INTO import_plans
+         (job_id, operation_id, library_id, method, collection_id, folder)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![
+            job_id,
+            operation_id,
+            plan.library_id,
+            method_name(plan.method),
+            plan.collection_id,
+            plan.folder
+        ],
+    )
+    .map_err(failed)?;
+    insert_sources(tx, job_id, &plan.sources)
 }
 
 /// Insert the sources of `job_id` in order. Database I/O.

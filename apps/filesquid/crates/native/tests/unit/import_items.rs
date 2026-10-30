@@ -103,8 +103,69 @@ fn keeping_a_manifest_again_changes_no_item() {
     };
     items.keep("job-1", &[again]).expect("kept");
     let page = items.page("job-1", None, 1).expect("page");
-    assert_eq!(page.items[0].state, JobItemState::Copied);
-    assert!(page.next_cursor.is_some(), "a cursor to the next page");
+    let kept = &page.items[0];
+    assert_eq!(
+        (
+            kept.item_id.as_str(),
+            kept.name.as_str(),
+            kept.folder.as_deref()
+        ),
+        ("f-a", "a.jpg", Some("trips/Trip")),
+        "the first keep's item"
+    );
+    assert_eq!(
+        (
+            kept.state,
+            kept.bytes_done,
+            kept.bytes_total,
+            kept.error_code.as_deref()
+        ),
+        (JobItemState::Copied, 10, 10, None)
+    );
+}
+
+#[test]
+fn the_items_are_paged_by_cursor_in_order() {
+    let store = Store::new("paging");
+    let items = three_files(&store);
+    let first = items.page("job-1", None, 2).expect("first page");
+    let ids: Vec<&str> = first.items.iter().map(|i| i.item_id.as_str()).collect();
+    assert_eq!(ids, ["f-a", "f-b"]);
+    let cursor = first.next_cursor.expect("a cursor to the next page");
+    let second = items.page("job-1", Some(&cursor), 2).expect("second page");
+    let ids: Vec<&str> = second.items.iter().map(|i| i.item_id.as_str()).collect();
+    assert_eq!(ids, ["f-c"]);
+    assert_eq!(second.next_cursor, None, "the last page");
+}
+
+#[test]
+fn the_items_survive_a_reopen_of_the_store() {
+    let store = Store::new("reopen");
+    let items = three_files(&store);
+    items
+        .set("job-1", 1, JobItemState::Failed, 7, Some("read_failed"))
+        .expect("failed");
+    items.record_digest("lib-1", "abc", "f-a").expect("digest");
+    drop(items);
+    let items = SqliteJobItems::open(&store.file()).expect("reopened");
+    let page = items.page("job-1", None, 1_000).expect("page");
+    let failed = &page.items[1];
+    assert_eq!(
+        (
+            failed.state,
+            failed.bytes_done,
+            failed.error_code.as_deref()
+        ),
+        (JobItemState::Failed, 7, Some("read_failed"))
+    );
+    assert!(
+        items.holds_digest("lib-1", "abc").expect("read"),
+        "the digest kept"
+    );
+    assert!(
+        !items.holds_digest("lib-2", "abc").expect("read"),
+        "per library"
+    );
 }
 
 #[test]
@@ -164,4 +225,16 @@ fn a_copying_file_s_progress_is_kept_up_to_its_size_and_only_while_copying() {
     );
     items.progress("job-1", "f-a", 99).expect("progress");
     assert_eq!(first().bytes_done, 10, "never past its size");
+    items.copied("job-1", 0, 10).expect("copied");
+    items
+        .set("job-1", 1, JobItemState::Failed, 3, Some("read_failed"))
+        .expect("failed");
+    items.progress("job-1", "f-a", 2).expect("after copied");
+    items.progress("job-1", "f-b", 9).expect("after failed");
+    let page = items.page("job-1", None, 2).expect("page");
+    assert_eq!(
+        page.items[0].bytes_done, 10,
+        "a copied file keeps its count"
+    );
+    assert_eq!(page.items[1].bytes_done, 3, "a failed file keeps its count");
 }

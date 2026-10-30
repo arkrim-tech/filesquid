@@ -20,7 +20,7 @@ use filesquid_api::jobs::{
     page_of_items as page_of, JobDestination, JobError, JobItem, JobItemPage, JobItemState,
     JobItems,
 };
-use rusqlite::{params, Connection, OpenFlags, OptionalExtension};
+use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
 
@@ -84,18 +84,15 @@ fn store_error(err: rusqlite::Error) -> JobError {
 }
 
 impl SqliteJobItems {
-    /// Open (creating when missing) the items in the store at `path`, the store the import
-    /// plans live in ([`super::plans::SqliteImportPlans`], opened first, holds each job's
+    /// Open (creating when missing, owner-only, never through a symbolic link) the items in
+    /// the store at `path`, the store the import plans live in ([`super::plans::SqliteImportPlans`], opened first, holds each job's
     /// destination). Opens a database connection.
     ///
     /// # Errors
     /// A message with no path when the store cannot be opened or prepared.
     pub fn open(path: &Path) -> Result<Self, String> {
-        let flags = OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_CREATE;
-        let conn = Connection::open_with_flags(path, flags)
-            .map_err(|err| format!("the import items could not be opened ({err})"))?;
-        conn.busy_timeout(std::time::Duration::from_secs(5))
-            .and_then(|()| conn.execute_batch(SCHEMA))
+        let conn = crate::owner_only::open_operational_db(path, "the import items")?;
+        conn.execute_batch(SCHEMA)
             .map_err(|err| format!("the import items could not be prepared ({err})"))?;
         Ok(Self {
             conn: Mutex::new(conn),
@@ -117,22 +114,7 @@ impl SqliteJobItems {
     pub fn keep(&self, job_id: &str, items: &[NewItem]) -> Result<(), JobError> {
         let mut conn = self.lock()?;
         let tx = conn.transaction().map_err(store_error)?;
-        for item in items.iter().take(MAX_JOB_ITEMS) {
-            tx.execute(
-                "INSERT OR IGNORE INTO import_items
-                 (job_id, idx, file_id, name, folder, state, bytes_total)
-                 VALUES (?1, ?2, ?3, ?4, ?5, 'queued', ?6)",
-                params![
-                    job_id,
-                    item.index as i64,
-                    item.file_id,
-                    item.name,
-                    item.folder,
-                    i64::try_from(item.bytes_total).unwrap_or(i64::MAX)
-                ],
-            )
-            .map_err(store_error)?;
-        }
+        keep_reviewed_in(&tx, job_id, items, &[]).map_err(JobError::Failed)?;
         tx.commit().map_err(store_error)
     }
 
@@ -157,7 +139,7 @@ impl SqliteJobItems {
                     job_id,
                     index as i64,
                     state.as_str(),
-                    i64::try_from(bytes_done).unwrap_or(i64::MAX),
+                    stored_bytes(bytes_done)?,
                     error_code
                 ],
             )
@@ -175,7 +157,7 @@ impl SqliteJobItems {
             .execute(
                 "UPDATE import_items SET bytes_done = MIN(?3, bytes_total)
                  WHERE job_id = ?1 AND file_id = ?2 AND state = 'copying'",
-                params![job_id, file_id, i64::try_from(bytes).unwrap_or(i64::MAX)],
+                params![job_id, file_id, stored_bytes(bytes)?],
             )
             .map(|_| ())
             .map_err(store_error)
@@ -234,6 +216,53 @@ impl SqliteJobItems {
             .map_err(store_error)?;
         rows.map(|row| row.map_err(store_error)).collect()
     }
+}
+
+/// `bytes` as SQLite stores them, refusing a count past `i64::MAX` rather than corrupting it.
+/// Pure.
+fn stored_bytes(bytes: u64) -> Result<i64, JobError> {
+    i64::try_from(bytes).map_err(|_| JobError::Failed("a byte count is too large".into()))
+}
+
+/// Keep `items` of job `job_id` as `queued` in the transaction `tx`, then mark the items at the
+/// manifest indexes `skipped` as `skipped` (the library already holds them); items kept before
+/// are left as they are. The caller commits, so a reviewed import's plan, manifest and items
+/// become durable together (Task DE-1.8). Writes the store.
+///
+/// # Errors
+/// A store failure, or a byte count past `i64::MAX`, as a message with no path.
+pub fn keep_reviewed_in(
+    tx: &Transaction<'_>,
+    job_id: &str,
+    items: &[NewItem],
+    skipped: &[usize],
+) -> Result<(), String> {
+    let failed = |err: rusqlite::Error| format!("the import items could not be written ({err})");
+    for item in items.iter().take(MAX_JOB_ITEMS) {
+        let bytes = stored_bytes(item.bytes_total).map_err(|err| err.to_string())?;
+        tx.execute(
+            "INSERT OR IGNORE INTO import_items
+             (job_id, idx, file_id, name, folder, state, bytes_total)
+             VALUES (?1, ?2, ?3, ?4, ?5, 'queued', ?6)",
+            params![
+                job_id,
+                item.index as i64,
+                item.file_id,
+                item.name,
+                item.folder,
+                bytes
+            ],
+        )
+        .map_err(failed)?;
+    }
+    for index in skipped.iter().take(MAX_JOB_ITEMS) {
+        tx.execute(
+            "UPDATE import_items SET state = 'skipped' WHERE job_id = ?1 AND idx = ?2",
+            params![job_id, *index as i64],
+        )
+        .map_err(failed)?;
+    }
+    Ok(())
 }
 
 /// The item of one row. Pure over the row.
@@ -330,7 +359,7 @@ impl SqliteJobItems {
     /// # Errors
     /// A store failure.
     pub fn copied(&self, job_id: &str, index: usize, size: u64) -> Result<(), JobError> {
-        let size = i64::try_from(size).unwrap_or(i64::MAX);
+        let size = stored_bytes(size)?;
         self.lock()?
             .execute(
                 "UPDATE import_items SET state = 'copied', bytes_done = ?3, bytes_total = ?3,

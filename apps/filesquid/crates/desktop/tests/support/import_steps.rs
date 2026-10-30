@@ -408,6 +408,12 @@ async fn confirm_refused(world: &mut DesktopWorld) {
     let plan = last_plan(world);
     let (status, answer) = rig(world).start(&plan).await;
     assert_eq!(status, 404, "{answer}");
+    assert!(
+        answer["message"]
+            .as_str()
+            .is_some_and(|m| m.contains("plan_not_found")),
+        "{answer}"
+    );
 }
 
 #[when("the second picked file disappears while the first is in hand")]
@@ -430,6 +436,7 @@ async fn items_of(world: &mut DesktopWorld) -> Vec<Value> {
 async fn second_failed(world: &mut DesktopWorld, code: String) {
     job_reaches(world, "pending".into(), 2, 2).await;
     let items = items_of(world).await;
+    assert_eq!(items[0]["state"], "copied", "the first file: {items:?}");
     assert_eq!(items[1]["state"], "failed", "{items:?}");
     assert_eq!(items[1]["error_code"], code.as_str());
 }

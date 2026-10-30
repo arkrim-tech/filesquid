@@ -208,8 +208,7 @@ fn a_failed_file_keeps_its_code_and_is_retried_alone_after_a_restart() {
     assert_eq!(items[1]["state"], "copied", "{items:?}");
     assert_eq!(rig.file_objects(), 2);
     let text = format!("{:?}", rig.journal());
-    assert!(
-        !text.contains("Notes") && !text.contains("Beach"),
-        "no names journaled"
-    );
+    for name in ["Notes", "Beach", "Holidays"] {
+        assert!(!text.contains(name), "no source name journaled: {name}");
+    }
 }

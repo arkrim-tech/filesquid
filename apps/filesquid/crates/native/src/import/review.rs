@@ -15,6 +15,7 @@ use super::index::ImportIndex;
 use super::items::SqliteJobItems;
 use super::job::{list_plan, manifest_of, Listed, STAGING_CAP_BYTES};
 use super::plans::{ImportPlan, ManifestEntry};
+use filesquid_api::canonical::collection_path::safe_segment;
 use filesquid_api::imports::{PlanFacts, PlanItem};
 use sha2::Digest as _;
 use std::io::Read;
@@ -72,7 +73,7 @@ pub fn review(
         .filter_map(|(at, entry)| seen_file(plan, digests, &roots, (at, entry)))
         .collect::<Result<Vec<_>, _>>()?;
     let numbered = roots.iter().filter(|numbered| **numbered).count() as u64;
-    let facts = facts_of(plan, &seen, (numbered, free_bytes));
+    let facts = facts_of(plan, &seen, (numbered, free_bytes), manifest.len());
     Ok(Reviewed {
         present: seen.iter().filter(|s| s.present).map(|s| s.index).collect(),
         items: seen.iter().map(plan_item).collect(),
@@ -83,8 +84,9 @@ pub fn review(
 }
 
 /// The review of one manifest entry: a file with its size, whether the library holds its
-/// digest and whether its source is numbered; `None` for an entry that could not be listed.
-/// Reads the file and the digests.
+/// digest and whether its source is numbered; `None` for an entry the job will not copy (one
+/// that could not be listed or placed, or a file above the staging cap): the job quarantines
+/// it with its code, and the review counts it as found only. Reads the file and the digests.
 fn seen_file(
     plan: &ImportPlan,
     digests: &SqliteJobItems,
@@ -95,12 +97,15 @@ fn seen_file(
         path,
         source,
         file_id,
-        ..
+        logical_path: Some(_),
     } = entry
     else {
         return None;
     };
     let bytes = std::fs::metadata(path).map_or(0, |meta| meta.len());
+    if bytes > STAGING_CAP_BYTES {
+        return None;
+    }
     let present = match hash_file(path) {
         Some(digest) => digests.holds_digest(&plan.library_id, &digest),
         None => Ok(false),
@@ -144,7 +149,8 @@ fn hex(bytes: &[u8]) -> String {
 
 /// For each picked source, whether its name in the destination is numbered beside a taken
 /// path: the first segment of its files' logical paths below the destination folder is not
-/// the source's own name. Pure.
+/// the source's own name as the placement makes it safe (`safe_segment`), so a name the path
+/// rule only rewrites does not count. Pure.
 fn numbered_sources(plan: &ImportPlan, manifest: &[ManifestEntry]) -> Vec<bool> {
     let below = |logical: &str| -> String {
         let rest = match plan.folder.as_deref() {
@@ -163,7 +169,7 @@ fn numbered_sources(plan: &ImportPlan, manifest: &[ManifestEntry]) -> Vec<bool> 
         .map(|(at, source)| {
             let name = source
                 .file_name()
-                .map(|name| name.to_string_lossy().into_owned())
+                .and_then(|name| safe_segment(&name.to_string_lossy()).ok())
                 .unwrap_or_default();
             manifest.iter().any(|entry| match entry {
                 ManifestEntry::File {
@@ -178,17 +184,19 @@ fn numbered_sources(plan: &ImportPlan, manifest: &[ManifestEntry]) -> Vec<bool> 
 }
 
 /// The facts of `seen` for `plan`, `numbered` of whose sources are numbered, with the free
-/// bytes after copying the new files. Reads the source volume's facts.
+/// bytes after copying the new files; `found` counts every entry of the manifest, the ones the
+/// job will quarantine included. Reads the source volume's facts.
 fn facts_of(
     plan: &ImportPlan,
     seen: &[Seen],
     (numbered, free_bytes): (u64, Option<u64>),
+    found: usize,
 ) -> PlanFacts {
     let new: Vec<&Seen> = seen.iter().filter(|s| !s.present).collect();
     let bytes_to_copy = new.iter().map(|s| s.bytes).sum::<u64>();
     PlanFacts {
         source_volume: plan.sources.first().and_then(|source| volume_label(source)),
-        files_found: seen.len() as u64,
+        files_found: found as u64,
         files_new: new.len() as u64,
         files_present: (seen.len() - new.len()) as u64,
         bytes_to_copy,
@@ -219,8 +227,11 @@ fn plan_item(seen: &Seen) -> PlanItem {
     }
 }
 
-/// The fingerprint of `listed`: a SHA-256 over each entry's path, size and modification time
-/// (and each unlistable entry's code), in the listing's order. Reads each file's metadata.
+/// The fingerprint of `listed`: a SHA-256 over each entry's path, size, modification time and,
+/// on Unix, status-change time and file identity (and each unlistable entry's code), in the
+/// listing's order. The status-change time moves with every write, even one that keeps the
+/// size and resets the modification time, so a rewritten file changes the fingerprint. Reads
+/// each file's metadata.
 pub fn fingerprint(listed: &[Listed]) -> String {
     let mut hasher = sha2::Sha256::new();
     for entry in listed {
@@ -229,11 +240,14 @@ pub fn fingerprint(listed: &[Listed]) -> String {
                 let meta = std::fs::metadata(path).ok();
                 let size = meta.as_ref().map_or(0, std::fs::Metadata::len);
                 let modified = meta
+                    .as_ref()
                     .and_then(|meta| meta.modified().ok())
                     .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
                     .map_or(0, |since| since.as_nanos());
+                let changed = meta.as_ref().map(status_of).unwrap_or_default();
                 hasher.update(path.as_os_str().as_encoded_bytes());
-                hasher.update(format!("\0{source}\0{size}\0{modified}\n").as_bytes());
+                let line = format!("\0{source}\0{size}\0{modified}\0{changed}\n");
+                hasher.update(line.as_bytes());
             }
             Listed::Skipped { source, code } => {
                 hasher.update(format!("skipped\0{source}\0{code}\n").as_bytes());
@@ -241,6 +255,26 @@ pub fn fingerprint(listed: &[Listed]) -> String {
         }
     }
     hex(&hasher.finalize())
+}
+
+/// A file's status-change time (nanoseconds) and identity (device and inode), on Unix. Pure.
+#[cfg(unix)]
+fn status_of(meta: &std::fs::Metadata) -> String {
+    use std::os::unix::fs::MetadataExt;
+    format!(
+        "{}.{}:{}:{}",
+        meta.ctime(),
+        meta.ctime_nsec(),
+        meta.dev(),
+        meta.ino()
+    )
+}
+
+/// Not read on this platform: the fingerprint keeps the path, size and modification time.
+/// Pure.
+#[cfg(not(unix))]
+fn status_of(_meta: &std::fs::Metadata) -> String {
+    String::new()
 }
 
 /// The fingerprint of `plan`'s sources now. Reads the filesystem.

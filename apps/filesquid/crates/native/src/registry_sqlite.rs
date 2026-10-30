@@ -10,7 +10,7 @@
 
 use filesquid_api::local_library::MAX_REMEMBERED_LIBRARIES;
 use filesquid_core::LibraryId;
-use rusqlite::{params, Connection, OpenFlags};
+use rusqlite::{params, Connection};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 
@@ -58,17 +58,14 @@ fn failed(err: rusqlite::Error) -> String {
 }
 
 impl SqliteLibraryRegistry {
-    /// Open (creating when missing) the registry in the store at `path`. Opens a database
-    /// connection.
+    /// Open (creating when missing, owner-only, never through a symbolic link) the registry in
+    /// the store at `path`. Opens a database connection.
     ///
     /// # Errors
     /// A message with no path when the store cannot be opened or prepared.
     pub fn open(path: &Path) -> Result<Self, String> {
-        let flags = OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_CREATE;
-        let conn = Connection::open_with_flags(path, flags).map_err(failed)?;
-        conn.busy_timeout(std::time::Duration::from_secs(5))
-            .and_then(|()| conn.execute_batch(SCHEMA))
-            .map_err(failed)?;
+        let conn = crate::owner_only::open_operational_db(path, "the library registry")?;
+        conn.execute_batch(SCHEMA).map_err(failed)?;
         Ok(Self {
             conn: Mutex::new(conn),
         })
@@ -81,13 +78,14 @@ impl SqliteLibraryRegistry {
             .map_err(|_| "the library registry is unavailable".to_string())
     }
 
-    /// Keep `row`, replacing what was kept of its library, then forget the least recently
-    /// opened libraries past [`MAX_REMEMBERED_LIBRARIES`], in one transaction. Writes the
-    /// store.
+    /// Keep `row`, replacing what was kept of its library, and forget every other library not
+    /// in `retained` (the libraries the in-memory book still holds, at most
+    /// [`MAX_REMEMBERED_LIBRARIES`]), in one transaction, so the store keeps exactly the set the
+    /// book keeps, whatever its eviction decided. Writes the store.
     ///
     /// # Errors
     /// A store failure; nothing is kept then.
-    pub fn save(&self, row: &RegistryRow) -> Result<(), String> {
+    pub fn save(&self, row: &RegistryRow, retained: &[LibraryId]) -> Result<(), String> {
         let mut conn = self.lock()?;
         let tx = conn.transaction().map_err(failed)?;
         tx.execute(
@@ -98,18 +96,27 @@ impl SqliteLibraryRegistry {
                 row.library_id.as_str(),
                 row.name,
                 row.location_id,
-                row.folder.as_os_str().as_encoded_bytes(),
+                folder_bytes(&row.folder),
                 row.last_opened_ms
             ],
         )
         .map_err(failed)?;
-        tx.execute(
-            "DELETE FROM library_registry WHERE library_id NOT IN (
-                 SELECT library_id FROM library_registry
-                 ORDER BY last_opened_ms DESC, library_id LIMIT ?1)",
-            params![MAX_REMEMBERED_LIBRARIES as i64],
-        )
-        .map_err(failed)?;
+        let kept: Vec<String> = {
+            let mut stmt = tx
+                .prepare("SELECT library_id FROM library_registry")
+                .map_err(failed)?;
+            let rows = stmt.query_map([], |row| row.get(0)).map_err(failed)?;
+            rows.collect::<Result<_, _>>().map_err(failed)?
+        };
+        for library in kept {
+            if !retained.iter().any(|id| id.as_str() == library) {
+                tx.execute(
+                    "DELETE FROM library_registry WHERE library_id = ?1",
+                    params![library],
+                )
+                .map_err(failed)?;
+            }
+        }
         tx.commit().map_err(failed)
     }
 
@@ -171,15 +178,54 @@ impl SqliteLibraryRegistry {
     }
 }
 
-/// The folder stored as `bytes`. Pure.
+/// `folder` as stored: its bytes on Unix. Pure.
+#[cfg(unix)]
+fn folder_bytes(folder: &Path) -> Vec<u8> {
+    use std::os::unix::ffi::OsStrExt;
+    folder.as_os_str().as_bytes().to_vec()
+}
+
+/// The folder stored as `bytes` on Unix. Pure.
 #[cfg(unix)]
 fn folder_of(bytes: Vec<u8>) -> Option<PathBuf> {
     use std::os::unix::ffi::OsStringExt;
     Some(PathBuf::from(std::ffi::OsString::from_vec(bytes)))
 }
 
-/// The folder stored as `bytes` (valid UTF-8 off Unix). Pure.
-#[cfg(not(unix))]
+/// `folder` as stored on Windows: its UTF-16 code units, little-endian, so a name that is not
+/// valid Unicode survives. Pure.
+#[cfg(windows)]
+fn folder_bytes(folder: &Path) -> Vec<u8> {
+    use std::os::windows::ffi::OsStrExt;
+    folder
+        .as_os_str()
+        .encode_wide()
+        .flat_map(u16::to_le_bytes)
+        .collect()
+}
+
+/// The folder stored as UTF-16 code units on Windows. Pure.
+#[cfg(windows)]
+fn folder_of(bytes: Vec<u8>) -> Option<PathBuf> {
+    use std::os::windows::ffi::OsStringExt;
+    if bytes.len() % 2 != 0 {
+        return None;
+    }
+    let wide: Vec<u16> = bytes
+        .chunks_exact(2)
+        .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+        .collect();
+    Some(PathBuf::from(std::ffi::OsString::from_wide(&wide)))
+}
+
+/// `folder` as stored on another platform: its text. Pure.
+#[cfg(not(any(unix, windows)))]
+fn folder_bytes(folder: &Path) -> Vec<u8> {
+    folder.to_string_lossy().into_owned().into_bytes()
+}
+
+/// The folder stored as text on another platform. Pure.
+#[cfg(not(any(unix, windows)))]
 fn folder_of(bytes: Vec<u8>) -> Option<PathBuf> {
     String::from_utf8(bytes).ok().map(PathBuf::from)
 }

@@ -18,7 +18,7 @@ use super::items::SqliteJobItems;
 use super::job::{close_finished, run_import_job, ImportContext};
 use super::plans::SqliteImportPlans;
 use crate::HostFiles;
-use filesquid_api::jobs::{Job, JobError, JobRunner, Jobs};
+use filesquid_api::jobs::{Job, JobError, JobRunner, JobState, Jobs};
 use filesquid_api::journal::{JournalEntry, Level, Outcome};
 use filesquid_api::journal_writer::JournalSender;
 use std::collections::HashSet;
@@ -271,8 +271,8 @@ fn run_one(
         retry_unit: services.retry_unit,
     };
     match services.jobs.job(job_id) {
-        Ok(job) if job.is_paused() || waits_for_retry(services, &job) => return,
         Ok(job) if job.state.is_finished() => return close_finished(&context, &job, &plan),
+        Ok(job) if job.is_paused() || waits_for_retry(services, &job) => return,
         _ => {}
     }
     let Err(err) = runtime.block_on(run_import_job(&context, job_id, &plan)) else {
@@ -288,18 +288,23 @@ fn run_one(
     }
 }
 
-/// Whether `job` tried every file of its manifest and waits for a retry of a failed one: its
-/// checkpoint is at its end and no file is queued (Task DE-1.8). Reads the items store; a
-/// failed read counts as not waiting, so the job runs.
+/// Whether `job` tried every file of its manifest and waits for a retry of a failed one: it is
+/// pending, its checkpoint is at its end, no file is queued and one failed (Task DE-1.8). A job
+/// whose last checkpoint was kept just before a crash, with no failed file, is not waiting: it
+/// runs, and completes. Reads the items store; a failed read counts as not waiting, so the job
+/// runs.
 fn waits_for_retry(services: &ImportServices, job: &Job) -> bool {
     let at_end = job.total.is_some_and(|total| {
         super::job::checkpoint_next(job.checkpoint.as_deref()) as u64 >= total
     });
-    at_end
-        && services
+    let nothing_queued = || {
+        services
             .items
             .waiting(&job.id)
             .is_ok_and(|waiting| waiting.is_empty())
+    };
+    let one_failed = || services.items.has_failed(&job.id).unwrap_or(false);
+    job.state == JobState::Pending && at_end && nothing_queued() && one_failed()
 }
 
 /// Fail the job `job_id`, whose plan is missing, so it is not tried at every launch: start it

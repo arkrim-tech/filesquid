@@ -46,23 +46,34 @@ pub fn resume_rebuilds_of(state: &ApiState, library: &LibraryId) -> usize {
 }
 
 /// Wait, at most `limit`, until no rebuild runs under a lease, after the stop flag was set;
-/// a rebuild still running then is logged and left to its lease. Reads the job store.
+/// a store that cannot be read counts as a rebuild still running, so the exit waits for it;
+/// a rebuild still running at the limit is logged and left to its lease. Reads the job store.
 pub fn wait_for_rebuilds(jobs: &Jobs, limit: Duration) {
     let deadline = Instant::now() + limit;
     let steps = limit.as_millis() / STOP_POLL.as_millis().max(1) + 1;
     for _ in 0..steps {
-        let running = unfinished_rebuilds(jobs)
-            .iter()
-            .any(|job| job.state == JobState::Running);
-        if !running {
+        if !rebuild_running(jobs) {
             return;
         }
-        if Instant::now() >= deadline {
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
             break;
         }
-        std::thread::sleep(STOP_POLL);
+        std::thread::sleep(STOP_POLL.min(left));
     }
     logged("rebuild.stop", "stop_timeout");
+}
+
+/// Whether a rebuild runs under a lease; `true` when the store cannot be read (logged).
+/// Reads the job store.
+fn rebuild_running(jobs: &Jobs) -> bool {
+    match jobs.unfinished_of(REBUILD_JOB_KIND, MAX_RECOVERED_JOBS) {
+        Ok(open) => open.iter().any(|job| job.state == JobState::Running),
+        Err(err) => {
+            logged("rebuild.list", err.error_code());
+            true
+        }
+    }
 }
 
 /// The unfinished rebuild jobs, at most [`MAX_RECOVERED_JOBS`]; none when the store cannot be

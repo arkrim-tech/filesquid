@@ -531,8 +531,13 @@ async fn run_manifest(
     let mut main = checkpoint_next(running.checkpoint_text());
     let bound = manifest.len().saturating_mul(2) + MAX_CONTINUED_HALTS;
     for _ in 0..bound {
-        let Some(index) = next_entry(context, &running, main, manifest.len()) else {
-            return finished_manifest(context, running, total);
+        let index = match next_entry(context, &running, main, manifest.len()) {
+            Ok(Some(index)) => index,
+            Ok(None) => return finished_manifest(context, running, total),
+            Err(()) => {
+                running.checkpoint(&import_checkpoint(main), main as u64, total)?;
+                return Ok(Ended::Halted(running.suspend()?));
+            }
         };
         let outcome = import_indexed(context, &running, plan, (manifest, index), run).await;
         let done = match outcome {
@@ -566,26 +571,28 @@ async fn run_manifest(
 }
 
 /// The manifest index to import next: the checkpoint's entry `main` while it is inside the
-/// manifest of `len` entries, then the first file a retry put back. Reads the store; a
-/// failed read is logged and ends the retries for this run.
+/// manifest of `len` entries, then the first file a retry put back; `None` when none is left.
+/// Reads the store.
+///
+/// # Errors
+/// The items cannot be read (logged): the run suspends rather than end with work left.
 fn next_entry(
     context: &ImportContext<'_>,
     running: &RunningJob,
     main: usize,
     len: usize,
-) -> Option<usize> {
+) -> Result<Option<usize>, ()> {
     if main < len {
-        return Some(main);
+        return Ok(Some(main));
     }
     let waiting = context.items.waiting(running.job().id.as_str());
-    let waiting = waiting
-        .inspect_err(|err| item_unrecorded(running, err))
-        .ok()?;
-    waiting.into_iter().find(|index| *index < len)
+    let waiting = waiting.map_err(|err| item_unrecorded(running, &err))?;
+    Ok(waiting.into_iter().find(|index| *index < len))
 }
 
 /// The end of a run that tried every entry: the job completes, or waits pending when one of
-/// its files failed. Writes the job store.
+/// its files failed, or, when the items cannot be read, suspends rather than complete without
+/// knowing. Writes the job store.
 ///
 /// # Errors
 /// The job could not be written.
@@ -596,6 +603,7 @@ fn finished_manifest(
 ) -> Result<Ended, JobError> {
     let failed = context.items.has_failed(running.job().id.as_str());
     match failed.inspect_err(|err| item_unrecorded(&running, err)) {
+        Ok(false) => Ok(Ended::Done(Box::new(running))),
         Ok(true) => {
             let end = total.unwrap_or(0);
             let end_index = usize::try_from(end).unwrap_or(usize::MAX);
@@ -603,13 +611,15 @@ fn finished_manifest(
             running.checkpoint(&import_checkpoint(end_index), end, total)?;
             Ok(Ended::Waiting(running.suspend()?))
         }
-        _ => Ok(Ended::Done(Box::new(running))),
+        Err(_) => Ok(Ended::Halted(running.suspend()?)),
     }
 }
 
 /// Import manifest entry `index` of `manifest`, keeping its item's state: `copying` while it
-/// is imported, then `copied` or `failed` with its code. Filesystem, database and journal
-/// I/O.
+/// is imported, then `copied` (with the committed digest) or `failed` with its code. When the
+/// items store cannot be read or written the file is not counted done: the run suspends with
+/// its checkpoint at that file, and the next run answers a committed file instead of importing
+/// it twice. Filesystem, database and journal I/O.
 async fn import_indexed(
     context: &ImportContext<'_>,
     running: &RunningJob,
@@ -621,8 +631,10 @@ async fn import_indexed(
         return FileOutcome::Quarantined("not_found".into());
     };
     let job_id = running.job().id.as_str();
-    if context.items.is_skipped(job_id, index).unwrap_or(false) {
-        return FileOutcome::Present;
+    match context.items.is_skipped(job_id, index) {
+        Ok(true) => return FileOutcome::Present,
+        Ok(false) => {}
+        Err(err) => return unrecorded(running, &err),
     }
     let copying = context
         .items
@@ -645,12 +657,21 @@ async fn import_indexed(
         }
         _ => Ok(()),
     };
-    recorded.unwrap_or_else(|err| item_unrecorded(running, &err));
-    outcome
+    match recorded {
+        Ok(()) => outcome,
+        Err(err) => unrecorded(running, &err),
+    }
 }
 
-/// Log, with its code, a file state the items store did not take; the job goes on (the file's
-/// outcome is journaled either way). Stdout only.
+/// The outcome of a file whose state the items store did not take: logged, and the run
+/// suspends with its checkpoint at the file. Stdout only.
+fn unrecorded(running: &RunningJob, err: &JobError) -> FileOutcome {
+    item_unrecorded(running, err);
+    FileOutcome::Suspend
+}
+
+/// Log, with its code, a file state the items store did not take (the file's outcome is
+/// journaled either way). Stdout only.
 fn item_unrecorded(running: &RunningJob, err: &JobError) {
     tracing::warn!(
         operation = IMPORT_FILE_OPERATION,
