@@ -8,6 +8,9 @@
 use super::error::FileError;
 use super::labels::in_reserved_folder;
 use super::names::{safe_name, stored_name, DisplayNames, StoredFile};
+use super::provenance::{
+    commit_staged, discard_staging, label_of, require_clean, Caller, Committed, Write,
+};
 use super::range::{RangePlan, RangeRequest};
 use super::view::EntryView;
 use super::view::{
@@ -16,8 +19,9 @@ use super::view::{
     VersionsView,
 };
 use super::{media, DEFAULT_PAGE, HOLDER, MAX_ANSWER_BYTES, MAX_MESSAGE_BYTES};
+use super::{MOVE_OPERATION, REMOVE_OPERATION};
 use crate::content::ContentTarget;
-use filesquid_core::LibraryId;
+use filesquid_core::{LibraryId, OperationKind};
 use filesquid_metadata::file_record::safe_display_name;
 use filesquid_ocfl::change::{ChangeModel, StagingArea, VersionMeta};
 use filesquid_ocfl::digest::DigestAlgorithm;
@@ -26,7 +30,7 @@ use filesquid_ocfl::read::{Object, StorageRoot};
 use filesquid_ocfl::storage::StorageBackend;
 use filesquid_ocfl::view::{self, MAX_PAGE_ENTRIES, MAX_RANGE_BYTES};
 use filesquid_ocfl::write::{rfc3339_utc, CommitReceipt, VersionReservations};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
 /// The clock commits are dated by: Unix milliseconds (UTC).
@@ -160,7 +164,7 @@ pub struct FileService<B, R, S> {
     names: Arc<OnceLock<Arc<dyn DisplayNames>>>,
     /// Who commits and where commit journal IDs come from; restore and label commits
     /// write a PROV-O record once installed (API-S-028).
-    pub(super) provenance: Arc<OnceLock<super::versions::FileProvenance>>,
+    pub(super) provenance: Arc<OnceLock<super::provenance::FileProvenance>>,
     /// Which object holds each folder scope's files, for the listing by node.
     scopes: Arc<OnceLock<Arc<dyn super::nodes::ScopeObjects>>>,
 }
@@ -561,48 +565,86 @@ where
     S: StorageBackend,
 {
     /// Move or rename one file or folder in one new version, if the object's head is
-    /// `expected` (else a `conflict`).
+    /// `expected` (else a `conflict`). A folder moves every file below it; no bytes are
+    /// written. The commit is linked to the journal ([`super::provenance`]).
     pub async fn move_path(
         &self,
         request: MoveRequest,
-        actor: &str,
+        caller: impl Into<Caller>,
         expected: &str,
-    ) -> Result<CommitView, FileError> {
-        super::labels::refuse_reserved(&request.from)?;
-        super::labels::refuse_reserved(&request.to)?;
-        let meta = self.meta(actor, request.message.as_deref())?;
+    ) -> Result<Committed, FileError> {
+        let caller = caller.into();
+        for path in [&request.from, &request.to] {
+            check_logical_path(path)?;
+            super::labels::refuse_reserved(path)?;
+        }
+        let label = label_of(request.message.as_deref())?;
         let library = self.library(&request.library_id)?;
         let _writing = library.writes.lock().await;
         let root = library.locate(&request.object_id).await?;
-        check_head(library.files.backend.as_ref(), &root, expected).await?;
+        let object = Object::open(library.files.backend.as_ref(), &root).await?;
+        check_revision(&object.inventory().head, expected)?;
         refuse_original_move(&request, &root)?;
+        let moves = move_targets(&object, &request.from, &request.to)?;
+        let write = Write {
+            caller: &caller,
+            kind: OperationKind::Move,
+            label,
+            operation: MOVE_OPERATION,
+            library_id: &request.library_id,
+            object_id: &request.object_id,
+            metadata: false,
+            moves: moves.clone(),
+        };
         let staging = library.staging(&request.object_id)?;
         let model = change_model(&library, &root, &request.object_id, staging);
-        let receipt = view::move_path(&model, &request.from, &request.to, meta).await?;
-        Ok(commit_view(&request.library_id, receipt))
+        require_clean(&model).await?;
+        let prepared = self.prepare(&write)?;
+        stage_moves(&model, &moves).await?;
+        let receipt = commit_staged(&model, &prepared).await?;
+        Ok(prepared.finish_view(&request.library_id, receipt))
     }
 
     /// Remove one file or folder in one new version, if the object's head is `expected`
-    /// (else a `conflict`); its bytes stay for history.
+    /// (else a `conflict`); its bytes stay for history. The commit is linked to the journal
+    /// ([`super::provenance`]).
     pub async fn remove(
         &self,
         request: RemoveRequest,
-        actor: &str,
+        caller: impl Into<Caller>,
         expected: &str,
-    ) -> Result<CommitView, FileError> {
+    ) -> Result<Committed, FileError> {
+        let caller = caller.into();
+        check_logical_path(&request.path)?;
         super::labels::refuse_reserved(&request.path)?;
-        let meta = self.meta(actor, request.message.as_deref())?;
+        let label = label_of(request.message.as_deref())?;
         let library = self.library(&request.library_id)?;
         let _writing = library.writes.lock().await;
         let root = library.locate(&request.object_id).await?;
-        check_head(library.files.backend.as_ref(), &root, expected).await?;
+        let object = Object::open(library.files.backend.as_ref(), &root).await?;
+        check_revision(&object.inventory().head, expected)?;
+        let removals = path_targets(&object, &request.path)?;
+        let write = Write {
+            caller: &caller,
+            kind: OperationKind::Delete,
+            label,
+            operation: REMOVE_OPERATION,
+            library_id: &request.library_id,
+            object_id: &request.object_id,
+            metadata: false,
+            moves: BTreeMap::new(),
+        };
         let staging = library.staging(&request.object_id)?;
         let model = change_model(&library, &root, &request.object_id, staging);
-        let receipt = view::remove_path(&model, &request.path, meta).await?;
-        Ok(commit_view(&request.library_id, receipt))
+        require_clean(&model).await?;
+        let prepared = self.prepare(&write)?;
+        stage_removals(&model, &removals).await?;
+        let receipt = commit_staged(&model, &prepared).await?;
+        Ok(prepared.finish_view(&request.library_id, receipt))
     }
 
-    /// The version record of a write by `actor` with `message`.
+    /// The version record of an import by `actor` with `message`: the caller as `user`. The
+    /// file and metadata routes commit through [`super::provenance`] instead.
     pub(super) fn meta(
         &self,
         actor: &str,
@@ -623,6 +665,83 @@ where
             ))),
         }
     }
+}
+
+/// The file `path` itself, or every file below the folder `path`, at the head of `object`;
+/// `not_found` when there is none. Reads the head's state from the inventory.
+fn path_targets<B: StorageBackend>(
+    object: &Object<'_, B>,
+    path: &str,
+) -> Result<Vec<String>, FileError> {
+    let state = object.state(object.head())?;
+    if state.get(path).is_some() {
+        return Ok(vec![path.to_string()]);
+    }
+    let below = format!("{path}/");
+    let files: Vec<String> = state
+        .paths()
+        .filter(|p| p.starts_with(&below))
+        .map(str::to_string)
+        .collect();
+    match files.is_empty() {
+        true => Err(FileError::not_found()),
+        false => Ok(files),
+    }
+}
+
+/// Each file a move of `from` to `to` renames at the head of `object`, old path to new.
+fn move_targets<B: StorageBackend>(
+    object: &Object<'_, B>,
+    from: &str,
+    to: &str,
+) -> Result<BTreeMap<String, String>, FileError> {
+    let moves = path_targets(object, from)?
+        .into_iter()
+        .map(|path| {
+            let moved = format!("{to}{}", &path[from.len()..]);
+            (path, moved)
+        })
+        .collect();
+    Ok(moves)
+}
+
+/// Stage every move of `moves`; on a refusal the staging area is discarded. Storage I/O.
+async fn stage_moves<B, R, S>(
+    model: &ChangeModel<'_, B, R, S>,
+    moves: &BTreeMap<String, String>,
+) -> Result<(), FileError>
+where
+    B: StorageBackend,
+    R: VersionReservations,
+    S: StorageBackend,
+{
+    for (from, to) in moves {
+        if let Err(err) = model.stage_rename(from, to).await {
+            discard_staging(model).await;
+            return Err(err.into());
+        }
+    }
+    Ok(())
+}
+
+/// Stage the removal of every path of `removals`; on a refusal the staging area is
+/// discarded. Storage I/O.
+async fn stage_removals<B, R, S>(
+    model: &ChangeModel<'_, B, R, S>,
+    removals: &[String],
+) -> Result<(), FileError>
+where
+    B: StorageBackend,
+    R: VersionReservations,
+    S: StorageBackend,
+{
+    for path in removals {
+        if let Err(err) = model.stage_remove(path).await {
+            discard_staging(model).await;
+            return Err(err.into());
+        }
+    }
+    Ok(())
 }
 
 /// Refuse a command as a `conflict` unless `head` is the revision `expected` the caller

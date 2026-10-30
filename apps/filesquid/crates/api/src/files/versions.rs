@@ -3,169 +3,39 @@
 //! labels set after commit, and the bytes a file's or a library's history keeps.
 //!
 //! Restore and label commits carry the structured `filesquid.operation.v1` message (kind
-//! `revert`, `reinstate` or `label`). Once the host installs provenance
-//! ([`FileService::install_provenance`]) they also write their PROV-O record in the same
-//! version through a [`CommitRecorder`], and answer the journal entries to append after the
-//! commit (the `ocfl.commit` entry and the operation's own, with IDs allocated before it).
+//! `revert`, `reinstate` or `label`) and are linked to the journal like every other file
+//! write ([`super::provenance`]): with provenance installed they write their PROV-O record in
+//! the same version, and they answer the journal entries to append after the commit.
 //! Nothing here deletes, expires or thins a version: OCFL keeps every one.
 
 use super::error::FileError;
 use super::labels::{
     check_label, commit_label, refuse_reserved, Labels, LABELS_PATH, MAX_LABELS_FILE_BYTES,
 };
+use super::provenance::{commit_staged, require_clean, Caller, Committed, Prepared, Write};
 use super::service::{
-    change_model, check_logical_path, check_revision, commit_view, read, FileService, Library,
+    change_model, check_logical_path, check_revision, read, FileService, Library,
 };
 use super::view::{
-    CommitView, FileHistorySizeView, HistoryQuery, HistoryView, LabelRequest,
-    LibraryHistorySizeView, LibraryQuery, RestoreRequest,
+    FileHistorySizeView, HistoryQuery, HistoryView, LabelRequest, LibraryHistorySizeView,
+    LibraryQuery, RestoreRequest,
 };
 use super::{LABEL_OPERATION, MAX_RESTORE_PATHS, RESTORE_OPERATION};
-use crate::history::{commit_meta, CommitOperation, CommitRecorder, ProvenanceContext};
-use crate::journal::{JournalEntry, JournalStore, Outcome};
-use crate::library::mint_uuid_v4;
-use filesquid_core::{OperationId, OperationKind};
-use filesquid_ocfl::change::{ChangeError, ChangeModel, VersionMeta};
-use filesquid_ocfl::inventory::{User, VersionNum};
+use filesquid_core::OperationKind;
+use filesquid_ocfl::change::ChangeModel;
+use filesquid_ocfl::inventory::VersionNum;
 use filesquid_ocfl::read::{Object, StorageRoot};
 use filesquid_ocfl::storage::{StorageBackend, StorageKey};
 use filesquid_ocfl::view;
-use filesquid_ocfl::write::{CommitReceipt, VersionBoundFiles, VersionReservations};
-use std::collections::BTreeSet;
-use std::sync::Arc;
+use filesquid_ocfl::write::{CommitReceipt, VersionReservations};
+use std::collections::{BTreeMap, BTreeSet};
+use tracing::Instrument;
 
 /// Most objects one library history-size count opens (AGENTS.md §22).
 pub const MAX_SIZE_OBJECTS: usize = 10_000;
 
 /// Most distinct contents one library history-size count sizes (AGENTS.md §22).
 pub const MAX_SIZE_CONTENTS: usize = 100_000;
-
-/// Journal IDs a provenance commit allocates: its `ocfl.commit` entry and the operation's.
-const COMMIT_IDS: usize = 2;
-
-/// What a file service records provenance with: who commits, and the journal store that
-/// hands out each commit's entry IDs before it.
-#[derive(Clone)]
-pub struct FileProvenance {
-    context: ProvenanceContext,
-    ids: Arc<dyn JournalStore>,
-}
-
-/// A published version and the journal entries its commit carried, to append after it.
-/// `entries` is empty when no provenance is installed; the route journals the write itself
-/// then.
-#[derive(Clone, Debug, PartialEq)]
-pub struct Committed {
-    /// The version.
-    pub view: CommitView,
-    /// The commit's journal entries, with their pre-allocated IDs.
-    pub entries: Vec<JournalEntry>,
-}
-
-/// The version metadata and the optional recorder of one commit.
-struct Prepared {
-    meta: VersionMeta,
-    recorder: Option<CommitRecorder>,
-}
-
-impl Prepared {
-    /// The recorder as the change model's version-bound file function.
-    fn bound(&self) -> Option<&dyn VersionBoundFiles> {
-        self.recorder.as_ref().map(|r| r as &dyn VersionBoundFiles)
-    }
-
-    /// The answer of the published `receipt`.
-    fn finish(self, library_id: &str, receipt: CommitReceipt) -> Committed {
-        let entries = self
-            .recorder
-            .map(|recorder| recorder.journal_entries(&receipt))
-            .unwrap_or_default();
-        Committed {
-            view: commit_view(library_id, receipt),
-            entries,
-        }
-    }
-}
-
-/// Which write one commit is, for its message and journal entry.
-struct Write<'a> {
-    actor: &'a str,
-    kind: OperationKind,
-    label: Option<String>,
-    operation: &'static str,
-    library_id: &'a str,
-    object_id: &'a str,
-}
-
-impl<B, R, S> FileService<B, R, S> {
-    /// Record provenance as `context`: restore and label commits then write their PROV-O
-    /// record in the same version, naming journal entry IDs that `ids` allocates before the
-    /// commit (API-S-028). Returns false, keeping the first, when already installed.
-    pub fn install_provenance(
-        &self,
-        context: ProvenanceContext,
-        ids: Arc<dyn JournalStore>,
-    ) -> bool {
-        self.provenance.set(FileProvenance { context, ids }).is_ok()
-    }
-
-    /// The version metadata and recorder of `write`: the installation `user` and a PROV-O
-    /// recorder with provenance installed, else the actor as `user`; the structured
-    /// operation message either way.
-    fn prepare(&self, write: &Write<'_>) -> Result<Prepared, FileError> {
-        let created = self.created();
-        let operation_id = mint_uuid_v4()
-            .ok()
-            .and_then(|id| OperationId::new(id).ok())
-            .ok_or_else(|| FileError::unavailable("no operation id could be minted"))?;
-        let mut operation =
-            CommitOperation::new(operation_id, write.kind, created.clone()).with_actor(write.actor);
-        if let Some(label) = &write.label {
-            operation = operation
-                .with_label(label.clone())
-                .map_err(|_| FileError::invalid("A label is too long."))?;
-        }
-        let Some(provenance) = self.provenance.get() else {
-            let user = User {
-                name: write.actor.to_string(),
-                address: None,
-            };
-            let meta = VersionMeta::new(created)
-                .with_user(user)
-                .with_message(operation.message());
-            return Ok(Prepared {
-                meta,
-                recorder: None,
-            });
-        };
-        let recorder = recorder_of(provenance, &operation, write)?;
-        Ok(Prepared {
-            meta: commit_meta(&provenance.context, &operation, created),
-            recorder: Some(recorder),
-        })
-    }
-}
-
-/// The recorder of `write`, with its `ocfl.commit` entry ID and the operation's own entry.
-fn recorder_of(
-    provenance: &FileProvenance,
-    operation: &CommitOperation,
-    write: &Write<'_>,
-) -> Result<CommitRecorder, FileError> {
-    let ids = provenance
-        .ids
-        .allocate_ids(COMMIT_IDS)
-        .ok()
-        .filter(|ids| ids.len() == COMMIT_IDS)
-        .ok_or_else(|| FileError::unavailable("no journal ids for the commit record"))?;
-    let mut entry = JournalEntry::new(write.operation, Outcome::Succeeded)
-        .actor(write.actor)
-        .target(write.library_id)
-        .target(write.object_id);
-    entry.id = Some(ids[1]);
-    let recorder = CommitRecorder::new(provenance.context.clone(), operation.clone(), ids[0]);
-    Ok(recorder.with_entries(vec![entry]))
-}
 
 impl<B, R, S> FileService<B, R, S>
 where
@@ -180,9 +50,10 @@ where
     pub async fn restore(
         &self,
         request: RestoreRequest,
-        actor: &str,
+        caller: impl Into<Caller>,
         expected: &str,
     ) -> Result<Committed, FileError> {
+        let caller = caller.into();
         let version = restore_version(&request)?;
         let library = self.library(&request.library_id)?;
         let _writing = library.writes.lock().await;
@@ -191,12 +62,14 @@ where
         check_revision(&object.inventory().head, expected)?;
         let files = restore_targets(&object, &version, &request.paths)?;
         let write = Write {
-            actor,
+            caller: &caller,
             kind: restore_kind(&object, &version, &files)?,
             label: request.label.clone(),
             operation: RESTORE_OPERATION,
             library_id: &request.library_id,
             object_id: &request.object_id,
+            metadata: false,
+            moves: BTreeMap::new(),
         };
         let staging = library.staging(&request.object_id)?;
         let model = change_model(&library, &root, &request.object_id, staging);
@@ -204,9 +77,10 @@ where
         let prepared = self.prepare(&write)?;
         let paths: Vec<&str> = files.iter().map(String::as_str).collect();
         let receipt = model
-            .reinstate_with(&version, &paths, prepared.meta.clone(), prepared.bound())
+            .reinstate_with(&version, &paths, prepared.meta(), prepared.bound())
+            .instrument(prepared.span())
             .await?;
-        Ok(prepared.finish(&request.library_id, receipt))
+        Ok(prepared.finish_view(&request.library_id, receipt))
     }
 
     /// Set or clear the label of one version after commit, in one new version that holds
@@ -216,9 +90,10 @@ where
     pub async fn set_label(
         &self,
         request: LabelRequest,
-        actor: &str,
+        caller: impl Into<Caller>,
         expected: &str,
     ) -> Result<Committed, FileError> {
+        let caller = caller.into();
         if let Some(label) = &request.label {
             check_label(label)?;
         }
@@ -238,19 +113,21 @@ where
         let committed = commit_label(block.message.as_deref());
         labels.set(&request.version, committed, request.label.clone())?;
         let write = Write {
-            actor,
+            caller: &caller,
             kind: OperationKind::Label,
             label: None,
             operation: LABEL_OPERATION,
             library_id: &request.library_id,
             object_id: &request.object_id,
+            metadata: false,
+            moves: BTreeMap::new(),
         };
         let staging = library.staging(&request.object_id)?;
         let model = change_model(&library, &root, &request.object_id, staging);
         require_clean(&model).await?;
         let prepared = self.prepare(&write)?;
         let receipt = commit_labels(&model, &labels, &prepared).await?;
-        Ok(prepared.finish(&request.library_id, receipt))
+        Ok(prepared.finish_view(&request.library_id, receipt))
     }
 }
 
@@ -419,37 +296,7 @@ where
     model
         .stage_bytes(LABELS_PATH, &labels.to_bounded_bytes()?)
         .await?;
-    let committed = model
-        .commit_with(prepared.meta.clone(), prepared.bound())
-        .await;
-    let err = match committed {
-        Ok(receipt) => return Ok(receipt),
-        // Published: the version stands, and the staging area is kept as the engine asks.
-        Err(ChangeError::StagingNotCleared { receipt, reason }) => {
-            tracing::warn!(target: super::LOG_TARGET, %reason, "a label version kept its staging area");
-            return Ok(*receipt);
-        }
-        Err(err) => err,
-    };
-    if let Err(reset) = model.reset().await {
-        tracing::warn!(target: super::LOG_TARGET, error = %reset, "a refused label left its staging area");
-    }
-    Err(err.into())
-}
-
-/// Refuse a staging area that holds changes, so a write never commits someone else's.
-async fn require_clean<B, R, S>(model: &ChangeModel<'_, B, R, S>) -> Result<(), FileError>
-where
-    B: StorageBackend,
-    R: VersionReservations,
-    S: StorageBackend,
-{
-    match model.status().await?.changes.is_empty() {
-        true => Ok(()),
-        false => Err(FileError::conflict(
-            "Another change to this object is in progress; try again when it has finished.",
-        )),
-    }
+    commit_staged(model, prepared).await
 }
 
 /// The checked version, path count, paths and label of a restore.

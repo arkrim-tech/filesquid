@@ -71,6 +71,7 @@ pub mod media;
 mod metadata_routes;
 pub mod names;
 mod nodes;
+mod provenance;
 mod range;
 pub mod receipts;
 mod records;
@@ -95,6 +96,7 @@ pub use import::SourceImport;
 pub use labels::{APP_DATA_FOLDER, LABELS_PATH, MAX_LABELS, PROVENANCE_FOLDER, RESERVED_FOLDERS};
 pub use names::{DisplayNames, NameFuture, StoredFile};
 pub use nodes::{Listing, ScopeObject, ScopeObjects};
+pub use provenance::{Caller, Committed, FileProvenance};
 pub use range::{RangePlan, RangeRequest};
 pub use receipts::{CommandReceipts, MAX_RECEIPTS};
 pub(crate) use routes::{answer_content, refuse as refuse_file, routes, ContentAnswerKind};
@@ -102,7 +104,7 @@ pub use scope_listing::{ScopeAfter, ScopeEntry, ScopeListing, ScopePage};
 pub use service::{
     staging_prefix, ContentAnswer, ContentRequest, FileClock, FileLibrary, FileService,
 };
-pub use versions::{Committed, FileProvenance, MAX_SIZE_CONTENTS, MAX_SIZE_OBJECTS};
+pub use versions::{MAX_SIZE_CONTENTS, MAX_SIZE_OBJECTS};
 pub use view::{
     CommitView, ContentQuery, EntryView, FileChangeView, FileDetailsView, FileHistorySizeView,
     FileQuery, FolderPageView, FolderRequest, FolderView, HistoryEntryView, HistoryQuery,
@@ -125,8 +127,10 @@ pub const MAX_ANSWER_BYTES: usize = 16 * 1024 * 1024;
 /// Most bytes one upload carries (64 MiB). The body is held in memory while it is staged.
 pub const MAX_UPLOAD_BYTES: usize = 64 * 1024 * 1024;
 
-/// Most bytes of a version message.
-pub const MAX_MESSAGE_BYTES: usize = 1_024;
+/// Most bytes of a caller's version message. The message is the version label, the `label`
+/// member of the version's `filesquid.operation.v1` message (API-S-028, PRD F-065), so it
+/// has the label's bound.
+pub const MAX_MESSAGE_BYTES: usize = filesquid_core::MAX_LABEL_BYTES;
 
 /// Most files or folders one restore names.
 pub const MAX_RESTORE_PATHS: usize = 1_000;
@@ -166,6 +170,9 @@ pub const TERMS_OPERATION: &str = "files.metadata.terms";
 pub const NAMESPACES_OPERATION: &str = "files.metadata.namespaces";
 /// Journal operation of a namespace registration.
 pub const NAMESPACE_OPERATION: &str = "files.metadata.register";
+/// Journal operation every write of a metadata record adds beside its route's entry: a
+/// statement set or removal, a namespace registration and a rename (API-S-028).
+pub const METADATA_EDIT_OPERATION: &str = "metadata.edit";
 /// Journal operation of a refused import-record read.
 pub const FACTS_OPERATION: &str = "files.facts";
 /// Journal operation of a refused content read.

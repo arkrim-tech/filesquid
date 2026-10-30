@@ -121,7 +121,8 @@ pub struct UploadQuery {
     /// The Unicode normalisation form of `name` (`nfc`, `nfd`, `nfkc`, `nfkd` or
     /// `unnormalised`); required for a name that is not ASCII.
     pub name_normalization: Option<filesquid_metadata::import::NameForm>,
-    /// The version message, 1 to [`super::MAX_MESSAGE_BYTES`] bytes.
+    /// The version label, 1 to [`super::MAX_MESSAGE_BYTES`] bytes, not blank, without control
+    /// characters: the `label` member of the version's `filesquid.operation.v1` message.
     pub message: Option<String>,
 }
 
@@ -164,7 +165,8 @@ pub struct MoveRequest {
     pub from: String,
     /// Its new logical path.
     pub to: String,
-    /// The version message, 1 to [`super::MAX_MESSAGE_BYTES`] bytes.
+    /// The version label, 1 to [`super::MAX_MESSAGE_BYTES`] bytes, not blank, without control
+    /// characters: the `label` member of the version's `filesquid.operation.v1` message.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
 }
@@ -179,7 +181,8 @@ pub struct RemoveRequest {
     pub object_id: String,
     /// The file or folder to remove.
     pub path: String,
-    /// The version message, 1 to [`super::MAX_MESSAGE_BYTES`] bytes.
+    /// The version label, 1 to [`super::MAX_MESSAGE_BYTES`] bytes, not blank, without control
+    /// characters: the `label` member of the version's `filesquid.operation.v1` message.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
 }

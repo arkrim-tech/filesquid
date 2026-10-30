@@ -7,20 +7,22 @@
 //! verification and commits nothing.
 
 use super::error::FileError;
+use super::provenance::{label_of, Caller, Committed, Write};
 use super::service::{change_model, FileService};
 use super::view::{UploadQuery, UploadView};
-use super::{media, MAX_MESSAGE_BYTES};
+use super::{media, UPLOAD_OPERATION};
 use crate::canonical::{
     ascii_name_form, commit_file_original, file_object_id, file_object_root, new_upload_record,
-    read_file_original, reupload_record, CanonicalError, OwnerReadable, UploadInput,
+    read_file_original, reupload_record, BoundMeta, CanonicalError, OwnerReadable, UploadInput,
 };
 use crate::ErrorCode;
-use filesquid_core::FileId;
+use filesquid_core::{FileId, OperationId, OperationKind};
 use filesquid_metadata::file_record::FileRecord;
 use filesquid_metadata::import::NameForm;
 use filesquid_ocfl::read::Object;
 use filesquid_ocfl::storage::StorageBackend;
 use filesquid_ocfl::write::VersionReservations;
+use std::collections::BTreeMap;
 
 /// The file an upload writes: its identifier and object, its record and version at the head,
 /// if any, and the version the upload will publish.
@@ -39,8 +41,9 @@ where
     R: VersionReservations,
     S: StorageBackend,
 {
-    /// Commit one upload of `bytes` by `actor`: a new file object, or a new version of the
-    /// object of `query.file_id`.
+    /// Commit one upload of `bytes` by `caller`: a new file object, or a new version of the
+    /// object of `query.file_id`. The commit is linked to the journal
+    /// ([`super::provenance`]), and the record's import entry names its operation ID.
     ///
     /// # Errors
     /// `invalid_request` for a name, media type, time, size or message that is refused (a
@@ -54,36 +57,35 @@ where
         &self,
         query: UploadQuery,
         bytes: &[u8],
-        actor: &str,
+        caller: impl Into<Caller>,
         expected: &str,
-    ) -> Result<UploadView, FileError> {
+    ) -> Result<Committed<UploadView>, FileError> {
+        let caller = caller.into();
         let form = name_form(&query)?;
-        let meta = self.meta(actor, query.message.as_deref())?;
+        let label = label_of(query.message.as_deref())?;
         let library = self.library(&query.library_id)?;
         let _writing = library.writes.lock().await;
         let backend = library.files.backend.as_ref();
         let target = upload_target(backend, query.file_id.as_deref()).await?;
         check_target_revision(&target, expected)?;
-        let started = self.created();
-        let media_type = query
-            .media_type
-            .clone()
-            .unwrap_or_else(|| media::media_type(&query.name).to_string());
-        let input = UploadInput {
-            name: &query.name,
-            name_normalization: form,
-            declared_size: query.size,
-            media_type: &media_type,
-            last_modified: query.last_modified.as_deref(),
-            operation_id: None,
-            started: &started,
-            finished: &self.created(),
-            object_version: &target.next_version,
-        };
-        let record = upload_record(&target, &input, bytes)?;
+        let prepared = self.prepare(&Write {
+            caller: &caller,
+            kind: OperationKind::Upload,
+            label,
+            operation: UPLOAD_OPERATION,
+            library_id: &query.library_id,
+            object_id: &target.object_id,
+            metadata: false,
+            moves: BTreeMap::new(),
+        })?;
+        let record = self.record_of(&query, form, &target, prepared.operation_id(), bytes)?;
         let staging = library.staging(&target.object_id)?;
         let model = change_model(&library, &target.root, &target.object_id, staging);
         let previous = target.previous.as_ref();
+        let meta = BoundMeta {
+            meta: prepared.meta(),
+            bound: prepared.bound(),
+        };
         let committed = commit_file_original(
             &model,
             &OwnerReadable,
@@ -99,28 +101,49 @@ where
             FileError::conflict("The upload would change nothing, so no version was made.")
         })?;
         library.remember(&target.object_id, &target.root);
-        Ok(UploadView {
+        let view = UploadView {
             library_id: query.library_id,
             file_id: target.file_id.as_str().to_string(),
-            object_id: receipt.object_id,
+            object_id: receipt.object_id.clone(),
             version: receipt.version.to_string(),
-            created: receipt.created,
-        })
+            created: receipt.created.clone(),
+        };
+        Ok(prepared.finish(view, &receipt))
+    }
+
+    /// The record the upload `query` of `bytes` writes into `target` for the operation
+    /// `operation_id`, with this service's clock. Pure but for the clock.
+    fn record_of(
+        &self,
+        query: &UploadQuery,
+        form: NameForm,
+        target: &Target,
+        operation_id: &OperationId,
+        bytes: &[u8],
+    ) -> Result<FileRecord, FileError> {
+        let started = self.created();
+        let media_type = query
+            .media_type
+            .clone()
+            .unwrap_or_else(|| media::media_type(&query.name).to_string());
+        let input = UploadInput {
+            name: &query.name,
+            name_normalization: form,
+            declared_size: query.size,
+            media_type: &media_type,
+            last_modified: query.last_modified.as_deref(),
+            operation_id: Some(operation_id.as_str()),
+            started: &started,
+            finished: &self.created(),
+            object_version: &target.next_version,
+        };
+        upload_record(target, &input, bytes)
     }
 }
 
 /// The normalisation form of the uploaded name: the one the client stated, or NFC for an
 /// ASCII name.
 fn name_form(query: &UploadQuery) -> Result<NameForm, FileError> {
-    if query
-        .message
-        .as_ref()
-        .is_some_and(|m| m.len() > MAX_MESSAGE_BYTES)
-    {
-        return Err(FileError::invalid(format!(
-            "A version message is 1 to {MAX_MESSAGE_BYTES} bytes and not blank."
-        )));
-    }
     query
         .name_normalization
         .or_else(|| ascii_name_form(&query.name))

@@ -3,13 +3,13 @@
 //! JSON or bytes. Every handler runs only after the router's guard has authorised its action
 //! and put the [`Principal`] in the request extensions (API-S-004).
 
-use super::command::{self, version_entry, Checked, CommandInput, Done, FileCommand};
+use super::command::{self, Checked, CommandInput, Done, FileCommand};
 use super::error::FileError;
 use super::names::{content_disposition, Disposition};
 use super::nodes::{listing_query, Listing};
+use super::provenance::{Caller, Committed};
 use super::range::{RangePlan, RangeRequest};
 use super::service::{ContentAnswer, ContentRequest};
-use super::versions::Committed;
 use super::view::{
     ContentQuery, FileQuery, FolderRequest, HistoryQuery, LabelRequest, LibraryQuery,
     ListingRequest, MoveRequest, ObjectQuery, RemoveRequest, RestoreRequest, UploadQuery,
@@ -310,20 +310,11 @@ async fn upload(
         UPLOAD_OPERATION,
         command,
         |files, c, actor| async move {
+            let caller = Caller::new(actor).with_operation(c.operation_id);
             let upload = files
-                .upload(c.input.facts, bytes, actor, c.expected)
+                .upload(c.input.facts, bytes, caller, c.expected)
                 .await?;
-            let ids = (
-                upload.library_id.as_str(),
-                upload.object_id.as_str(),
-                upload.version.as_str(),
-            );
-            let entry = version_entry(UPLOAD_OPERATION, principal, ids, true);
-            Ok(Done {
-                view: upload,
-                entries: vec![entry],
-                changed: true,
-            })
+            Ok(recorded(upload))
         },
     )
     .await
@@ -496,8 +487,10 @@ async fn move_path(
         MOVE_OPERATION,
         command,
         |files, c, actor| async move {
-            let commit = files.move_path(c.input, actor, c.expected).await?;
-            Ok(published(MOVE_OPERATION, principal, commit))
+            let caller = Caller::new(actor).with_operation(c.operation_id);
+            Ok(recorded(
+                files.move_path(c.input, caller, c.expected).await?,
+            ))
         },
     )
     .await
@@ -517,8 +510,8 @@ async fn remove(
         REMOVE_OPERATION,
         command,
         |files, c, actor| async move {
-            let commit = files.remove(c.input, actor, c.expected).await?;
-            Ok(published(REMOVE_OPERATION, principal, commit))
+            let caller = Caller::new(actor).with_operation(c.operation_id);
+            Ok(recorded(files.remove(c.input, caller, c.expected).await?))
         },
     )
     .await
@@ -538,8 +531,8 @@ async fn restore(
         RESTORE_OPERATION,
         command,
         |files, c, actor| async move {
-            let committed = files.restore(c.input, actor, c.expected).await?;
-            Ok(recorded(RESTORE_OPERATION, principal, committed))
+            let caller = Caller::new(actor).with_operation(c.operation_id);
+            Ok(recorded(files.restore(c.input, caller, c.expected).await?))
         },
     )
     .await
@@ -559,43 +552,18 @@ async fn set_label(
         LABEL_OPERATION,
         command,
         |files, c, actor| async move {
-            let committed = files.set_label(c.input, actor, c.expected).await?;
-            Ok(recorded(LABEL_OPERATION, principal, committed))
+            let caller = Caller::new(actor).with_operation(c.operation_id);
+            Ok(recorded(
+                files.set_label(c.input, caller, c.expected).await?,
+            ))
         },
     )
     .await
 }
 
-/// A published version, journaled as `operation` with its object reference.
-fn published(
-    operation: &str,
-    principal: &Principal,
-    commit: super::CommitView,
-) -> Done<super::CommitView> {
-    let ids = (
-        commit.library_id.as_str(),
-        commit.object_id.as_str(),
-        commit.version.as_str(),
-    );
-    let entry = version_entry(operation, principal, ids, true);
-    Done {
-        view: commit,
-        entries: vec![entry],
-        changed: true,
-    }
-}
-
-/// A version that may carry its commit's journal entries: with provenance installed they are
-/// journaled (each once, under its pre-allocated ID) instead of the route's own entry;
-/// without, the version is journaled as [`published`] does.
-fn recorded(
-    operation: &str,
-    principal: &Principal,
-    committed: Committed,
-) -> Done<super::CommitView> {
-    if committed.entries.is_empty() {
-        return published(operation, principal, committed.view);
-    }
+/// A published version with its commit's journal entries ([`super::provenance`]): the
+/// `ocfl.commit` entry and the operation's own, each journaled once.
+pub(super) fn recorded<V>(committed: Committed<V>) -> Done<V> {
     Done {
         view: committed.view,
         entries: committed.entries,

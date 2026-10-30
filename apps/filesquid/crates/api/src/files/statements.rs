@@ -12,6 +12,7 @@
 //! `namespaces.md` in its collection-snapshot object.
 
 use super::error::FileError;
+use super::provenance::{Caller, Committed, Prepared, Write};
 use super::records::file_id_of;
 use super::service::{resolve, FileService, Library};
 use super::HOLDER;
@@ -21,21 +22,22 @@ use crate::canonical::layout::{
 use crate::canonical::original::companion_path;
 use crate::canonical::read_file_original;
 use crate::canonical::OwnerReadable;
-use filesquid_core::{FileId, LibraryId};
+use filesquid_core::{FileId, LibraryId, OperationKind};
 use filesquid_metadata::file_record::{FileFacts, FileRecord};
 use filesquid_metadata::file_ref::FileRef;
 use filesquid_metadata::namespace::{
     valid_term, NamespaceKind, NamespaceRegistry, Registration, NAMESPACES_MD,
 };
 use filesquid_metadata::record::parse_curie_with;
-use filesquid_metadata::store::ocfl::{CommitOptions, OcflStore};
+use filesquid_metadata::store::ocfl::OcflStore;
 use filesquid_metadata::store::StoreError;
 use filesquid_metadata::{MetadataError, MetadataNamespace};
-use filesquid_ocfl::inventory::User;
 use filesquid_ocfl::read::Object;
 use filesquid_ocfl::storage::StorageBackend;
 use filesquid_ocfl::write::{Clock, CommitReceipt, VersionReservations};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
+use tracing::Instrument;
 
 /// Most bytes of one statement value.
 pub const MAX_VALUE_BYTES: usize = 64 * 1024;
@@ -397,12 +399,13 @@ where
         let store = store_of(&library, library_id, self.clock())?;
         store.read_registry(&reference).await.map_err(store_error)
     }
-    /// Set one statement of a file by `actor`, in one new version of its object.
+    /// Set one statement of a file by `caller`, in one new version of its object.
     pub async fn set_statement(
         &self,
         request: SetStatementRequest,
-        actor: &str,
-    ) -> Result<MetadataCommitView, FileError> {
+        caller: impl Into<Caller>,
+    ) -> Result<Committed<MetadataCommitView>, FileError> {
+        let caller = caller.into();
         if request.value.is_empty() || request.value.len() > MAX_VALUE_BYTES {
             return Err(FileError::invalid(format!(
                 "A statement value is 1 to {MAX_VALUE_BYTES} bytes."
@@ -423,20 +426,25 @@ where
                 .map_err(metadata_error)
         };
         let ids = (&request.library_id, &request.file_id);
-        self.edit_record(ids, actor, (super::METADATA_SET_OPERATION, None), edit)
-            .await
+        let write = (
+            super::METADATA_SET_OPERATION,
+            OperationKind::MetadataEdit,
+            None,
+        );
+        self.edit_record(ids, &caller, write, edit).await
     }
 
-    /// Rename a file by `actor`: set its display name in one new version of its metadata
+    /// Rename a file by `caller`: set its display name in one new version of its metadata
     /// record. The stored name, the logical path and the original name stay (API-S-027).
     ///
     /// `expected` is the file object's head the caller read; any other is a `conflict`.
     pub async fn rename(
         &self,
         request: RenameRequest,
-        actor: &str,
+        caller: impl Into<Caller>,
         expected: &str,
-    ) -> Result<MetadataCommitView, FileError> {
+    ) -> Result<Committed<MetadataCommitView>, FileError> {
+        let caller = caller.into();
         let name = request.display_name.clone();
         let edit = |record: &mut FileRecord| {
             record
@@ -444,16 +452,21 @@ where
                 .map_err(|e| FileError::invalid(format!("The name was refused: {e}.")))
         };
         let ids = (&request.library_id, &request.file_id);
-        self.edit_record(ids, actor, (super::RENAME_OPERATION, Some(expected)), edit)
-            .await
+        let write = (
+            super::RENAME_OPERATION,
+            OperationKind::Rename,
+            Some(expected),
+        );
+        self.edit_record(ids, &caller, write, edit).await
     }
 
-    /// Remove one statement of a file by `actor`, in one new version of its object.
+    /// Remove one statement of a file by `caller`, in one new version of its object.
     pub async fn remove_statement(
         &self,
         request: RemoveStatementRequest,
-        actor: &str,
-    ) -> Result<MetadataCommitView, FileError> {
+        caller: impl Into<Caller>,
+    ) -> Result<Committed<MetadataCommitView>, FileError> {
+        let caller = caller.into();
         let curie = normalised_curie(&request.curie);
         let edit = |record: &mut FileRecord| {
             let statements = &mut record.statements_mut().statements;
@@ -465,17 +478,22 @@ where
             }
         };
         let ids = (&request.library_id, &request.file_id);
-        self.edit_record(ids, actor, (super::METADATA_REMOVE_OPERATION, None), edit)
-            .await
+        let write = (
+            super::METADATA_REMOVE_OPERATION,
+            OperationKind::MetadataEdit,
+            None,
+        );
+        self.edit_record(ids, &caller, write, edit).await
     }
 
-    /// Register a namespace in a library by `actor` (the owner), in one new version of the
+    /// Register a namespace in a library by `caller` (the owner), in one new version of the
     /// library's snapshot object.
     pub async fn register_namespace(
         &self,
         request: RegisterNamespaceRequest,
-        actor: &str,
-    ) -> Result<MetadataCommitView, FileError> {
+        caller: impl Into<Caller>,
+    ) -> Result<Committed<MetadataCommitView>, FileError> {
+        let caller = caller.into();
         let registration = match request.kind {
             NamespaceKind::Extension => Registration::extension(
                 &request.prefix,
@@ -499,23 +517,30 @@ where
         }
         let reference = registry_ref(&request.library_id)?;
         let store = store_of(&library, &request.library_id, self.clock())?;
-        let options = self.commit_options(actor, super::NAMESPACE_OPERATION);
+        let prepared = self.prepare(&metadata_write(
+            &caller,
+            (super::NAMESPACE_OPERATION, OperationKind::MetadataEdit),
+            &request.library_id,
+            reference.object_id(),
+        ))?;
         let receipt = store
-            .commit_registry_with(&reference, &registry, &options)
+            .commit_registry_with(&reference, &registry, &prepared.options())
+            .instrument(prepared.span())
             .await
             .map_err(store_error)?;
-        committed(&request.library_id, receipt)
+        committed(&request.library_id, receipt, prepared)
     }
 
-    /// Apply `edit` to the head record of a file and commit it by `actor` as `operation`;
-    /// with an `expected` revision (a command's), only when the file object's head is it.
+    /// Apply `edit` to the head record of a file and commit it by `caller` as `operation` of
+    /// `kind`; with an `expected` revision (a command's), only when the file object's head is
+    /// it. The commit is linked to the journal ([`super::provenance`]).
     async fn edit_record(
         &self,
         (library_id, file_id): (&String, &String),
-        actor: &str,
-        (operation, expected): (&str, Option<&str>),
+        caller: &Caller,
+        (operation, kind, expected): (&'static str, OperationKind, Option<&str>),
         edit: impl FnOnce(&mut FileRecord) -> Result<(), FileError>,
-    ) -> Result<MetadataCommitView, FileError> {
+    ) -> Result<Committed<MetadataCommitView>, FileError> {
         let id = parse_file_id(file_id)?;
         let library = self.library(library_id)?;
         let _writing = library.writes.lock().await;
@@ -540,40 +565,54 @@ where
             .and_then(|r| r.with_record_path(&record_path))
             .map_err(|_| FileError::internal("a file reference was refused"))?;
         let store = store_of(&library, library_id, self.clock())?;
-        let options = self.commit_options(actor, operation);
+        let object_id = file_object_id(&id);
+        let write = metadata_write(caller, (operation, kind), library_id, &object_id);
+        let prepared = self.prepare(&write)?;
         let receipt = store
-            .commit_file_record_with(&reference, &record, &options)
+            .commit_file_record_with(&reference, &record, &prepared.options())
+            .instrument(prepared.span())
             .await
             .map_err(store_error)?;
-        committed(library_id, receipt)
-    }
-
-    /// The commit options of a metadata edit by `actor` (MD-S-014).
-    fn commit_options(&self, actor: &str, operation: &str) -> CommitOptions<'static> {
-        CommitOptions {
-            user: Some(User {
-                name: actor.to_string(),
-                address: None,
-            }),
-            message: Some(format!("FileSquid {operation}")),
-            bound: None,
-        }
+        committed(library_id, receipt, prepared)
     }
 }
 
-/// The answer to a published edit, or `conflict` when the store published nothing.
+/// The write of a metadata record of `object_id` in `library_id` by `caller` as the route's
+/// `operation` of `kind`: journaled as `metadata.edit` too, with no label or moves. Pure.
+fn metadata_write<'a>(
+    caller: &'a Caller,
+    (operation, kind): (&'static str, OperationKind),
+    library_id: &'a str,
+    object_id: &'a str,
+) -> Write<'a> {
+    Write {
+        caller,
+        kind,
+        label: None,
+        operation,
+        library_id,
+        object_id,
+        metadata: true,
+        moves: BTreeMap::new(),
+    }
+}
+
+/// The answer to a published edit with its commit's journal entries, or `conflict` when the
+/// store published nothing.
 fn committed(
     library_id: &str,
     receipt: Option<CommitReceipt>,
-) -> Result<MetadataCommitView, FileError> {
+    prepared: Prepared,
+) -> Result<Committed<MetadataCommitView>, FileError> {
     let receipt = receipt
         .ok_or_else(|| FileError::conflict("Nothing would change, so no version was made."))?;
-    Ok(MetadataCommitView {
+    let view = MetadataCommitView {
         library_id: library_id.to_string(),
-        object_id: receipt.object_id,
+        object_id: receipt.object_id.clone(),
         version: receipt.version.to_string(),
-        created: receipt.created,
-    })
+        created: receipt.created.clone(),
+    };
+    Ok(prepared.finish(view, &receipt))
 }
 
 /// `dc:` written as `dcterms:`, so a removal names the statement as it is stored. Pure.

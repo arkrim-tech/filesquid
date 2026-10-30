@@ -1,12 +1,12 @@
 # Task API-F2.8 Walkthrough: Journal and commit linkage for PROV-O history
 
-Branch: `feat/prov-o-history` (global Task FS-2.8; ADR 040 Decision 6).
+Branches: `feat/prov-o-history` (first part) and `feat/api-f2.8-journal-commit-linkage` (file and metadata routes), global Task FS-2.8; ADR 040 Decision 6.
 
 ## API-S-028: PROV-O record per commit and journal linkage
 
-Also API-S-017 (activity journal entry shape and redaction).
+Also API-S-017 (activity journal entry shape and redaction) and API-S-035: Metadata property routes (the version `user` and message of metadata edits).
 
-## What changed
+## What changed (first part)
 
 - `JournalEntry` gains optional `operation_id` and `object_ref` (`<object-id>@vN`, which is `urn:uuid:<uuid>@vN` for FileSquid objects), with builder methods.
   - Redaction: `operation_id` passes the existing opaque check. `object_ref` passes only when it parses as a `VersionRef` whose object ID is opaque. `@` stays forbidden in every other field, so an e-mail address in `actor` is still redacted.
@@ -16,15 +16,35 @@ Also API-S-017 (activity journal entry shape and redaction).
 - `AnnouncingJournal` (and `Monitor::announcing_store`) announces entries appended outside the writer with the same `journal.entry` events and counters. The desktop hands it to the catalog, so outbox entries are announced (DE-0.10).
 - Version-inventory repair: consent, every outcome and the answer share one repair run ID as their `operation_id` (`RepairAnswer::run_id`), and an outcome names `object@version`.
 
-## Commit paths linked so far
+## File and metadata routes (second part)
+
+API-F1.3 and API-F1.4 landed after the first part, so their commits are linked here.
+
+- `files::provenance` (new) prepares every file and metadata write in one place, generalising what restore and label already did:
+  - **Operation ID.** A `Caller` carries the actor and the command envelope's operation ID. The routes pass it, so the version message, the journal entries and the idempotency receipt share one ID (restore and label minted their own before). The metadata routes take no envelope, so each of their writes gets a new UUID v4.
+  - **Version metadata.** The `filesquid.operation.v1` message with the operation kind (`upload`, `copy`, `move`, `delete`, `rename`, `revert` or `reinstate`, `label`, `metadata.edit`) and the caller's optional `message` as its `label`. With provenance installed, the version `user` is the installation (`FileSquid installation`, `urn:uuid:<installation-uuid>`), and a `CommitRecorder` writes the PROV-O record and the journal entries into the same version under IDs allocated before the commit. A service without provenance (the server today) still names the caller as `user`.
+  - **Journal entries.** `Committed<V>` answers the view with the entries to append: exactly one `ocfl.commit` (plus the takeover warning when there is one), the route's own entry (`files.upload`, `files.move`, ...), and `metadata.edit` for every write of a metadata record (statement set and removal, namespace registration, rename). Each carries the operation ID and the object reference `<object-id>@vN`, and is redacted. Without provenance the same entries are built from the receipt, without IDs.
+  - **Activity span.** Every commit runs inside the activity span of its operation ID (`canonical::message::commit_span`), as uploads already did.
+- Move and remove stage their changes through the change model and commit with the recorder (`ChangeModel::commit_with`), because `filesquid-ocfl`'s view writes take no version-bound files. A refused stage or commit resets the staging area. A move records its logical moves for the PROV-O record.
+- Upload and copy pass the recorder through `canonical::commit_file_original`, whose metadata parameter now takes a `BoundMeta` (a plain `VersionMeta` still converts). An upload's import entry names its operation ID.
+- The metadata routes commit through the metadata module's `ocfl` store with `CommitOptions { user, message, bound }` from the same preparation. The constant message `FileSquid <operation>` and the caller as `user` are gone.
+- The route's own entry names the library and the object, and the version is in its `object_ref` (before, the version was a third target). The API-S-008 step and one integration test now read it there.
+- Contract 0.31.0: the upload, move, remove, copy, rename, restore, label and metadata route descriptions state the linkage. A caller's `message` is the version label: 1 to 512 bytes (`MAX_LABEL_BYTES`), without control characters (it was 1 to 1,024 bytes of free text). `apps/filesquid/ui/src/api/schema.d.ts` and `contract-version.ts` are regenerated with `npm run contract:types`.
+- API-S-035 in the crate SRS now points at API-S-028 for the version `user`, the message and the `metadata.edit` entry, instead of "the caller as the version user".
+
+Failed and refused attempts publish nothing, so their route journals them as before (outcome `failed`, with the operation ID for a command), and they never reach PROV-O.
+
+### Not delivered, and why
+
+- Import commits (`FileService::import_original`, driven by `filesquid-native` jobs) still name the caller as `user` with no operation message. API-F2.16 is reworking the import routes in parallel; they should use the same `provenance` preparation when it lands.
+- API-F2.12 overlaps this task. Its remaining scope is an end-to-end test that an engine warning raised during a file-route commit carries the operation ID. The span is wired here, and the mechanism is unit-tested in `unit_journal_coverage`.
+- The stand-alone `fsquid` metadata CLI keeps no host journal.
+
+## Commit paths linked in the first part
 
 - Library snapshot commits (DE-0.3, merged while this task was open) set the installation `user`, write the `filesquid.operation.v1` message with the operation `kind` (`canonical::OperationRecord.kind`, mapped by `canonical::operation_kind`), and journal `ocfl.commit` plus the operation's own entry with `operation_id` and `object_ref`; with a provenance context both entries ride the version (`CommitRecorder::with_entries`). See the DE-0.10 walkthrough.
 - One message format: `filesquid_core::OperationMessage` reads the catalog's message (revision as a decimal string, `created_id`, `deletion`; a message without `kind` reads as `unknown`) and writes the same shape.
 - Repair follow-up versions are recorded by API-F2.9.
-
-## Not delivered in this task, and why
-
-- File operations (API-F1.3) and metadata routes (API-F1.4) do not exist, so no API path commits file objects or journals `metadata.edit` yet; they use `CommitRecorder` and `CommitOptions` when they land. The stand-alone `fsquid` metadata CLI keeps no host journal.
 
 ```text
 $ cargo test -p filesquid-api --test unit_canonical --test unit_history
@@ -85,8 +105,61 @@ test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fin
 | API-S-028 IDs before the commit | `filesquid-native` `unit_journal::both_stores_assign_ids_before_the_entries_are_written` |
 | API-S-028 repair run ID | `unit_version_inventory_repair::consent_and_outcomes_share_one_repair_run_id` |
 | API-S-017 announced entries | `unit_writer::an_announcing_store_publishes_and_counts_what_the_store_accepted` |
+| API-S-028 every file-route commit: one `ocfl.commit` with operation ID and object version, installation `user`, operation message, PROV-O record | `integration_commit_linkage` (upload; move and remove; copy and rename; restore and label; without provenance), `journal_and_commit_linkage_API-S-028.feature` (7 examples) |
+| API-S-028 metadata edits carry the structured message and `user`; `metadata.edit` for every metadata write | `integration_commit_linkage::metadata_edits_carry_the_structured_message_the_user_and_a_metadata_edit_entry`, feature scenario "Every metadata write is journaled as metadata.edit without its value" |
+| API-S-017 redaction of the `metadata.edit` entry | `integration_commit_linkage::a_metadata_edit_entry_is_redacted` |
+| API-S-028 the caller's message is the version label | `integration_commit_linkage::the_callers_message_is_the_version_label`, feature scenario "The caller's message is the version label" |
+| Failed and refused attempts stay in the journal only | `integration_commit_linkage::a_refused_commit_is_journaled_as_before_and_never_reaches_the_history` and `a_refused_metadata_edit_is_journaled_as_before_without_a_commit`, feature scenario "A refused write is journaled as before and never reaches the history" |
 
 ## TDD: failing run before implementation
+
+Second part, `cargo test -p filesquid-api --test integration_commit_linkage` before the implementation. Nine of ten fail; the refused-move test passed from the start, because refusals were already journaled:
+
+```text
+test a_refused_commit_is_journaled_as_before_and_never_reaches_the_history ... ok
+test a_metadata_edit_entry_is_redacted ... FAILED
+test a_copy_and_a_rename_are_each_one_linked_commit ... FAILED
+test a_move_and_a_remove_are_each_one_linked_commit ... FAILED
+test a_refused_metadata_edit_is_journaled_as_before_without_a_commit ... FAILED
+test an_upload_is_committed_by_the_installation_and_journaled_once_as_ocfl_commit ... FAILED
+test a_restore_and_a_label_carry_the_envelope_operation_id ... FAILED
+test metadata_edits_carry_the_structured_message_the_user_and_a_metadata_edit_entry ... FAILED
+test the_callers_message_is_the_version_label ... FAILED
+test without_provenance_every_commit_still_journals_one_ocfl_commit ... FAILED
+thread 'a_metadata_edit_entry_is_redacted' (3769) panicked at crates/api/tests/integration/commit_linkage.rs:316:5:
+assertion `left == right` failed
+  left: 0
+ right: 1
+thread 'a_copy_and_a_rename_are_each_one_linked_commit' (3768) panicked at crates/api/tests/integration/commit_linkage.rs:99:5:
+assertion `left == right` failed
+  left: "owner"
+ right: "FileSquid installation"
+thread 'a_move_and_a_remove_are_each_one_linked_commit' (3770) panicked at crates/api/tests/integration/commit_linkage.rs:99:5:
+assertion `left == right` failed
+  left: "owner"
+ right: "FileSquid installation"
+thread 'a_refused_metadata_edit_is_journaled_as_before_without_a_commit' (3779) panicked at crates/api/tests/integration/commit_linkage.rs:340:5:
+assertion `left == right` failed: the upload's only
+  left: 0
+ right: 1
+thread 'an_upload_is_committed_by_the_installation_and_journaled_once_as_ocfl_commit' (3785) panicked at crates/api/tests/integration/commit_linkage.rs:99:5:
+assertion `left == right` failed
+  left: "owner"
+ right: "FileSquid installation"
+thread 'a_restore_and_a_label_carry_the_envelope_operation_id' (3782) panicked at crates/api/tests/integration/commit_linkage.rs:105:5:
+thread 'metadata_edits_carry_the_structured_message_the_user_and_a_metadata_edit_entry' (3787) panicked at crates/api/tests/integration/commit_linkage.rs:155:5:
+assertion `left == right` failed: exactly one ocfl.commit: []
+  left: 0
+ right: 1
+thread 'the_callers_message_is_the_version_label' (3791) panicked at crates/api/tests/integration/commit_linkage.rs:246:5:
+thread 'without_provenance_every_commit_still_journals_one_ocfl_commit' (3793) panicked at crates/api/tests/integration/commit_linkage.rs:226:5:
+assertion `left == right` failed: []
+  left: 0
+ right: 1
+test result: FAILED. 1 passed; 9 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+```
+
+First part:
 
 ```text
       1 error: could not compile `filesquid-api` (test "unit_journal_linkage") due to 8 previous errors
@@ -102,6 +175,99 @@ test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fin
 None.
 
 ## Raw test output
+
+Second part, `cargo test -p filesquid-api --locked --test integration_commit_linkage`:
+
+```text
+Running tests/integration/commit_linkage.rs (<target>/debug/deps/integration_commit_linkage-db6b620d207da61c)
+test a_refused_commit_is_journaled_as_before_and_never_reaches_the_history ... ok
+test a_refused_metadata_edit_is_journaled_as_before_without_a_commit ... ok
+test a_metadata_edit_entry_is_redacted ... ok
+test an_upload_is_committed_by_the_installation_and_journaled_once_as_ocfl_commit ... ok
+test a_move_and_a_remove_are_each_one_linked_commit ... ok
+test a_copy_and_a_rename_are_each_one_linked_commit ... ok
+test the_callers_message_is_the_version_label ... ok
+test without_provenance_every_commit_still_journals_one_ocfl_commit ... ok
+test a_restore_and_a_label_carry_the_envelope_operation_id ... ok
+test metadata_edits_carry_the_structured_message_the_user_and_a_metadata_edit_entry ... ok
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+```
+
+`cargo test -p filesquid-api --locked --test features` (the linkage feature and the run summary):
+
+```text
+Feature: Journal and commit linkage of the file and metadata routes
+  Scenario Outline: Each file and metadata route commit is linked to the journal
+   ✔> Given an owner's library with provenance configured for a known installation
+   ✔> And the library holds an object with an edited file and an uploaded file
+   ✔  When the owner uploads a new version of the uploaded file with a new operation ID
+   ✔  Then exactly one "ocfl.commit" entry should name that operation ID and the new object version
+   ✔  And the new version's user should be the installation and its message should name the operation ID and the kind "upload"
+   ✔  And the new version should hold its PROV-O record
+  Scenario Outline: Each file and metadata route commit is linked to the journal
+   ✔> Given an owner's library with provenance configured for a known installation
+   ✔> And the library holds an object with an edited file and an uploaded file
+   ✔  When the owner copies the uploaded file with a new operation ID
+   ✔  Then exactly one "ocfl.commit" entry should name that operation ID and the new object version
+   ✔  And the new version's user should be the installation and its message should name the operation ID and the kind "copy"
+   ✔  And the new version should hold its PROV-O record
+  Scenario Outline: Each file and metadata route commit is linked to the journal
+   ✔> Given an owner's library with provenance configured for a known installation
+   ✔> And the library holds an object with an edited file and an uploaded file
+   ✔  When the owner renames the uploaded file with a new operation ID
+   ✔  Then exactly one "ocfl.commit" entry should name that operation ID and the new object version
+   ✔  And the new version's user should be the installation and its message should name the operation ID and the kind "rename"
+   ✔  And the new version should hold its PROV-O record
+  Scenario Outline: Each file and metadata route commit is linked to the journal
+   ✔> Given an owner's library with provenance configured for a known installation
+   ✔> And the library holds an object with an edited file and an uploaded file
+   ✔  When the owner moves the edited file with a new operation ID
+   ✔  Then exactly one "ocfl.commit" entry should name that operation ID and the new object version
+   ✔  And the new version's user should be the installation and its message should name the operation ID and the kind "move"
+   ✔  And the new version should hold its PROV-O record
+  Scenario Outline: Each file and metadata route commit is linked to the journal
+   ✔> Given an owner's library with provenance configured for a known installation
+   ✔> And the library holds an object with an edited file and an uploaded file
+   ✔  When the owner removes the edited file with a new operation ID
+   ✔  Then exactly one "ocfl.commit" entry should name that operation ID and the new object version
+   ✔  And the new version's user should be the installation and its message should name the operation ID and the kind "delete"
+   ✔  And the new version should hold its PROV-O record
+  Scenario Outline: Each file and metadata route commit is linked to the journal
+   ✔> Given an owner's library with provenance configured for a known installation
+   ✔> And the library holds an object with an edited file and an uploaded file
+   ✔  When the owner restores the edited file's first version with a new operation ID
+   ✔  Then exactly one "ocfl.commit" entry should name that operation ID and the new object version
+   ✔  And the new version's user should be the installation and its message should name the operation ID and the kind "reinstate"
+   ✔  And the new version should hold its PROV-O record
+  Scenario Outline: Each file and metadata route commit is linked to the journal
+   ✔> Given an owner's library with provenance configured for a known installation
+   ✔> And the library holds an object with an edited file and an uploaded file
+   ✔  When the owner sets a statement on the uploaded file with a new operation ID
+   ✔  Then exactly one "ocfl.commit" entry should name that operation ID and the new object version
+   ✔  And the new version's user should be the installation and its message should name the operation ID and the kind "metadata.edit"
+   ✔  And the new version should hold its PROV-O record
+  Scenario: Every metadata write is journaled as metadata.edit without its value
+   ✔> Given an owner's library with provenance configured for a known installation
+   ✔> And the library holds an object with an edited file and an uploaded file
+   ✔  When the owner sets a statement on the uploaded file with a new operation ID
+   ✔  Then one "metadata.edit" entry should name that operation ID and the new object version
+   ✔  And no journal entry should contain the statement's value
+  Scenario: The caller's message is the version label
+   ✔> Given an owner's library with provenance configured for a known installation
+   ✔> And the library holds an object with an edited file and an uploaded file
+   ✔  When the owner moves the edited file with the message "Tidy up"
+   ✔  Then the new version's message should carry the label "Tidy up"
+  Scenario: A refused write is journaled as before and never reaches the history
+   ✔> Given an owner's library with provenance configured for a known installation
+   ✔> And the library holds an object with an edited file and an uploaded file
+   ✔  When the owner moves the edited file naming a stale revision
+   ✔  Then the move should be journaled once as refused with its operation ID
+   ✔  And no "ocfl.commit" entry and no new version should exist for that operation
+398 scenarios (296 passed, 102 skipped)
+1433 steps (1331 passed, 102 skipped)
+```
+
+First part:
 
 `cargo test -p filesquid-api --locked --test unit_journal_linkage --test unit_writer --test unit_version_inventory_repair --test unit_contract`:
 

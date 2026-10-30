@@ -156,23 +156,23 @@ async fn journaled_opaque(w: &mut MonitorWorld, operation: String) {
     assert_eq!(entry.outcome, Outcome::Succeeded);
     // A command answers what it made as its `result`.
     let last = w.files.last().result();
-    let expected = match last["file_id"].is_string() {
+    let (object, version) = match last["file_id"].is_string() {
         // An upload writes the file's own object, which the answer names.
-        true => [
-            LIBRARY.to_string(),
+        true => (
             last["object_id"].as_str().expect("object").to_string(),
             last["version"].as_str().expect("version").to_string(),
-        ],
-        false => [
-            LIBRARY.to_string(),
-            OBJECT.to_string(),
-            w.files.rig().head().await,
-        ],
+        ),
+        false => (OBJECT.to_string(), w.files.rig().head().await),
     };
     assert_eq!(
-        entry.target_ids, expected,
-        "library, object and new version"
+        entry.target_ids,
+        [LIBRARY.to_string(), object.clone()],
+        "library and object"
     );
+    // The new version is named by the object reference (API-S-028).
+    let reference = format!("{object}@{version}");
+    assert_eq!(entry.object_ref.as_deref(), Some(reference.as_str()));
+    assert!(entry.operation_id.is_some(), "the operation it belongs to");
     assert!(entry
         .target_ids
         .iter()
