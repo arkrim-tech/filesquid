@@ -7,214 +7,23 @@
 //! and hands nothing to the runner; every file put back is journaled once as
 //! `job.item_retried`; the items route needs `jobs.read`.
 
-use axum::body::Body;
-use axum::http::{header, Method, Request, StatusCode};
-use filesquid_api::auth::{Action, Authoriser, Policy, Principal, Resource, TokenAuthenticator};
+#[path = "../support/job_items_fixture.rs"]
+mod job_items_fixture;
+
+use axum::http::{Method, StatusCode};
+use filesquid_api::auth::{Authoriser, Principal, TokenAuthenticator};
 use filesquid_api::jobs::{
-    Job, JobControl, JobDestination, JobError, JobItem, JobItemState, JobRunner, JobState,
-    JobStore, Jobs, MemoryJobItems, MemoryJobStore, JOB_ITEM_RETRIED, JOB_REFUSED,
+    JobControl, JobError, JobItemState, JobState, JobStore, Jobs, MemoryJobItems, MemoryJobStore,
+    JOB_ITEM_RETRIED, JOB_REFUSED,
 };
-use filesquid_api::journal::{JournalEntry, JournalQuery, MemoryJournal, Outcome};
+use filesquid_api::journal::{MemoryJournal, Outcome};
 use filesquid_api::monitor::{Monitor, MonitorConfig, StaticHostChecks};
-use filesquid_api::{router, ApiState};
-use http_body_util::BodyExt;
+use filesquid_api::ApiState;
+use job_items_fixture::{
+    files, pending, Host, NoJobReads, RecordingRunner, COLLECTION, TOKEN, UPLOAD,
+};
 use serde_json::{json, Value};
-use std::sync::{Arc, Mutex};
-use tower::ServiceExt;
-
-const TOKEN: &str = "items-token";
-const UPLOAD: &str = "job-upload";
-const COLLECTION: &str = "c0ffee00-1234-4abc-8def-0123456789ab";
-
-/// A runner that records the jobs handed to it and takes none.
-#[derive(Default)]
-struct RecordingRunner {
-    handed: Mutex<Vec<String>>,
-}
-
-impl JobRunner for RecordingRunner {
-    fn resume(&self, job: &Job) -> Result<(), JobError> {
-        self.handed.lock().expect("handed").push(job.id.clone());
-        Ok(())
-    }
-}
-
-/// A policy that grants everything but reading jobs.
-struct NoJobReads;
-
-impl Policy for NoJobReads {
-    fn permits(&self, _: &Principal, action: Action, _: &Resource) -> bool {
-        action != Action::ReadJobs
-    }
-}
-
-/// A host with a job service over memory stores, the per-file port and a recording runner
-/// for the `import` kind.
-struct Host {
-    state: ApiState,
-    monitor: Monitor,
-    store: Arc<MemoryJobStore>,
-    items: Arc<MemoryJobItems>,
-    runner: Arc<RecordingRunner>,
-}
-
-impl Host {
-    fn start() -> Self {
-        Self::with_policy(Arc::new(filesquid_api::auth::HostPolicy))
-    }
-
-    fn with_policy(policy: Arc<dyn Policy>) -> Self {
-        let state = ApiState::new();
-        let owner = TokenAuthenticator::new(TOKEN, Principal::Owner);
-        state.install_authoriser(Authoriser::new(Arc::new(owner), policy));
-        let monitor = Monitor::start(
-            Arc::new(MemoryJournal::new("host-a")),
-            Arc::new(StaticHostChecks::healthy()),
-            MonitorConfig::new("host-a"),
-            state.events.clone(),
-        );
-        state.install_monitor(monitor.clone());
-        let store = Arc::new(MemoryJobStore::new());
-        let items = Arc::new(MemoryJobItems::new());
-        let jobs = Jobs::new(
-            store.clone(),
-            monitor.journal(),
-            monitor.registry().clone(),
-            "launch",
-        )
-        .with_events(state.events.clone())
-        .with_items(items.clone());
-        assert!(state.install_jobs(Arc::new(jobs)));
-        let runner = Arc::new(RecordingRunner::default());
-        assert!(state.install_job_runner("import", runner.clone()));
-        Self {
-            state,
-            monitor,
-            store,
-            items,
-            runner,
-        }
-    }
-
-    /// Store a pending upload job with three files: one copied, one copying, one failed.
-    fn upload_job(&self, id: &str, state: JobState, control: Option<JobControl>) {
-        let mut job = pending(id);
-        job.state = state;
-        job.control = control;
-        self.store.insert(&job).expect("job");
-        let destination = JobDestination {
-            collection_id: COLLECTION.into(),
-            folder: Some("Site photos".into()),
-        };
-        self.items.put(id, Some(destination), files());
-    }
-
-    async fn send(&self, method: Method, path: &str, owner: bool) -> (StatusCode, Value) {
-        let mut request = Request::builder().method(method).uri(path);
-        if owner {
-            request = request.header(header::AUTHORIZATION, format!("Bearer {TOKEN}"));
-        }
-        let request = request.body(Body::empty()).expect("request");
-        let response = router(self.state.clone())
-            .oneshot(request)
-            .await
-            .expect("answer");
-        let status = response.status();
-        let bytes = response
-            .into_body()
-            .collect()
-            .await
-            .expect("body")
-            .to_bytes();
-        (
-            status,
-            serde_json::from_slice(&bytes).unwrap_or(Value::Null),
-        )
-    }
-
-    async fn get(&self, path: &str) -> (StatusCode, Value) {
-        self.send(Method::GET, path, true).await
-    }
-
-    async fn post(&self, path: &str) -> (StatusCode, Value) {
-        self.send(Method::POST, path, true).await
-    }
-
-    fn journaled(&self, operation: &str) -> Vec<JournalEntry> {
-        self.monitor.journal().flush();
-        let query = JournalQuery {
-            operation: Some(operation.to_string()),
-            ..JournalQuery::default()
-        };
-        self.monitor.store().query(&query).expect("query").entries
-    }
-
-    fn journal_text(&self) -> String {
-        self.monitor.journal().flush();
-        let entries = self
-            .monitor
-            .store()
-            .query(&JournalQuery::default())
-            .expect("query")
-            .entries;
-        serde_json::to_string(&entries).expect("json")
-    }
-
-    fn states(&self, job: &str) -> Vec<JobItemState> {
-        self.items.all(job).iter().map(|i| i.state).collect()
-    }
-
-    fn handed(&self) -> Vec<String> {
-        self.runner.handed.lock().expect("handed").clone()
-    }
-}
-
-/// A pending `import` job `id`. Pure.
-fn pending(id: &str) -> Job {
-    Job {
-        id: id.into(),
-        kind: "import".into(),
-        operation_id: format!("op-{id}"),
-        source: "/Volumes/EOS_DIGITAL".into(),
-        state: JobState::Pending,
-        checkpoint: None,
-        done: 1,
-        total: Some(3),
-        attempts: 1,
-        fence: 1,
-        holder: None,
-        lease_expires_ms: None,
-        created_ms: 1_760_000_000_000,
-        updated_ms: 1_760_000_000_000,
-        error_code: None,
-        control: None,
-        result: None,
-    }
-}
-
-/// Three files of an upload: copied, copying and failed.
-fn files() -> Vec<JobItem> {
-    let file = |n: u32, name: &str, state: JobItemState, done: u64, code: Option<&str>| JobItem {
-        item_id: format!("file-{n}"),
-        name: name.into(),
-        folder: Some("Site photos".into()),
-        state,
-        bytes_done: done,
-        bytes_total: 6_400_000,
-        error_code: code.map(str::to_string),
-    };
-    vec![
-        file(1, "IMG_4101.JPG", JobItemState::Copied, 6_400_000, None),
-        file(2, "IMG_4102.CR3", JobItemState::Copying, 3_968_000, None),
-        file(
-            3,
-            "IMG_4099.JPG",
-            JobItemState::Failed,
-            0,
-            Some("source_changed"),
-        ),
-    ]
-}
+use std::sync::Arc;
 
 #[tokio::test]
 async fn an_upload_job_s_view_and_listing_carry_its_destination() {

@@ -6,7 +6,9 @@
 
 use axum::http::Method;
 use filesquid_api::imports::{
-    ImportAnswer, ImportOutcome, ImportRequest, ImportSource, ImportStartError, ImportStarter,
+    ImportAnswer, ImportDestination, ImportOutcome, ImportPlanView, ImportRequest, ImportSource,
+    ImportStartError, ImportStarter, PlanBook, PlanDiscarded, PlanFacts, PlanItem, PlanItemPage,
+    StartDecision,
 };
 use filesquid_api::local_library::choice::{
     ChoiceOutcome, ChoicePurpose, ChooseError, LocationChoice, LocationChoiceRequest,
@@ -101,22 +103,130 @@ pub async fn install(state: &ApiState, monitor: &Monitor) {
     commit_w010(&sample).await;
     assert!(state.install_libraries(Arc::new(commands)));
     assert!(state.install_location_chooser(Arc::new(PickingChooser)));
-    assert!(state.install_import_starter(Arc::new(StartingImports)));
+    assert!(state.install_import_starter(Arc::new(PlanningImports::new())));
 }
 
-/// An import dialog in which the owner always picks something, starting job `job-1`.
-struct StartingImports;
+/// The open plans of the contract's starter: one per plan route, so starting or discarding
+/// one cannot refuse another. The sample request plans a fresh one.
+const SAMPLE_PLANS: [&str; 3] = ["sample-plan", "sample-plan-items", "sample-plan-start"];
 
-impl ImportStarter for StartingImports {
-    fn start(
+/// An import dialog in which the owner always picks something: the plan of API-S-036
+/// **Review** over a [`PlanBook`], its job `job-1`.
+struct PlanningImports {
+    book: PlanBook,
+}
+
+impl PlanningImports {
+    /// The starter with [`SAMPLE_PLANS`] open.
+    fn new() -> Self {
+        let book = PlanBook::new();
+        for plan in SAMPLE_PLANS {
+            let mut request = import_request();
+            request.envelope = filesquid_core::CommandEnvelope::new(
+                filesquid_core::OperationId::new(format!("op-{plan}")).expect("op"),
+                filesquid_core::ExpectedRevision::new("r1").expect("revision"),
+                request.envelope.scope().clone(),
+            );
+            book.open(
+                plan,
+                &request,
+                plan_facts(),
+                plan_items(),
+                "fp",
+                Self::now(),
+            );
+        }
+        Self { book }
+    }
+
+    fn now() -> i64 {
+        filesquid_api::journal::now_ms()
+    }
+}
+
+impl ImportStarter for PlanningImports {
+    fn replay(&self, request: &ImportRequest) -> Result<Option<ImportAnswer>, ImportStartError> {
+        self.book.replay(request, Self::now())
+    }
+
+    fn plan(
         &self,
         _actor: &str,
         request: &ImportRequest,
     ) -> Result<ImportAnswer, ImportStartError> {
-        Ok(ImportAnswer::started(
-            request.envelope.operation_id(),
-            "job-1".to_string(),
+        Ok(self.book.open(
+            "plan-1",
+            request,
+            plan_facts(),
+            plan_items(),
+            "fp",
+            Self::now(),
         ))
+    }
+
+    fn start_plan(&self, _actor: &str, plan_id: &str) -> Result<ImportAnswer, ImportStartError> {
+        match self.book.starting(plan_id, "fp", Self::now())? {
+            StartDecision::Started(answer) => Ok(answer),
+            StartDecision::Open(_, _) => self.book.started(plan_id, "job-1"),
+        }
+    }
+
+    fn discard(&self, _actor: &str, plan_id: &str) -> Result<(), ImportStartError> {
+        self.book.discard(plan_id, Self::now())
+    }
+
+    fn plan_items(
+        &self,
+        plan_id: &str,
+        cursor: Option<&str>,
+        limit: usize,
+    ) -> Result<PlanItemPage, ImportStartError> {
+        self.book.items(plan_id, cursor, limit, Self::now())
+    }
+}
+
+/// What the sample plan found.
+fn plan_facts() -> PlanFacts {
+    PlanFacts {
+        source_volume: Some("EOS_DIGITAL".into()),
+        files_found: 214,
+        files_new: 196,
+        files_present: 18,
+        bytes_to_copy: 3_100_000_000,
+        names_numbered: 1,
+        free_bytes_after: Some(408_900_000_000),
+        staging_limit_bytes: 10_737_418_240,
+    }
+}
+
+/// The sample plan's files.
+fn plan_items() -> Vec<PlanItem> {
+    vec![
+        PlanItem {
+            item_id: "0b6f6a58-5c1d-4b5e-9f3e-2a7d8c9e0f11".into(),
+            name: "IMG_4102.CR3".into(),
+            bytes: 24_800_000,
+            present: false,
+            numbered: true,
+        },
+        PlanItem {
+            item_id: "0b6f6a58-5c1d-4b5e-9f3e-2a7d8c9e0f12".into(),
+            name: "IMG_4021.JPG".into(),
+            bytes: 5_900_000,
+            present: true,
+            numbered: false,
+        },
+    ]
+}
+
+/// The sample plan as the import route answers it.
+fn sample_plan() -> ImportPlanView {
+    ImportPlanView {
+        plan_id: "sample-plan".into(),
+        source: ImportSource::Folder,
+        destination: ImportDestination::of(&import_request()),
+        facts: plan_facts(),
+        expires: "2026-10-23T12:00:00.000Z".into(),
     }
 }
 
@@ -205,6 +315,15 @@ pub fn sample(method: &Method, path: &str) -> Option<(String, SampleBody)> {
         ("POST", "/api/v1/libraries/rebuilds") => json!({ "library_id": LIBRARY }),
         ("POST", "/api/v1/libraries/location-choices") => json!({ "purpose": "create" }),
         ("POST", "/api/v1/imports") => serde_json::to_value(import_request()).expect("json"),
+        ("GET", "/api/v1/imports/{plan_id}/items") => {
+            return Some(("/api/v1/imports/sample-plan-items/items".to_string(), None));
+        }
+        ("POST", "/api/v1/imports/{plan_id}/start") => {
+            return Some(("/api/v1/imports/sample-plan-start/start".to_string(), None));
+        }
+        ("DELETE", "/api/v1/imports/{plan_id}") => {
+            return Some(("/api/v1/imports/sample-plan".to_string(), None));
+        }
         ("GET", "/api/v1/libraries/repair-candidates") => {
             return Some((format!("{path}?library_id={LIBRARY}"), None));
         }
@@ -318,9 +437,58 @@ pub fn samples() -> Vec<(&'static str, Vec<Value>)> {
         ),
         (
             "ImportOutcome",
-            [ImportOutcome::Started, ImportOutcome::Cancelled]
-                .map(to_value)
-                .to_vec(),
+            [
+                ImportOutcome::Planned,
+                ImportOutcome::Started,
+                ImportOutcome::Cancelled,
+            ]
+            .map(to_value)
+            .to_vec(),
+        ),
+        (
+            "ImportDestination",
+            vec![
+                to_value(ImportDestination::of(&import_request())),
+                to_value(ImportDestination {
+                    collection_id: IMPORT_COLLECTION.into(),
+                    folder: Some("trips/2024".into()),
+                }),
+            ],
+        ),
+        (
+            "ImportPlan",
+            vec![
+                to_value(sample_plan()),
+                to_value(ImportPlanView {
+                    facts: PlanFacts {
+                        source_volume: None,
+                        free_bytes_after: None,
+                        ..plan_facts()
+                    },
+                    ..sample_plan()
+                }),
+            ],
+        ),
+        ("PlanItem", plan_items().iter().map(to_value).collect()),
+        (
+            "PlanItemPage",
+            vec![
+                to_value(PlanItemPage {
+                    items: plan_items(),
+                    next_cursor: Some("2".into()),
+                }),
+                to_value(PlanItemPage {
+                    items: Vec::new(),
+                    next_cursor: None,
+                }),
+            ],
+        ),
+        (
+            "PlanDiscarded",
+            vec![to_value(PlanDiscarded {
+                plan_id: "sample-plan".into(),
+                discarded: true,
+            })],
         ),
         (
             "ImportRequest",
@@ -336,6 +504,10 @@ pub fn samples() -> Vec<(&'static str, Vec<Value>)> {
         (
             "ImportAnswer",
             vec![
+                to_value(ImportAnswer::planned(
+                    import_request().envelope.operation_id(),
+                    sample_plan(),
+                )),
                 to_value(ImportAnswer::started(
                     import_request().envelope.operation_id(),
                     "job-1".into(),

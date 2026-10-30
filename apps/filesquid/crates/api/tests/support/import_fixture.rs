@@ -7,7 +7,10 @@
 use axum::body::Body;
 use axum::http::{header, Method, Request, StatusCode};
 use filesquid_api::auth::{Authoriser, LaunchToken};
-use filesquid_api::imports::{ImportAnswer, ImportRequest, ImportStartError, ImportStarter};
+use filesquid_api::imports::{
+    ImportAnswer, ImportRequest, ImportStartError, ImportStarter, PlanBook, PlanFacts, PlanItem,
+    PlanItemPage, StartDecision,
+};
 use filesquid_api::journal::{JournalEntry, JournalQuery, MemoryJournal, Outcome};
 use filesquid_api::library::{
     CatalogChange, CatalogCommit, LibraryCatalog, LibraryRecord, MemoryCatalog,
@@ -20,6 +23,7 @@ use filesquid_api::{router, ApiState};
 use filesquid_core::{Collection, CollectionId, Library, LibraryId, RepositoryId};
 use http_body_util::BodyExt;
 use serde_json::{json, Value};
+use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use tower::ServiceExt;
 
@@ -233,4 +237,140 @@ pub fn body_of(operation: &str, scope: &str) -> Value {
 /// The scope of [`LIBRARY`].
 pub fn scope() -> String {
     format!("library:{LIBRARY}")
+}
+
+/// The paths the fake dialog "picks": they stay inside the starter and must never leave it.
+pub const PICKED: [&str; 3] = [
+    "/Volumes/EOS_DIGITAL/DCIM/IMG_4102.CR3",
+    "/Volumes/EOS_DIGITAL/DCIM/IMG_4102.JPG",
+    "/Volumes/EOS_DIGITAL/DCIM/IMG_4021.JPG",
+];
+
+/// A starter with the review: a scripted dialog, plans kept in a [`PlanBook`], a clock the
+/// tests advance and a source fingerprint the tests change.
+pub struct PlanningStarter {
+    pub book: PlanBook,
+    clock: AtomicI64,
+    fingerprint: Mutex<String>,
+    /// What the dialog answers, in order: `true` picks [`PICKED`], `false` cancels.
+    dialog: Mutex<Vec<bool>>,
+    dialogs: AtomicUsize,
+    plans: AtomicUsize,
+    pub jobs: AtomicUsize,
+}
+
+impl PlanningStarter {
+    pub fn new(dialog: Vec<bool>) -> Arc<Self> {
+        Arc::new(Self {
+            book: PlanBook::new(),
+            clock: AtomicI64::new(1_760_000_000_000),
+            fingerprint: Mutex::new("fp-1".into()),
+            dialog: Mutex::new(dialog),
+            dialogs: AtomicUsize::new(0),
+            plans: AtomicUsize::new(0),
+            jobs: AtomicUsize::new(0),
+        })
+    }
+
+    pub fn now(&self) -> i64 {
+        self.clock.load(Ordering::SeqCst)
+    }
+
+    pub fn advance(&self, ms: i64) {
+        self.clock.fetch_add(ms, Ordering::SeqCst);
+    }
+
+    pub fn change_source(&self) {
+        *self.fingerprint.lock().expect("fingerprint") = "fp-2".into();
+    }
+
+    pub fn dialogs_shown(&self) -> usize {
+        self.dialogs.load(Ordering::SeqCst)
+    }
+
+    /// The plan of the picked files: counts and sizes, never a path.
+    pub fn facts() -> PlanFacts {
+        PlanFacts {
+            source_volume: Some("EOS_DIGITAL".into()),
+            files_found: 3,
+            files_new: 2,
+            files_present: 1,
+            bytes_to_copy: 31_200_000,
+            names_numbered: 1,
+            free_bytes_after: Some(408_900_000_000),
+            staging_limit_bytes: 10 * 1024 * 1024 * 1024,
+        }
+    }
+
+    /// The planned files, by base name.
+    pub fn items() -> Vec<PlanItem> {
+        PICKED
+            .iter()
+            .enumerate()
+            .map(|(n, path)| PlanItem {
+                item_id: format!("file-{n}"),
+                name: path.rsplit('/').next().expect("name").to_string(),
+                bytes: [24_800_000, 6_400_000, 5_900_000][n],
+                present: n == 2,
+                numbered: n == 0,
+            })
+            .collect()
+    }
+}
+
+impl ImportStarter for PlanningStarter {
+    fn replay(&self, request: &ImportRequest) -> Result<Option<ImportAnswer>, ImportStartError> {
+        self.book.replay(request, self.now())
+    }
+
+    fn plan(
+        &self,
+        _actor: &str,
+        request: &ImportRequest,
+    ) -> Result<ImportAnswer, ImportStartError> {
+        self.dialogs.fetch_add(1, Ordering::SeqCst);
+        let mut dialog = self.dialog.lock().expect("dialog");
+        let picked = dialog
+            .first()
+            .copied()
+            .ok_or(ImportStartError::Unavailable)?;
+        dialog.remove(0);
+        if !picked {
+            return Ok(self.book.cancelled(request));
+        }
+        let n = self.plans.fetch_add(1, Ordering::SeqCst) + 1;
+        let fingerprint = self.fingerprint.lock().expect("fingerprint").clone();
+        Ok(self.book.open(
+            &format!("plan-{n}"),
+            request,
+            Self::facts(),
+            Self::items(),
+            &fingerprint,
+            self.now(),
+        ))
+    }
+
+    fn start_plan(&self, _actor: &str, plan_id: &str) -> Result<ImportAnswer, ImportStartError> {
+        let fingerprint = self.fingerprint.lock().expect("fingerprint").clone();
+        match self.book.starting(plan_id, &fingerprint, self.now())? {
+            StartDecision::Started(answer) => Ok(answer),
+            StartDecision::Open(_, _) => {
+                let n = self.jobs.fetch_add(1, Ordering::SeqCst) + 1;
+                self.book.started(plan_id, &format!("job-{n}"))
+            }
+        }
+    }
+
+    fn discard(&self, _actor: &str, plan_id: &str) -> Result<(), ImportStartError> {
+        self.book.discard(plan_id, self.now())
+    }
+
+    fn plan_items(
+        &self,
+        plan_id: &str,
+        cursor: Option<&str>,
+        limit: usize,
+    ) -> Result<PlanItemPage, ImportStartError> {
+        self.book.items(plan_id, cursor, limit, self.now())
+    }
 }
