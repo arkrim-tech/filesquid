@@ -25,7 +25,13 @@ function row(record: Measurement): string {
     : f
       ? [ms(f.p50), "", ms(f.p95), ms(f.p99), ms(f.max)]
       : ["", "", "", "", ""];
-  return `| ${record.id} | ${n} | ${record.warmup} | ${cells.join(" | ")} | ${record.budget} | ${verdict} |`;
+  return `| ${record.id} | ${n} | ${record.warmup} | ${cells.join(" | ")} | ${valueOf(record)} | ${record.budget} | ${verdict} |`;
+}
+
+/** The measured scalar of a single-value record (DOM rows, a height, heap growth), else empty. */
+function valueOf(record: Measurement): string {
+  const scalar = record.notes["value"];
+  return record.summary || record.frames || scalar === undefined ? "" : String(scalar);
 }
 
 /**
@@ -46,8 +52,8 @@ export default function globalTeardown(): void {
   ) as Record<string, unknown>;
   environment["loadAfter"] = loadavg().map((load) => Math.round(load * 100) / 100);
   const head = [
-    "| measurement | n | warm-up | p50 | p90 | p95 | p99 | max | budget | verdict |",
-    "|---|---|---|---|---|---|---|---|---|---|",
+    "| measurement | n | warm-up | p50 | p90 | p95 | p99 | max | value | budget | verdict |",
+    "|---|---|---|---|---|---|---|---|---|---|---|",
   ];
   const lines = [
     "Performance summary (milliseconds; frame rows are frame intervals)",

@@ -277,6 +277,33 @@ function sizeOf(i: number, random: () => number): number {
   return base;
 }
 
+/**
+ * The folded form of a name or a query term (API-S-012): NFC, lower case, NFC again, so
+ * canonically equivalent Unicode compares equal.
+ */
+export function fold(text: string): string {
+  return text.normalize("NFC").toLowerCase().normalize("NFC");
+}
+
+/**
+ * The words of a search query, folded. The API refuses what it cannot answer instead of
+ * ignoring it: an operator (`colour:blue`), an open quote and an empty query are all 400
+ * `invalid_request`.
+ *
+ * @param q The query text.
+ * @returns The folded words.
+ * @throws FixtureError 400 `invalid_request`.
+ */
+function queryWords(q: string): string[] {
+  const words = fold(q.replace(/"/g, " "))
+    .split(/\s+/)
+    .filter((word) => word !== "");
+  const openQuote = (q.match(/"/g) ?? []).length % 2 === 1;
+  const refused = words.length === 0 || openQuote || words.some((word) => word.includes(":"));
+  if (refused) throw new FixtureError(400, "invalid_request");
+  return words;
+}
+
 /** The entries of `count` files, named under `prefix` and `salt`. */
 function fileEntries(prefix: string, salt: string, count: number, seed: number): Entry[] {
   const random = seeded(seed);
@@ -286,7 +313,7 @@ function fileEntries(prefix: string, salt: string, count: number, seed: number):
     return {
       key: `${prefix}-${String(i).padStart(8, "0")}`,
       name,
-      folded: name.toLowerCase(),
+      folded: fold(name),
       folder: false,
       mediaType: mediaTypeOf(extension),
       size: sizeOf(i, random),
@@ -309,7 +336,7 @@ function folderEntries(prefix: string, count: number, name: (j: number) => strin
     return {
       key: `${prefix}-${j}`,
       name: label,
-      folded: label.toLowerCase(),
+      folded: fold(label),
       folder: true,
       mediaType: "",
       size: 0,
@@ -381,6 +408,16 @@ function offsetOf(cursor: string | null, binding: string): number {
   const offset = Number(cursor.slice(0, split));
   if (!Number.isInteger(offset) || offset < 0) throw new FixtureError(400, "invalid_request");
   return offset;
+}
+
+/**
+ * The node a search runs in: the repository and the library search the big collection (the only
+ * place the fixture keeps files besides the numbered collections); any other node searches its
+ * own scope.
+ */
+function searchedNode(node: string | undefined): string {
+  if (node === undefined || node === REPOSITORY_NODE || node === LIBRARY_NODE) return BIG_NODE;
+  return node;
 }
 
 /** The seeded catalogue of one profile and the host's answers over it. */
@@ -469,7 +506,7 @@ export class Catalogue {
       params.folders,
       params.filter,
     ]);
-    const wanted = params.filter.toLowerCase();
+    const wanted = fold(params.filter);
     const all = this.ordered(params.node, scope, params);
     const entries = wanted === "" ? all : all.filter((entry) => entry.folded.includes(wanted));
     const start = offsetOf(cursor, binding);
@@ -489,12 +526,12 @@ export class Catalogue {
       .map((row) => (row.kind === "file" ? row.display_name : row.name));
   }
 
-  /** The files of the big view that contain every term, in document order. */
-  private matching(terms: readonly string[]): readonly Entry[] {
-    const key = terms.join(" ");
+  /** The files and folders of a searched node that contain every term, in document order. */
+  private matching(node: string, terms: readonly string[]): readonly Entry[] {
+    const key = `${node}|${terms.join(" ")}`;
     const cached = this.matches.get(key);
     if (cached) return cached;
-    const found = this.bigFiles.filter((entry) =>
+    const found = this.scopeOf(node).entries.filter((entry) =>
       terms.every((term) => entry.folded.includes(term)),
     );
     this.matches.set(key, found);
@@ -514,22 +551,24 @@ export class Catalogue {
    */
   searchPage(params: SearchParams, cursor: string | null, limit: number): RowPage {
     checkLimit(limit);
-    const terms = params.q
-      .toLowerCase()
-      .split(/\s+/)
-      .filter((term) => term !== "" && !term.includes(":"));
+    const terms = queryWords(params.q);
     const binding = JSON.stringify([
       params.q,
       params.node ?? null,
       params.sort,
       params.direction ?? null,
+      params.folders ?? null,
     ]);
-    const found = this.matching(terms);
+    const found = this.matching(searchedNode(params.node), terms);
     const direction = params.direction ?? "ascending";
-    const ranked =
+    const sorted =
       params.sort === "relevance"
         ? found
         : [...found].sort((a, b) => compareEntries(a, b, params.sort, direction));
+    const ranked =
+      params.folders === "mixed"
+        ? sorted
+        : [...sorted.filter((entry) => entry.folder), ...sorted.filter((entry) => !entry.folder)];
     const start = offsetOf(cursor, binding);
     const end = Math.min(start + limit, ranked.length);
     return {

@@ -48,6 +48,12 @@ export interface Counts {
   readonly warmup: number;
   /** Samples kept. */
   readonly count: number;
+  /**
+   * How long a sample may wait for its predicate, when a case needs longer than the default
+   * (the background-event case: a reload of the navigation tree can queue a view request for
+   * seconds, and that wait is the measurement, not a reason to stop the run).
+   */
+  readonly timeoutMs?: number;
 }
 
 /** The warm-up and sample size of the declared profile. */
@@ -128,16 +134,22 @@ export async function keyboardClass(session: Session, counts: Counts = WARM): Pr
 /**
  * Sort by Size, Modified and Name in turn, each a new column in its default direction.
  *
- * @param session - A session opened with {@link FILES_FIRST}.
+ * @param session - A session opened with {@link FILES_FIRST} (or the default preferences, with
+ *   `folders` set to `on_top`).
  * @param counts - Warm-up and sample sizes.
+ * @param folders - The folder placement the session's preferences give.
  * @returns The feedback (the column head carries `aria-sort`) and result (the host's new order
  *   is painted) times.
  */
-export async function sortClass(session: Session, counts: Counts = WARM): Promise<ClassResult> {
+export async function sortClass(
+  session: Session,
+  counts: Counts = WARM,
+  folders: "mixed" | "on_top" = "mixed",
+): Promise<ClassResult> {
   const columns = ["size", "modified", "name"] as const;
   const query = (i: number): ViewParams => {
     const sort = columns[i % 3] as (typeof columns)[number];
-    return { ...BIG_QUERY, sort, direction: defaultDirection(sort), folders: "mixed" };
+    return { ...BIG_QUERY, sort, direction: defaultDirection(sort), folders };
   };
   const result = await runSamples({
     session,
@@ -233,6 +245,7 @@ export async function folderClass(session: Session, counts: Counts = WARM): Prom
   const { catalogue } = session;
   const parentNames = names(session, BIG_QUERY);
   const opened = new Set<string>();
+  const timeoutMs = counts.timeoutMs ?? BUDGETS.sampleTimeoutMs;
   let current = { node: "", title: "", names: [] as string[] };
   const result = await runSamples({
     session,
@@ -242,10 +255,7 @@ export async function folderClass(session: Session, counts: Counts = WARM): Prom
       if (i % 2 !== 0) return;
       const row = i / 2;
       await session.probe.scrollTo(SCROLLER, row * ROW_PX);
-      const link = await session.probe.described(
-        `${rowAt(row)} >> a.name`,
-        BUDGETS.sampleTimeoutMs,
-      );
+      const link = await session.probe.described(`${rowAt(row)} >> a.name`, timeoutMs);
       const node = decodeURIComponent((link.href ?? "").split("/").at(-1) ?? "");
       opened.add(node);
       current = { node, title: link.text, names: catalogue.firstNames({ ...BIG_QUERY, node }, 3) };
@@ -258,7 +268,7 @@ export async function folderClass(session: Session, counts: Counts = WARM): Prom
         events: ["click"],
         ack: heading,
         ready: { k: "all", of: [heading, firstRows(going ? current.names : parentNames)] },
-        timeoutMs: BUDGETS.sampleTimeoutMs,
+        timeoutMs,
       };
     },
     trigger: (i) =>

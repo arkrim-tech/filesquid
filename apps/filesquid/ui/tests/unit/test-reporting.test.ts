@@ -118,6 +118,9 @@ describe("production artifact suite", () => {
     expect(pkg.scripts["pretest:perf"]).toContain(
       "tests/allure-results/playwright-performance-junit.xml",
     );
+    // The performance run writes its Allure results into the shared Playwright directory, so a
+    // standalone run clears it too, or it would report the results of an earlier suite.
+    expect(pkg.scripts["pretest:perf"]).toMatch(/tests\/allure-results\/playwright(\s|$)/);
   });
 
   it("keeps the performance specs out of the other two Playwright runs", () => {

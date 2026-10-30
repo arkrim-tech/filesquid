@@ -10,12 +10,12 @@
  *   same classes run N = 100 and are reported, not asserted: the budgets are for the declared
  *   reference machine, and a slower machine's numbers must stay visible, not vanish.
  */
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page, type TestInfo } from "@playwright/test";
 import { BACKGROUND_EVENTS_PER_SECOND, BUDGETS, PRESSURE_CPU_RATE } from "./budgets";
 import { FILES_FIRST, folderClass, selectClass, sortClass, WARM } from "./browse-classes";
 import { Catalogue, PROFILES } from "./fixtures";
 import { devtools, openView } from "./harness";
-import { assertBudgets, latency, publish, type Measurement } from "./report";
+import { assertBudgets, latency, publish, treeGap, type Measurement } from "./report";
 
 /** A record of one measurement; asserted when `gated`, reported otherwise. */
 function record(
@@ -85,20 +85,16 @@ test("background work: select and open-folder keep their budgets while events st
 });
 
 test("background work: opening folders under the same stream", async ({ page }, info) => {
-  // KNOWN GAP, the same cause as the idle open-folder class in 20-browse.perf.spec.ts (owner
-  // decision needed, Task UI-F3.1 Walkthrough, Finding 4): each navigation event draws the
-  // 10,000-node tree again. The budgets stay assertions; Playwright turns red when they pass.
-  test.fail(
-    true,
-    "Large catalog: the 10,000-node navigation tree keeps open under events above 100 ms",
-  );
   const session = await openView(page, new Catalogue(PROFILES.large));
   const timer = setInterval(
     () => session.host.pushNavigationChange(),
     1000 / BACKGROUND_EVENTS_PER_SECOND,
   );
   try {
-    const folders = await folderClass(session);
+    // A reload of the navigation tree can queue a view request for seconds (the page opens six
+    // connections to the host at most); that wait is what is measured, so a sample may take up
+    // to 20 s before the run stops.
+    const folders = await folderClass(session, { ...WARM, timeoutMs: 20_000 });
     const records = [
       record(
         "background-open-folder-feedback-large",
@@ -116,12 +112,17 @@ test("background work: opening folders under the same stream", async ({ page }, 
       ),
     ];
     await publish(info, records);
-    assertBudgets(records);
+    expect(session.errors).toEqual([]);
+    expect(session.host.unserved).toEqual([]);
+    // The same known gap as the idle open-folder class (Finding 4): each navigation event draws
+    // the 10,000-node tree again. Every other assertion above stays strict.
+    assertBudgets(
+      records,
+      treeGap("background-open-folder-feedback-large", "background-open-folder-result-large"),
+    );
   } finally {
     clearInterval(timer);
   }
-  expect(session.errors).toEqual([]);
-  expect(session.host.unserved).toEqual([]);
 });
 
 test("resource pressure: select, sort and open-folder at 4x CPU slowdown are reported", async ({
@@ -173,5 +174,52 @@ test("resource pressure: select, sort and open-folder at 4x CPU slowdown are rep
   }
   expect(session.errors).toEqual([]);
   expect(session.host.unserved).toEqual([]);
-  void folderClass;
+  await pressureFolders(page, counts, info);
 });
+
+/**
+ * The folder class under the same slowdown, in a second page opened with the default
+ * preferences (folders on top, which opening a folder needs); reported, not asserted.
+ */
+async function pressureFolders(
+  page: Page,
+  counts: { warmup: number; count: number },
+  info: TestInfo,
+): Promise<void> {
+  const other = await page.context().newPage();
+  try {
+    const session = await openView(other, new Catalogue(PROFILES.large));
+    const cdp = await devtools(other);
+    await cdp.send("Emulation.setCPUThrottlingRate", { rate: PRESSURE_CPU_RATE });
+    const folders = await folderClass(session, counts);
+    await cdp.send("Emulation.setCPUThrottlingRate", { rate: 1 });
+    const records = [
+      record(
+        "pressure-open-folder-feedback-large",
+        "Open folder (title) at 4x CPU slowdown, Large catalog",
+        folders.open.ack,
+        false,
+        counts.warmup,
+      ),
+      record(
+        "pressure-open-folder-result-large",
+        "Open folder (rows painted) at 4x CPU slowdown, Large catalog",
+        folders.open.ready,
+        false,
+        counts.warmup,
+      ),
+      record(
+        "pressure-back-result-large",
+        "Back (rows painted) at 4x CPU slowdown, Large catalog",
+        folders.back.ready,
+        false,
+        counts.warmup,
+      ),
+    ];
+    await publish(info, records);
+    expect(session.errors).toEqual([]);
+    expect(session.host.unserved).toEqual([]);
+  } finally {
+    await other.close();
+  }
+}

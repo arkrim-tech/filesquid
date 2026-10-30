@@ -7,6 +7,7 @@
  * which a predicate first held, an upper bound of the moment the change was presented.
  * Predicates are plain data, so the page needs no `eval`.
  */
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import type { Page } from "@playwright/test";
 
@@ -121,10 +122,10 @@ export class Probe {
    * @returns The Node side.
    */
   static async install(page: Page, armAtStart: ArmSpec | null = null): Promise<Probe> {
-    await page.addInitScript((spec) => {
-      if (spec) window.__fsProbeArm = spec;
-    }, armAtStart);
-    await page.addInitScript({ path: PAGE_SCRIPT });
+    // One init script, not two: Playwright does not define the order of several, and the probe
+    // must find the spec that arms a cold load when it starts.
+    const arm = armAtStart ? `window.__fsProbeArm = ${JSON.stringify(armAtStart)};\n` : "";
+    await page.addInitScript({ content: arm + readFileSync(PAGE_SCRIPT, "utf8") });
     return new Probe(page);
   }
 
@@ -244,13 +245,17 @@ export class Probe {
    * @throws Error when nothing appeared in time.
    */
   async described(at: string, timeoutMs: number): Promise<Described> {
-    for (let waited = 0; waited <= timeoutMs; waited += 20) {
+    const deadline = Date.now() + timeoutMs;
+    let left = timeoutMs;
+    while (left > 0) {
       const found = await this.page.evaluate(
         (path) => window.__fsProbe?.describe(path) ?? null,
         at,
       );
       if (found) return found;
-      await this.page.waitForTimeout(20);
+      left = deadline - Date.now();
+      // The last sleep is cut to the time left, so the wait never runs past the timeout.
+      if (left > 0) await this.page.waitForTimeout(Math.min(20, left));
     }
     throw new Error(`nothing appeared at ${at} within ${timeoutMs} ms`);
   }

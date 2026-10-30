@@ -4,7 +4,7 @@
  * head, only the versions that changed a file, and each distinct content counted once.
  */
 import { describe, expect, it } from "vitest";
-import { MemoryFileSource } from "../../src/files/memory-source";
+import { ContentIdentity, MemoryFileSource } from "../../src/files/memory-source";
 import type { FileRef } from "../../src/files/model";
 
 const OBJECT = { library_id: "lib", object_id: "obj" };
@@ -63,6 +63,18 @@ describe("MemoryFileSource history reads", () => {
     expect(first.length).toBeLessThanOrEqual(64);
     expect(await digestOf(one)).toBe(first);
     expect(await digestOf(two)).not.toBe(first);
+  });
+
+  it("never gives two different contents one digest, even when their hash sums collide", () => {
+    // The digest is the key `historySize` counts distinct contents by, so a collision of the
+    // cheap sum must not merge two contents: the identity checks the bytes when a sum repeats.
+    const identity = new ContentIdentity(() => "same-sum");
+    const a = new Uint8Array([1, 2, 3]);
+    const b = new Uint8Array([3, 2, 1]);
+    const first = identity.digestOf(a);
+    expect(identity.digestOf(b)).not.toBe(first);
+    expect(identity.digestOf(new Uint8Array([1, 2, 3]))).toBe(first);
+    expect(identity.digestOf(b)).toBe(identity.digestOf(new Uint8Array([3, 2, 1])));
   });
 
   it("counts each distinct content of the history once", async () => {

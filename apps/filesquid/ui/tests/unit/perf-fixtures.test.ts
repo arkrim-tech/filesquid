@@ -12,11 +12,13 @@ import {
   BIG_NODE,
   Catalogue,
   FixtureError,
+  fold,
   LIBRARY_NODE,
   PROFILES,
   VIEW_CAPS,
   type ViewParams,
 } from "../performance/fixtures";
+import { textContent } from "../performance/preview-fixtures";
 
 const query: ViewParams = {
   node: BIG_NODE,
@@ -96,7 +98,7 @@ describe("stable paging", () => {
     expect(rows).toHaveLength(11_000);
     const files = rows.filter((r) => r.kind === "file");
     const values = files.map((r) =>
-      sort === "name" ? r.display_name.toLowerCase() : sort === "size" ? r.size : r.modified,
+      sort === "name" ? fold(r.display_name) : sort === "size" ? r.size : r.modified,
     );
     for (let i = 1; i < values.length; i += 1) {
       const a = values[i - 1] as string | number;
@@ -250,6 +252,16 @@ describe("the navigation listing", () => {
   });
 });
 
+describe("the text preview file", () => {
+  it("is about 150 KiB, so only its first 64 KiB is read, and names itself on its first line", () => {
+    const bytes = Buffer.byteLength(textContent(2));
+    expect(bytes).toBeGreaterThanOrEqual(150 * 1024);
+    expect(bytes).toBeLessThan(160 * 1024);
+    expect(textContent(2).startsWith("NOTE 2\n")).toBe(true);
+    expect(textContent(2).endsWith("TAIL-MARKER")).toBe(true);
+  });
+});
+
 describe("the search operation", () => {
   const catalogue = new Catalogue(PROFILES.medium);
   const terms = catalogue.searchTerms(120);
@@ -263,7 +275,7 @@ describe("the search operation", () => {
     }
   });
 
-  it("answers matching files only, in relevance order, paged without repeats", () => {
+  it("answers the files whose name holds the query, in relevance order, paged without repeats", () => {
     const q = "masterplan";
     const keys = new Set<string>();
     let cursor: string | null = null;
@@ -280,5 +292,66 @@ describe("the search operation", () => {
     } while (cursor !== null);
     expect(keys.size).toBe(total);
     expect(total).toBeGreaterThan(10);
+  });
+
+  it("refuses an operator, an open quote and an empty query, as the API does (400 invalid_request)", () => {
+    for (const q of [
+      "colour:blue",
+      'generator:"Camera App"',
+      "type:spreadsheet",
+      '"open',
+      "",
+      "  ",
+    ]) {
+      expect(() => catalogue.searchPage({ q, sort: "relevance" }, null, 200), q).toThrow(
+        FixtureError,
+      );
+    }
+  });
+
+  it("searches the node it is narrowed to, never the big collection", () => {
+    const names = catalogue
+      .viewPage(
+        {
+          node: "c-5",
+          view: "all",
+          sort: "name",
+          direction: "ascending",
+          folders: "mixed",
+          filter: "",
+        },
+        null,
+        200,
+      )
+      .rows.map((row) => (row.kind === "file" ? row.display_name : row.name));
+    const stem = (names.find((name) => name.includes(".")) ?? "").split(".")[0] ?? "";
+    const narrowed = catalogue.searchPage({ q: stem, node: "c-5", sort: "relevance" }, null, 200);
+    expect(narrowed.rows.length).toBeGreaterThan(0);
+    for (const row of narrowed.rows) {
+      expect(names).toContain(row.kind === "file" ? row.display_name : row.name);
+    }
+    const everywhere = catalogue.searchPage({ q: stem, sort: "relevance" }, null, 200);
+    expect(everywhere.rows.map((r) => (r.kind === "file" ? r.display_name : r.name))).not.toEqual(
+      narrowed.rows.map((r) => (r.kind === "file" ? r.display_name : r.name)),
+    );
+    expect(() =>
+      catalogue.searchPage({ q: stem, node: "zzz", sort: "relevance" }, null, 200),
+    ).toThrow(FixtureError);
+  });
+
+  it("returns the folders whose name matches, placed on top or mixed in", () => {
+    const onTop = catalogue.searchPage({ q: "album", sort: "name", folders: "on_top" }, null, 200);
+    const kinds = onTop.rows.map((row) => row.kind === "file");
+    expect(kinds).toContain(false);
+    expect(kinds.indexOf(true) === -1 || kinds.lastIndexOf(false) < kinds.indexOf(true)).toBe(true);
+  });
+
+  it("folds names and queries alike: canonically equivalent Unicode finds the same rows", () => {
+    const composed = catalogue.searchPage({ q: "álbum", sort: "name" }, null, 200).rows;
+    const decomposed = catalogue.searchPage({ q: "álbum", sort: "name" }, null, 200).rows;
+    expect(composed.length).toBeGreaterThan(0);
+    expect(decomposed.map((r) => (r.kind === "file" ? r.file_id : r.node))).toEqual(
+      composed.map((r) => (r.kind === "file" ? r.file_id : r.node)),
+    );
   });
 });

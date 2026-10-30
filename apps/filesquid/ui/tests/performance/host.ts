@@ -25,6 +25,8 @@ export interface Host {
   readonly catalogue: Catalogue;
   /** Calls per route name. */
   readonly calls: Map<string, number>;
+  /** The node, cursor and limit of every view request, in the order the page sent them. */
+  readonly viewRequests: { node: string; cursor: string | null; limit: number }[];
   /** API calls no route served. A test asserts this is empty. */
   readonly unserved: string[];
   /** The event channel's open sockets, so a test can push events. */
@@ -150,6 +152,7 @@ export async function serveHost(
   const host: Host = {
     catalogue,
     calls,
+    viewRequests: [],
     unserved,
     sockets: [],
     maxInFlight: () => highest,
@@ -201,6 +204,11 @@ export async function serveHost(
     const q = new URL(route.request().url()).searchParams;
     await wait();
     const query = viewParams(q);
+    host.viewRequests.push({
+      node: query.node,
+      cursor: q.get("cursor"),
+      limit: Number(q.get("limit") ?? 200),
+    });
     try {
       const answer = catalogue.viewPage(query, q.get("cursor"), Number(q.get("limit") ?? 200));
       return await json(route, {

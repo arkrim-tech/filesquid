@@ -17,8 +17,8 @@
  */
 import { expect, test } from "@playwright/test";
 import { BUDGETS, VIEWPORT } from "./budgets";
-import { folderClass, FILES_FIRST, layoutClass, selectClass, sortClass } from "./browse-classes";
-import { Catalogue, PROFILES, VIEW_CAPS, type ProfileId } from "./fixtures";
+import { folderClass, layoutClass, selectClass, sortClass } from "./browse-classes";
+import { BIG_NODE, Catalogue, PROFILES, VIEW_CAPS, type ProfileId } from "./fixtures";
 import { SCROLLER, VIEW, devtools, fill, heapAfterGc, openView } from "./harness";
 import { assertBudgets, publish, value } from "./report";
 import { growth } from "./stats";
@@ -77,6 +77,13 @@ for (const id of ["medium", "large"] as ProfileId[]) {
     await publish(info, records);
     assertBudgets(records);
     expect(heights.scrollHeight).toBeGreaterThanOrEqual(11_000 * ROW_PX);
+    // Stable paging: the page asked for each next page by the cursor of the one before it, once
+    // each, from the start to the end of the 11,000 rows (the catalogue's own unit tests prove
+    // that a page's rows are the next ones, none twice).
+    const offsets = host.viewRequests
+      .filter((request) => request.node === BIG_NODE)
+      .map((request) => Number(request.cursor?.split("~")[0] ?? 0));
+    expect(offsets).toEqual(Array.from({ length: PAGES }, (_, i) => i * VIEW_CAPS.pageSize));
     // Every folder and file row of the scope is counted once, across all pages (stable paging).
     expect(footer).toContain(
       fill(label(labels, "fileSummary"), { folders: "1000", files: "10000", size: "" }).split(
@@ -95,30 +102,27 @@ for (const id of ["medium", "large"] as ProfileId[]) {
 test("heap growth after warm-up stays within 10% over 600 mixed interactions", async ({
   page,
 }, info) => {
+  // The default preferences (name ascending, folders on top) on the big view, so the mix can
+  // open folders and go back as well as select, sort and switch the layout.
   const catalogue = new Catalogue(PROFILES.medium);
-  const session = await openView(page, catalogue, {
-    preferences: FILES_FIRST,
-    query: {
-      node: "c-0",
-      view: "all",
-      sort: "modified",
-      direction: "descending",
-      folders: "mixed",
-      filter: "",
-    },
-  });
+  const session = await openView(page, catalogue);
   const cdp = await devtools(page);
-  const quarter = { warmup: 0, count: 150 };
-  // Warm-up: the same mix, thrown away, so allocation caches and lazy structures exist.
-  await selectClass(session, { warmup: 0, count: 60 });
-  await sortClass(session, { warmup: 0, count: 60 });
-  await layoutClass(session, { warmup: 0, count: 60 });
+  // The declared mix: four equal parts of BUDGETS.samples.mixed interactions. Opening a folder
+  // and going back are two interactions, so a part of folder steps is half as many pairs.
+  const part = BUDGETS.samples.mixed / 4;
+  const mix = async (size: number) => {
+    await selectClass(session, { warmup: 0, count: size });
+    await sortClass(session, { warmup: 0, count: size }, "on_top");
+    await layoutClass(session, { warmup: 0, count: size });
+    await folderClass(session, { warmup: 0, count: Math.ceil(size / 2) });
+  };
+  // Warm-up: the same mix, smaller and thrown away, so allocation caches and lazy structures exist.
+  // 42 is a multiple of the sort cycle (3) and even, so every class ends where the next one
+  // starts: sorted by name, in the list, nothing ticked.
+  await mix(42);
   const baseline = await heapAfterGc(cdp);
   const domBefore = await session.probe.domCount();
-  await selectClass(session, quarter);
-  await sortClass(session, quarter);
-  await layoutClass(session, quarter);
-  await selectClass(session, quarter);
+  await mix(part);
   const after = await heapAfterGc(cdp);
   const domAfter = await session.probe.domCount();
   const records = [
@@ -141,5 +145,4 @@ test("heap growth after warm-up stays within 10% over 600 mixed interactions", a
   assertBudgets(records);
   expect(session.errors).toEqual([]);
   expect(session.host.unserved).toEqual([]);
-  void folderClass;
 });

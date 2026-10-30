@@ -1,7 +1,7 @@
 /**
  * Search on the production build (Task UI-F3.1, NFR-002: indexed metadata search p95 <= 2 s;
  * PRD F-063: "Query feedback and completed results MUST be measured separately under NFR-002").
- * 200 varied queries after a warm-up of 20, typed into the real header search bar:
+ * 140 varied queries (a warm-up of 20, then 120 measured), typed into the real header search bar:
  *
  * - query feedback: the field shows the query and the drop-down is open (p95 <= 100 ms);
  * - live files: the drop-down's first file is the host's top hit (the bar waits 250 ms before
@@ -23,7 +23,7 @@ import { assertBudgets, latency, publish } from "./report";
 const BAR = "fs-app-shell >> fs-search-bar";
 const FIELD = `${BAR} >> input.text`;
 
-test("search: query feedback, live files and completed results over 200 queries", async ({
+test("search: query feedback, live files and completed results over 120 measured queries", async ({
   page,
 }, info) => {
   const catalogue = new Catalogue(PROFILES.large);

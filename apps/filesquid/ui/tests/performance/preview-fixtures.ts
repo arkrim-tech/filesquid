@@ -117,10 +117,15 @@ export const largeName = (n: number): string => `photo-${n}.jpg`;
 /** The name of text file `n` (1-based). */
 export const textName = (n: number): string => `note-${n}.txt`;
 
-/** A text file of about 150 KiB whose first line names it. */
-function text(n: number): string {
+/**
+ * A text file of about 150 KiB whose first line names it.
+ *
+ * @param n - Which note.
+ * @returns The text, from `NOTE n` to `TAIL-MARKER`.
+ */
+export function textContent(n: number): string {
   const lines = Array.from(
-    { length: 2400 },
+    { length: 3400 },
     (_, i) => `line ${i} of note ${n}: harbour masterplan survey`,
   );
   return `NOTE ${n}\n${lines.join("\n")}\nTAIL-MARKER`;
@@ -156,7 +161,7 @@ export function previewFiles(browser: Browser): Promise<PreviewFiles> {
     }
     const texts = Array.from({ length: TEXT_COUNT }, (_, i) => ({
       path: `text/${textName(i + 1)}`,
-      content: text(i + 1),
+      content: textContent(i + 1),
     }));
     const bytes = (list: { content: Buffer | string }[]) =>
       list.reduce((sum, file) => sum + Buffer.byteLength(file.content), 0);

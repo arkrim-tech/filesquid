@@ -165,6 +165,8 @@ test("a prepared display-size image paints at p95 <= 100 ms, over every image of
   await publish(info, records);
   assertBudgets(records);
   expect(run.seen.size).toBe(SMALL_COUNT);
+  // Every preview is a cache miss: the first preview and each of the steps minted a new handle.
+  expect(session.files.mints()).toBe(steps + 1);
   expect(session.errors).toEqual([]);
   expect(session.host.unserved).toEqual([]);
 });
@@ -237,9 +239,11 @@ test("text reads one ranged request of at most 64 KiB, painted at p95 <= 100 ms"
   );
   await publish(info, records);
   assertBudgets(records);
-  // Range-read previews: every text read is the first 64 KiB, never the whole file.
-  expect(ranges.length).toBeGreaterThanOrEqual(BUDGETS.samples.warm);
-  for (const range of ranges) expect(range).toBe("bytes=0-65535");
+  // Range-read previews: one read of the first 64 KiB for the first preview and one for each
+  // step, never the whole file and never a second read of the same preview.
+  expect(ranges).toEqual(
+    Array.from({ length: WARMUP + BUDGETS.samples.warm + 1 }, () => "bytes=0-65535"),
+  );
   expect(session.errors).toEqual([]);
   expect(session.host.unserved).toEqual([]);
 });
@@ -354,5 +358,7 @@ test("content that cannot be read shows the error state within 2 s, never a spin
   });
   await publish(info, [record]);
   assertBudgets([record]);
+  // The refused content reads are tolerated by name (410, 404); nothing else may be logged.
+  expect(session.errors).toEqual([]);
   expect(session.host.unserved).toEqual([]);
 });

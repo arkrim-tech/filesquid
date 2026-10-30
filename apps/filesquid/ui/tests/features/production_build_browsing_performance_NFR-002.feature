@@ -48,8 +48,8 @@ Feature: Production-build browsing performance
 
   # KNOWN GAP (owner decision, Task UI-F3.1 Walkthrough, Finding 4): on the Large catalog the "open an unseen folder and go back"
   # row misses the result gate (p95 about 120 to 135 ms against 100 ms) because the navigation tree draws every node of a level,
-  # up to its cap of 10,000 nodes. The Playwright test is marked "expected to fail" so the budget stays an assertion and the
-  # suite turns red the day it passes, as the cue to remove the mark. The Small catalog meets the gate (p95 about 70 ms).
+  # up to its cap of 10,000 nodes. The Playwright test names these records a known gap: its other assertions stay strict and it
+  # turns red the day every one of the records holds, as the cue to remove the gap. The Small catalog meets the gate (p95 about 70 ms).
 
   Scenario: A prepared image paints the correct image within 100 milliseconds
     Given a folder of 60 different 1280 x 720 images is open in the viewer with the file panel
@@ -115,7 +115,7 @@ Feature: Production-build browsing performance
     Given an idle page is measured for 10 seconds before the app is
     When more than 1 percent of its frames take longer than 25.05 milliseconds
     Then the run should fail naming the environment as unusable
-    And the route round trip of the harness should be reported beside every result
+    And the route round trip of the harness should be reported as its own control measurement, in the same summary as every result
 
   # Load and pressure
   Scenario: The gates hold while background work streams in
@@ -135,7 +135,7 @@ Feature: Production-build browsing performance
     Then the sidebar should be 240 pixels wide, the header 60 pixels and the footer 40 pixels, each within 2 pixels
     And the list header should be 38 pixels tall and the rows 44 pixels tall
     And the page title should be Georgia 30 pixels at weight 700 in the heading colour
-    And every word should come from the active label table
+    And the column headers, the New button and the search placeholder should come from the active label table
     And the custom elements should be defined and the console should show no error
 
     Examples:

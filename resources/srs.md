@@ -1384,6 +1384,7 @@ The system MUST satisfy [PRD NFR-003](./prd.md#nfr-003-bounded-processing-and-mi
 **Tests**
 - [`bounded_processing_and_migration_endurance_NFR-003.feature`](../apps/filesquid/crates/server/tests/features/bounded_processing_and_migration_endurance_NFR-003.feature)
 - [`job_checkpoint_protocol_NFR-003.feature`](../apps/filesquid/crates/core/tests/features/job_checkpoint_protocol_NFR-003.feature)
+- [`production_build_browsing_performance_NFR-002.feature`](../apps/filesquid/ui/tests/features/production_build_browsing_performance_NFR-002.feature) (the bounded DOM window and the heap growth after warm-up of the production UI build)
 
 ### SRS-NFR-004: Security and privacy
 

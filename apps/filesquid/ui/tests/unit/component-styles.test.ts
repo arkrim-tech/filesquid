@@ -371,9 +371,19 @@ describe("a long navigation tree does not tax every frame (NFR-002, Task UI-F3.1
     // A positioned element is its own paint layer: 10,000 rows would be 10,000 layers to walk on
     // every frame. Only the current row needs a positioned box, for its 2.5 px brand marker.
     const tree = sources.find((s) => s.name === "fs-nav-tree.ts")?.css ?? "";
-    const rule = tree.match(/(?:^|\n)\s*a\s*\{([^}]*)\}/)?.[1] ?? "";
-    expect(rule).not.toBe("");
-    expect(rule).not.toMatch(/position:/);
-    expect(tree).toMatch(/a\[aria-current="page"\]\s*\{[^}]*position:\s*relative/);
+    // Every rule is checked, comma-separated selector lists included: a rule that names a row
+    // (`a`, `a[data-kind=...]`, `a:hover`) other than the current one must not position it.
+    const rules = [...tree.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => ({
+      selectors: (m[1] ?? "").split(",").map((s) => s.trim()),
+      body: m[2] ?? "",
+    }));
+    const rowRules = rules.filter((r) =>
+      r.selectors.some((s) => /^a(?![\w-])/.test(s) && !s.includes('[aria-current="page"]')),
+    );
+    expect(rowRules.length).toBeGreaterThan(0);
+    for (const rule of rowRules)
+      expect(rule.body, rule.selectors.join(", ")).not.toMatch(/position:/);
+    const current = rules.find((r) => r.selectors.includes('a[aria-current="page"]'));
+    expect(current?.body).toMatch(/position:\s*relative/);
   });
 });

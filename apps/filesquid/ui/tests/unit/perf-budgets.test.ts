@@ -1,10 +1,11 @@
 /**
- * The budget table of the performance suite (Task UI-F3.1, UI-S-035): every number NFR-002,
- * NFR-003 and ADR 007 state, checked against the text of the PRD itself so a budget cannot
- * drift from the requirement it cites, and the profile limits the task defines (RC-002 asks for
- * them) checked against their own rules (the missed-frame threshold is 1.5 frame budgets, the
- * tail limit is twice the feedback budget, a warm class has at least the 100 samples NFR-002
- * names).
+ * The budget table of the performance suite (Task UI-F3.1, UI-S-035): the values the PRD
+ * defines (NFR-002, NFR-003) are checked against the text of the PRD itself so they cannot
+ * drift from the requirement they cite; the limits this task proposes (RC-002 asks for them) are
+ * checked against their own rules (the missed-frame threshold is 1.5 frame budgets, the tail
+ * limit is twice the feedback budget, a warm class has at least the 100 samples NFR-002 names)
+ * and against the values UI-S-035 declares (120 warm samples, a warm-up of 20, 20 cold loads, a
+ * 1% idle control, 0.1% stalls).
  */
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -59,6 +60,22 @@ describe("the budgets NFR-002 states", () => {
   });
 });
 
+describe("the sample sizes UI-S-035 declares", () => {
+  it("120 warm samples after a warm-up of 20, 20 cold loads, 100 under pressure, 20 failures", () => {
+    expect(BUDGETS.samples).toMatchObject({
+      warm: 120,
+      warmup: 20,
+      cold: 20,
+      pressure: 100,
+      failure: 20,
+    });
+  });
+
+  it("600 mixed interactions run for the heap (NFR-003)", () => {
+    expect(BUDGETS.samples.mixed).toBe(600);
+  });
+});
+
 describe("the catalog profiles NFR-002 states", () => {
   it("Small, Medium and Large hold 10,000, 100,000 and 1,000,000 assets", () => {
     expect(NFR_002).toContain("Small: 10,000 assets/20,000 resources/100 GB/100 albums");
@@ -106,6 +123,7 @@ describe("the limits this task defines (UI-S-035)", () => {
   it("the frame limits are set and the control is stricter than the app", () => {
     expect(BUDGETS.missedFrameRateMax).toBe(0.05);
     expect(BUDGETS.frameP99Ms).toBe(50);
+    expect(BUDGETS.controlMissedRateMax).toBe(0.01);
     expect(BUDGETS.controlMissedRateMax).toBeLessThan(BUDGETS.missedFrameRateMax);
     expect(BUDGETS.minFramesPerLayout).toBeGreaterThanOrEqual(1500);
     expect(BUDGETS.discardFrames).toBe(5);

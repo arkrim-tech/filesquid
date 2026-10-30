@@ -24,7 +24,7 @@
     "test": "vitest run",
     "pretest:e2e": "node tests/support/clean-results.mjs tests/allure-results/playwright tests/allure-results/playwright-junit.xml tests/allure-results/playwright-preview-junit.xml tests/allure-results/playwright-performance-junit.xml tests/allure-results/performance",
     "test:e2e": "node tests/support/run-e2e.mjs",
-    "pretest:perf": "node tests/support/clean-results.mjs tests/allure-results/performance tests/allure-results/playwright-performance-junit.xml",
+    "pretest:perf": "node tests/support/clean-results.mjs tests/allure-results/performance tests/allure-results/playwright tests/allure-results/playwright-performance-junit.xml",
     "test:perf": "playwright test -c playwright.performance.config.ts",
     "report": "allure generate tests/allure-results --output tests/allure-report --clean",
     "lint": "eslint .",

@@ -44,6 +44,9 @@ for (const layout of ["list", "grid"] as const) {
     // A warm-up run: the JIT, style caches and the first pages are not what is being judged.
     await probe.scrollRun(SCROLLER, SPEED_PX_PER_SECOND, 3000, false);
     await page.locator(`${VIEW_LOCATOR} .scroller`).evaluate((el) => void (el.scrollTop = 0));
+    // The long-task observer is drained here, so what is reported afterwards is the measured
+    // runs, not the start-up and the warm-up.
+    await probe.longTasks();
     const runs: number[][] = [];
     let highestDomRows = 0;
     let scrolled = 0;

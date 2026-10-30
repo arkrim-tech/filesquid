@@ -225,6 +225,7 @@ export class MemoryFileSource implements FileSource, HistorySource, DownloadSour
   private readonly snapshots: Snapshot[] = [];
   private readonly cursors = new Map<string, { prefix: string; offset: number }>();
   private readonly uploaded = new Map<string, UploadedFile>();
+  private readonly identity = new ContentIdentity();
   /** Uploads committed so far; each one's `created` is a minute after the one before. */
   private uploadCount = 0;
   /** When set, every call rejects with this value (a network error, a denial, ...). */
@@ -561,7 +562,7 @@ export class MemoryFileSource implements FileSource, HistorySource, DownloadSour
     const entries: FileHistoryEntry[] = [];
     this.snapshots.forEach((snapshot, i) => {
       const before = this.snapshots[i - 1]?.files.get(file.path);
-      const entry = historyEntry(i, snapshot, before, snapshot.files.get(file.path));
+      const entry = historyEntry(i, snapshot, before, snapshot.files.get(file.path), this.identity);
       if (entry) entries.push(entry);
     });
     const shown = this.latest().files.get(file.path) ?? this.snapshots[0]?.files.get(file.path);
@@ -702,6 +703,7 @@ function historyEntry(
   snapshot: Snapshot,
   before: Stored | undefined,
   after: Stored | undefined,
+  identity: ContentIdentity,
 ): FileHistoryEntry | undefined {
   if (!before && !after) return undefined;
   if (before && after && sameStored(before, after)) return undefined;
@@ -709,7 +711,7 @@ function historyEntry(
   return {
     version: versionRecord(index, snapshot),
     change,
-    digest: after ? digestOf(after.bytes) : null,
+    digest: after ? identity.digestOf(after.bytes) : null,
     size: after ? after.bytes.byteLength : null,
   };
 }
@@ -720,11 +722,10 @@ function sameStored(a: Stored, b: Stored): boolean {
 }
 
 /**
- * A stand-in digest of some bytes: their length and two 32-bit FNV-1a sums (one forward, one
- * backward), so it stays short however large the content is, and two fixture contents do not
- * share one in practice. A hex dump of a 700 KB image cost 160 ms on every history read.
+ * A cheap sum of some bytes: their length and two 32-bit FNV-1a sums (one forward, one
+ * backward). Short however large the content is; not an identity on its own.
  */
-function digestOf(bytes: Uint8Array): string {
+function cheapSum(bytes: Uint8Array): string {
   let forward = 0x811c9dc5;
   let backward = 0x811c9dc5;
   for (let i = 0; i < bytes.length; i += 1) {
@@ -732,7 +733,40 @@ function digestOf(bytes: Uint8Array): string {
     backward = Math.imul(backward ^ (bytes[bytes.length - 1 - i] ?? 0), 0x01000193);
   }
   const hex = (n: number): string => (n >>> 0).toString(16).padStart(8, "0");
-  return `fixture-${bytes.length}-${hex(forward)}${hex(backward)}`;
+  return `${bytes.length}-${hex(forward)}${hex(backward)}`;
+}
+
+/**
+ * Stand-in digests for a fixture's contents: short, and exact, so two different contents never
+ * share one (`historySize` counts distinct contents by digest). A hex dump of a 700 KB image
+ * cost 160 ms on every history read; this costs one pass over the bytes, and a second, byte
+ * comparison only when a cheap sum repeats.
+ */
+export class ContentIdentity {
+  private readonly bySum = new Map<string, Uint8Array[]>();
+
+  /**
+   * @param sum The cheap sum of some bytes; replaceable so a test can force a collision.
+   */
+  constructor(private readonly sum: (bytes: Uint8Array) => string = cheapSum) {}
+
+  /**
+   * The digest of some bytes: equal contents get one digest, different contents never do.
+   *
+   * @param bytes The content.
+   * @returns `fixture-<sum>-<n>`, where n numbers the contents that share the sum.
+   */
+  digestOf(bytes: Uint8Array): string {
+    const sum = this.sum(bytes);
+    const known = this.bySum.get(sum) ?? [];
+    let at = known.findIndex((other) => sameBytes(other, bytes));
+    if (at < 0) {
+      at = known.length;
+      known.push(bytes);
+      this.bySum.set(sum, known);
+    }
+    return `fixture-${sum}-${at}`;
+  }
 }
 
 /** A fixture file as stored in `v1`. */
