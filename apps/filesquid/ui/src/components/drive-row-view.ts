@@ -36,11 +36,19 @@ export interface RowContext {
 
 /** The current sort, or undefined when the view has a fixed order (Recent). */
 export interface SortState {
-  /** The key. */
-  readonly sort: SortKey;
+  /** The key, or `relevance` (search results before a column sort): no column carries the mark. */
+  readonly sort: SortKey | "relevance";
   /** The direction. */
   readonly direction: SortDirection;
 }
+
+/** The file-type badge: 30 x 16 px, class colours by token (UI-S-026); the search drop-down uses it too. */
+export const BADGE_STYLE = `
+  .badge { display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; min-inline-size: 1.875rem; block-size: 1rem; padding: 0 var(--fs-space-1); border: 1px solid var(--fs-surface-raised); border-radius: var(--fs-radius-badge); font-family: var(--fs-font-mono); font-size: var(--fs-font-size-badge); font-weight: 700; text-transform: uppercase; background: var(--fs-surface-raised); color: var(--fs-on-surface-variant); }
+  .badge.document { border-color: var(--fs-badge-document); background: var(--fs-badge-document); color: var(--fs-on-badge-document); }
+  .badge.data { border-color: var(--fs-badge-data); background: var(--fs-badge-data); color: var(--fs-on-badge-data); }
+  .badge.media { border-color: var(--fs-badge-media); background: var(--fs-badge-media); color: var(--fs-on-badge-media); }
+`;
 
 /** The stylesheet of rows, tiles, headers and the checkbox, tokens only (UI-S-024). */
 export const STYLE = `
@@ -69,10 +77,7 @@ export const STYLE = `
   .recent .row .activity { grid-column: 7 / 10; text-align: end; }
   .group { position: absolute; inset-inline: 0; inset-block-start: calc(var(--r) * var(--row-height)); box-sizing: border-box; display: flex; align-items: end; block-size: var(--row-height); padding: 0 var(--fs-space-3) var(--fs-space-2); }
   .group .eyebrow { margin: 0; }
-  .badge { display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; min-inline-size: 1.875rem; block-size: 1rem; padding: 0 var(--fs-space-1); border: 1px solid var(--fs-surface-raised); border-radius: var(--fs-radius-badge); font-family: var(--fs-font-mono); font-size: var(--fs-font-size-badge); font-weight: 700; text-transform: uppercase; background: var(--fs-surface-raised); color: var(--fs-on-surface-variant); }
-  .badge.document { border-color: var(--fs-badge-document); background: var(--fs-badge-document); color: var(--fs-on-badge-document); }
-  .badge.data { border-color: var(--fs-badge-data); background: var(--fs-badge-data); color: var(--fs-on-badge-data); }
-  .badge.media { border-color: var(--fs-badge-media); background: var(--fs-badge-media); color: var(--fs-on-badge-media); }
+  ${BADGE_STYLE}
   .row .icon-folder, .row .icon-collection, .row .icon-layers, .tile .thumb .icon { color: var(--fs-icon); }
   .actions { box-sizing: border-box; inline-size: 1.875rem; block-size: 1.875rem; display: inline-flex; align-items: center; justify-content: center; padding: 0; border: 1px solid var(--fs-outline-strong); border-radius: var(--fs-radius-input); background: var(--fs-surface-card); color: var(--fs-icon); cursor: pointer; }
   .row:not(:hover):not(:focus-within):not([data-menu]) .actions, .tile:not(:hover):not(:focus-within):not([data-menu]) .actions { visibility: hidden; }

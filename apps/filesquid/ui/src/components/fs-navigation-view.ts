@@ -14,8 +14,9 @@
  * Files (UI-F2.8): a library, a collection or a virtual collection shows its files in a
  * `<fs-drive-view>` over the view operation of API-S-011 when the host gives the view its
  * `drive` options; the page title is then the drive view's, and a `fs-destination-context`
- * event (`detail.node`, `detail.kind`, or no detail when none is shown) tells the shell's New
- * menu where uploads would go. A folder, which the view operation does not list, and a view
+ * event (`detail.node`, `detail.kind` and `detail.name`, or no detail when none is shown) tells
+ * the shell's New menu where uploads would go and the search bar which collection to offer for
+ * `in:` (UI-F2.9). A folder, which the view operation does not list, and a view
  * without `drive` options say that the files cannot be listed here yet.
  */
 import type { LabelTable } from "../theme/labels";
@@ -265,11 +266,19 @@ export class FsNavigationView extends HTMLElement {
 
   /** Tell the shell which node is shown, or that none is. */
   private announceContext(node: NavigationNode | undefined): void {
-    const detail = node ? { node: node.node, kind: node.kind } : undefined;
+    const labels = (this.options as NavigationViewOptions).labels;
+    const detail = node
+      ? { node: node.node, kind: node.kind, name: collectionName(node, labels) }
+      : undefined;
     this.dispatchEvent(
       new CustomEvent("fs-destination-context", { detail, bubbles: true, composed: true }),
     );
   }
+}
+
+/** The name of a collection (the only kind `in:` takes a title of), else undefined. */
+function collectionName(node: NavigationNode, labels: LabelTable): string | undefined {
+  return node.kind === "collection" ? nodeName(node, labels) : undefined;
 }
 
 /** The heading and files note of a destination that was read. */

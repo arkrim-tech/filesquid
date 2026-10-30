@@ -129,7 +129,7 @@ for (const scheme of SCHEMES) {
       await expectBox(shell.locator("footer"), { x: 240, y: 860, width: 1200, height: 40 });
       await expectBox(shell.locator("nav .new"), { x: 16, width: 208, height: 38 });
       await expectBox(shell.locator("nav input.filter"), { x: 16, width: 208, height: 34 });
-      await expectBox(shell.locator("header input.search"), { x: 264, width: 520, height: 36 });
+      await expectBox(shell.locator("fs-search-bar .frame"), { x: 264, width: 520, height: 36 });
       await expectBox(shell.locator("fs-host-indicator button.badge"), { height: 28 });
       await expectBox(shell.locator("header .monitor"), { height: 36 });
       await expectBox(shell.locator("nav .brand img"), { height: 24 });
@@ -158,7 +158,7 @@ for (const scheme of SCHEMES) {
         colour: rgbOf(c.onPrimary),
         radius: "7px",
       });
-      expect(await look(shell.locator("header input.search"))).toMatchObject({
+      expect(await look(shell.locator("fs-search-bar .frame"))).toMatchObject({
         size: "14px",
         borderWidth: await renderedBorder(page, "1.5px"),
         borderColour: rgbOf(c.control),
@@ -182,7 +182,7 @@ for (const scheme of SCHEMES) {
         "placeholder",
         label(labels, "fileFilterView"),
       );
-      await expect(shell.locator("header input.search")).toHaveAttribute(
+      await expect(shell.locator("fs-search-bar input.text")).toHaveAttribute(
         "placeholder",
         label(labels, "searchPlaceholder"),
       );
