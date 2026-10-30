@@ -12,7 +12,7 @@
 #[path = "../support/files_fixture.rs"]
 mod files_fixture;
 
-use axum::http::StatusCode;
+use axum::http::{Method, StatusCode};
 use files_fixture::{
     command_body, operation_id, upload_input, Answer, FilesRig, HOME_COLLECTION, LIBRARY,
 };
@@ -389,9 +389,79 @@ async fn a_rename_that_cannot_be_placed_is_refused_before_the_name_changes() {
 }
 
 #[tokio::test]
+async fn a_rename_whose_relocation_failed_is_completed_by_its_retry() {
+    let rig = FilesRig::new().await;
+    let upload = uploaded(&rig, "IMG_0001.jpg", b"jpeg", Some("Summer")).await;
+    let input = json!({
+        "library_id": LIBRARY, "file_id": upload["file_id"], "display_name": "Harbour.jpg"
+    });
+    let body = command_body(&input, &operation_id(), &rig.revision_of(&input).await);
+    rig.home.fail_next_relocation();
+    let crashed = rig
+        .send_command(Method::POST, "/api/v1/files/renames", &body)
+        .await;
+    assert_eq!(crashed.status, StatusCode::SERVICE_UNAVAILABLE);
+    let file = FileId::new(upload["file_id"].as_str().expect("file")).expect("id");
+    assert_eq!(
+        rig.home.placed(&file),
+        Some((home(), "Summer/IMG_0001.jpg".into())),
+        "the name was committed, the path not yet"
+    );
+    let retry = rig
+        .send_command(Method::POST, "/api/v1/files/renames", &body)
+        .await;
+    assert_eq!(retry.status, StatusCode::CONFLICT, "{:?}", retry.json());
+    assert_eq!(
+        rig.home.placed(&file),
+        Some((home(), "Summer/Harbour.jpg".into())),
+        "the retry completed the relocation"
+    );
+    let fresh = renamed(&rig, &upload["file_id"], "Harbour.jpg").await;
+    assert_eq!(
+        fresh.status,
+        StatusCode::CONFLICT,
+        "nothing is left to change"
+    );
+    let places = rig
+        .home
+        .journal()
+        .into_iter()
+        .filter(|e| e.operation == PLACE_OPERATION)
+        .count();
+    assert_eq!(places, 1, "relocated once");
+}
+
+/// The bytes and head version of the stored original of the file `file_id`, read through the
+/// listing and content routes.
+async fn original_of(rig: &FilesRig, file_id: &Value) -> (Vec<u8>, String) {
+    let object = format!("urn:uuid:{}", file_id.as_str().expect("file"));
+    let object = files_fixture::encode(&object);
+    let listing = rig
+        .get(&format!(
+            "/api/v1/files/listing?library_id={LIBRARY}&object_id={object}&prefix=original"
+        ))
+        .await;
+    assert_eq!(listing.status, StatusCode::OK, "{:?}", listing.json());
+    let path = listing.json()["entries"][0]["path"]
+        .as_str()
+        .expect("the original")
+        .to_string();
+    let path = files_fixture::encode(&path);
+    let content = rig
+        .get(&format!(
+            "/api/v1/files/content?library_id={LIBRARY}&object_id={object}&path={path}"
+        ))
+        .await;
+    assert_eq!(content.status, StatusCode::OK);
+    let head = rig.revision_of(&json!({ "file_id": file_id })).await;
+    (content.body, head)
+}
+
+#[tokio::test]
 async fn a_collection_move_gives_a_file_another_folder_keeping_its_name_and_its_bytes() {
     let rig = FilesRig::new().await;
     let upload = uploaded(&rig, "beach.jpg", b"jpeg", Some("Summer")).await;
+    let before = original_of(&rig, &upload["file_id"]).await;
     rig.home.place(&placed_id(1), &home(), "Archive/beach.jpg");
     let mut events = rig.state.events.subscribe();
     let body = json!({
@@ -412,6 +482,9 @@ async fn a_collection_move_gives_a_file_another_folder_keeping_its_name_and_its_
         .filter(|t| *t == topic::NAVIGATION_CHANGE)
         .count();
     assert_eq!(changes, 2, "the folder it left and the folder it entered");
+    let after = original_of(&rig, &upload["file_id"]).await;
+    assert_eq!(after, before, "no byte and no file version changed");
+    assert_eq!(after.0, b"jpeg");
     let moves: Vec<_> = rig
         .journaled("file.move")
         .into_iter()

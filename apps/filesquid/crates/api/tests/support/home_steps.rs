@@ -6,7 +6,7 @@
 //! collection folders through the same rig.
 
 use crate::files_fixture::{
-    command_body, operation_id, upload_input, Answer, FilesRig, HOME_COLLECTION, LIBRARY,
+    command_body, encode, operation_id, upload_input, Answer, FilesRig, HOME_COLLECTION, LIBRARY,
 };
 use crate::MonitorWorld;
 use axum::http::StatusCode;
@@ -15,6 +15,7 @@ use filesquid_api::canonical::collection_path::MAX_SUFFIX;
 use filesquid_api::events::{topic, ApiEvent};
 use filesquid_api::files::NEW_FILE_REVISION;
 use filesquid_api::journal::Outcome;
+use filesquid_api::navigation::{FolderScope, NavigationChange, NodeRef};
 use filesquid_core::{CollectionId, FileId};
 use serde_json::{json, Value};
 use tokio::sync::broadcast::Receiver;
@@ -33,6 +34,7 @@ pub struct HomeWorld {
     answers: Vec<Answer>,
     pending: Option<(String, Value)>,
     placed: u32,
+    before: Option<(Vec<u8>, String)>,
 }
 
 impl std::fmt::Debug for HomeWorld {
@@ -284,8 +286,18 @@ fn subject(w: &MonitorWorld) -> Value {
     first.result()["file_id"].clone()
 }
 
-/// Send a collection move of the scenario's file with `fields` and keep its answer.
+/// Drop the events received so far, so the next assertions see only the next command's.
+fn drain_events(w: &mut MonitorWorld) {
+    let events = w.home.events.as_mut().expect("subscribed");
+    let drained = std::iter::from_fn(|| events.try_recv().ok()).take(1_000);
+    drained.for_each(drop);
+}
+
+/// Send a collection move of the scenario's file with `fields` and keep its answer, with the
+/// events of the steps before it drained.
 async fn send_move(w: &mut MonitorWorld, fields: Value) {
+    w.home.before = Some(original_of(w).await);
+    drain_events(w);
     let mut body = json!({ "library_id": LIBRARY, "file_id": subject(w) });
     let body_fields = body.as_object_mut().expect("object");
     body_fields.extend(fields.as_object().expect("fields").clone());
@@ -306,6 +318,7 @@ async fn move_nowhere(w: &mut MonitorWorld) {
 
 #[when(expr = "the owner renames it to {string}")]
 async fn rename_to(w: &mut MonitorWorld, name: String) {
+    drain_events(w);
     let body = json!({ "library_id": LIBRARY, "file_id": subject(w), "display_name": name });
     let answer = w.home.rig().command("/api/v1/files/renames", body).await;
     w.home.answers.push(answer);
@@ -358,17 +371,59 @@ fn move_journaled(w: &mut MonitorWorld) {
     }
 }
 
-#[then("both folders should be announced as changed")]
-fn both_announced(w: &mut MonitorWorld) {
+#[then(regex = r#"^the folders "([^"]+)"(?: and "([^"]+)")? should be announced as changed$"#)]
+fn folders_announced(w: &mut MonitorWorld, first: String, second: String) {
+    let collection = FolderScope::Collection(home());
+    let expected: Vec<String> = [first, second]
+        .into_iter()
+        .filter(|folder| !folder.is_empty())
+        .map(|folder| {
+            NodeRef::folder(collection.clone(), &folder)
+                .to_handle()
+                .expect("handle")
+        })
+        .collect();
     let events = w.home.events.as_mut().expect("subscribed");
-    let changes = std::iter::from_fn(|| events.try_recv().ok())
+    let announced: Vec<String> = std::iter::from_fn(|| events.try_recv().ok())
         .take(1_000)
         .filter(|event| event.topic == topic::NAVIGATION_CHANGE)
-        .count();
+        .flat_map(|event| match serde_json::from_value(event.data) {
+            Ok(NavigationChange::Parents { parents }) => parents,
+            other => panic!("not a parents change: {other:?}"),
+        })
+        .collect();
     assert_eq!(
-        changes, 3,
-        "the upload's folder, then the folder left and the folder entered"
+        announced, expected,
+        "the folder left, then the folder entered"
     );
+}
+
+/// The stored original bytes and the file object's head of the scenario's file.
+async fn original_of(w: &MonitorWorld) -> (Vec<u8>, String) {
+    let rig = w.home.rig();
+    let file_id = subject(w);
+    let object = format!("urn:uuid:{}", file_id.as_str().expect("file"));
+    let object = encode(&object);
+    let uri =
+        format!("/api/v1/files/listing?library_id={LIBRARY}&object_id={object}&prefix=original");
+    let listing = rig.get(&uri).await;
+    let path = encode(
+        listing.json()["entries"][0]["path"]
+            .as_str()
+            .expect("the original"),
+    );
+    let uri = format!("/api/v1/files/content?library_id={LIBRARY}&object_id={object}&path={path}");
+    let content = rig.get(&uri).await;
+    assert_eq!(content.status, StatusCode::OK);
+    let head = rig.revision_of(&json!({ "file_id": file_id })).await;
+    (content.body, head)
+}
+
+#[then("the file's bytes and its file object's versions should be unchanged")]
+async fn bytes_unchanged(w: &mut MonitorWorld) {
+    let before = w.home.before.clone().expect("read before the move");
+    let after = original_of(w).await;
+    assert_eq!(after, before, "no byte and no file version changed");
 }
 
 #[then(expr = "the folder should be answered at {string} and pending")]

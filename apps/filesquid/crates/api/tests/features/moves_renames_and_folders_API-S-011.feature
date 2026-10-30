@@ -23,15 +23,16 @@ Feature: Moves, renames and folders in the home collections
     When the owner moves it into the folder "Archive"
     Then the file should now be registered at "Archive/beach.jpg" in "Holidays"
     And the answer should name the collection and the path "Archive/beach.jpg"
+    And the file's bytes and its file object's versions should be unchanged
     And the move should be journaled once without its name or folder
-    And both folders should be announced as changed
+    And the folders "Summer" and "Archive" should be announced as changed
 
   Scenario: A rename gives a file its new name in its folder
     Given the owner has uploaded "IMG_0001.jpg" into the folder "Summer"
     When the owner renames it to "Harbour.jpg"
     Then the file should now be registered at "Summer/Harbour.jpg" in "Holidays"
     And the answer should carry the path "Summer/Harbour.jpg"
-    And the folder should be announced as changed
+    And the folders "Summer" should be announced as changed
 
   Scenario: A new folder is answered with its path and writes nothing
     When the owner creates the folder "filepathX/Fresh" in "Holidays"
@@ -44,12 +45,14 @@ Feature: Moves, renames and folders in the home collections
     And the path "Archive/beach.jpg" is already taken in "Holidays"
     When the owner moves it into the folder "Archive"
     Then the file should now be registered at "Archive/beach-1.jpg" in "Holidays"
+    And the answer should carry the path "Archive/beach-1.jpg"
 
   Scenario: A rename to a taken name is numbered beside it
     Given the owner has uploaded "IMG_0001.jpg" into the folder "Summer"
     And the path "Summer/Harbour.jpg" is already taken in "Holidays"
     When the owner renames it to "Harbour.jpg"
     Then the file should now be registered at "Summer/Harbour-1.jpg" in "Holidays"
+    And the answer should carry the path "Summer/Harbour-1.jpg"
 
   Scenario Outline: A new folder at a taken path is numbered beside it
     Given the path "<taken>" is already taken in "Holidays"

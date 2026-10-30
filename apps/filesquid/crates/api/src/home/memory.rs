@@ -75,6 +75,12 @@ impl MemoryHomeCollections {
         self.lock().fail_next = true;
     }
 
+    /// Make the next relocation fail as an unreachable store, as a crash between a rename's
+    /// name commit and its relocation would.
+    pub fn fail_next_relocation(&self) {
+        self.lock().fail_next = true;
+    }
+
     /// The number of unfinished reservations.
     pub fn reserved(&self) -> usize {
         self.lock().reserved.len()
@@ -216,6 +222,9 @@ impl HomeCollections for MemoryHomeCollections {
         journal: JournalEntry,
     ) -> Result<Placed, CatalogError> {
         let mut state = self.lock();
+        if std::mem::take(&mut state.fail_next) {
+            return Err(CatalogError::Unavailable("staged crash".into()));
+        }
         let placed = relocate_in(&mut state, library_id, request);
         if let Placed::Registered { .. } = placed {
             let entry = journal
