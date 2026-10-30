@@ -429,7 +429,7 @@ Branch `feat/api-f2.9-prov-records-history-routes`. After the first part, API-F2
   - It answers `Committed<UploadView>`. An import that an earlier run already committed answers no entries.
   - `canonical::commit_staged_original` takes a `BoundMeta`, and its bound files pass the same journal-file checks as the other commits.
   - The import write has no route entry of its own (`Write::operation` is now optional), because the job journals `import.file`.
-  - The native job journals the commit's entries (`ocfl.commit`) right after the commit and before the file is registered, so a registration retried later, which replays the import with no entries, never loses them. Its `import.file` entry now names the file's object version (`object_ref`).
+  - The native job journals the commit's entries (`ocfl.commit`) right after the commit and before the file is registered, so a registration retried later, which replays the import with no entries, never loses them. That covers the retry only. A crash between the OCFL publication and the journal write still leaves the operational journal without those entries, because the replay answers none. With provenance installed, the version holds them in `provenance/<version>.journal.jsonl`, from which the journal rebuild (CL-1.9) restores them with the same IDs. Writing them back at library open, as the catalog reconcile does for snapshot commits (ADR 040 Decision 6, DE-S-011), is not done for import commits yet. Its `import.file` entry now names the file's object version (`object_ref`).
 - **API-S-031 for file-route commits (API-F2.12):** `integration_engine_warnings` shows that an OCFL engine warning raised during a move (a lease takeover) is journaled with the move's operation ID. The test fails when the commit's activity span is removed. It runs in its own binary, because `tracing` caches callsite interest for the whole process. See the [API-F2.12 walkthrough](./Task-API-F2.12-Walkthrough.md).
 - **`prov_o_history_F-067.feature` bound** ([`tests/support/prov_steps.rs`](../../tests/support/prov_steps.rs)) for what the router can drive:
   - one record in the version of each upload, copy, rename, move, delete, metadata edit, reinstate, revert and label commit, with exactly one activity of its kind naming the operation ID, the object version and the commit's journal entry IDs;
@@ -448,6 +448,7 @@ Branch `feat/api-f2.9-prov-records-history-routes`. After the first part, API-F2
   - The crash reconciliation at library open (DE-S-011).
   - Sharing with a preview, which has no route.
 - **Per-file read permission on the history routes** (API-S-029) still arrives with server accounts. The desktop owner reads every file.
+- **Import entries after a crash.** An import commit's journal entries lost to a crash between publication and the journal write come back through the journal rebuild (CL-1.9), not at library open: the open-time reconcile of ADR 040 Decision 6 covers the catalog's snapshot commits only.
 
 ### TDD
 
@@ -459,11 +460,11 @@ The import test failed to compile before the change:
       3 error[E0609]: no field `view` on type `UploadView`
 ```
 
-The engine-warning test with the commit's activity span removed:
+The engine-warning test with the commit's activity span removed (`cargo test -p filesquid-api --test integration_engine_warnings`):
 
 ```text
-thread 'an_engine_warning_during_a_file_route_commit_carries_its_operation_id' (3960) panicked at crates/api/tests/integration/commit_linkage.rs:530:5:
-test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 12 filtered out; finished in 0.03s
+thread 'an_engine_warning_during_a_file_route_commit_carries_its_operation_id' (25961) panicked at crates/api/tests/integration/engine_warnings.rs:54:5:
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
 ```
 
 The F-067 steps were bound after the code they cover existed (API-F2.8 and this task's first part). They pass, as the output below shows.

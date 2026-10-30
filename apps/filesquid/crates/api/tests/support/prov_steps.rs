@@ -202,6 +202,16 @@ async fn record_of(rig: &FilesRig, result: &Value) -> Value {
     serde_json::from_slice(&bytes).expect("JSON")
 }
 
+/// The journal entry IDs an activity names in `fsq:journalEntry`, each as text.
+fn journal_ids(activity: &Value) -> Vec<String> {
+    activity["fsq:journalEntry"]
+        .as_array()
+        .expect("journal entries")
+        .iter()
+        .map(|id| id.as_str().map_or_else(|| id.to_string(), str::to_string))
+        .collect()
+}
+
 /// The reference `<object>@<version>` of `result`.
 fn reference_of(result: &Value) -> String {
     let object = result["object_id"].as_str().expect("object id");
@@ -387,12 +397,7 @@ async fn one_activity(w: &mut MonitorWorld, kind: String) {
 async fn names_journal_ids(w: &mut MonitorWorld) {
     let record = record_of(w.prov.rig(), &w.prov.result).await;
     let activity = typed(&record, "prov:Activity").remove(0);
-    let named: Vec<String> = activity["fsq:journalEntry"]
-        .as_array()
-        .expect("journal entries")
-        .iter()
-        .map(|id| id.as_str().map_or_else(|| id.to_string(), str::to_string))
-        .collect();
+    let named = journal_ids(&activity);
     let entries = entries_of(w.prov.rig(), &w.prov.result);
     assert!(!entries.is_empty());
     for entry in entries {
@@ -447,12 +452,11 @@ async fn generated_and_derived(w: &mut MonitorWorld) {
         })
         .expect("the new metadata state");
     assert_eq!(references(&entity["prov:wasGeneratedBy"]), [activity_id]);
-    let previous = format!(":{}:", w.prov.previous_version);
-    let derived = references(&entity["prov:wasDerivedFrom"]);
-    assert!(
-        derived.iter().any(|id| id.contains(&previous)),
-        "{derived:?}"
-    );
+    let object_id = w.prov.result["object_id"].as_str().expect("object id");
+    let file_id = w.prov.uploaded["file_id"].as_str().expect("file id");
+    let path = format!("original/{file_id}.metadata.md");
+    let previous = filesquid_prov::entity_id(object_id, &w.prov.previous_version, &path);
+    assert_eq!(references(&entity["prov:wasDerivedFrom"]), [previous]);
 }
 
 #[when(expr = "I rename a file")]
@@ -490,8 +494,8 @@ async fn activity_lists_entry(w: &mut MonitorWorld) {
         .find(|e| e.operation == "ocfl.commit")
         .expect("the commit entry");
     let id = commit.id.expect("an id").to_string();
-    let named = activity["fsq:journalEntry"].to_string();
-    assert!(named.contains(&id), "{id} not in {named}");
+    let named = journal_ids(&activity);
+    assert!(named.contains(&id), "{id} not in {named:?}");
 }
 
 #[given(expr = "a file whose metadata is unchanged")]
@@ -583,6 +587,8 @@ async fn recorded_history(w: &mut MonitorWorld) {
 #[when(expr = "I close FileSquid and copy the storage root with ordinary file tools")]
 fn copy_root(w: &mut MonitorWorld) {
     let rig = w.prov.rig();
+    // Closing the library stops every write to its storage root before the copy.
+    assert!(rig.service.close_library(&crate::files_fixture::library()));
     let copy = rig.dir.join("ordinary-copy");
     copy_tree(&rig.dir.join("root"), &copy);
     w.prov.copy = Some(copy);

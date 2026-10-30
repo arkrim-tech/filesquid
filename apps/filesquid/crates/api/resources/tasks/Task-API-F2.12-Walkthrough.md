@@ -14,7 +14,7 @@ Also API-S-028 (PROV-O record per commit and journal linkage) and API-S-032 (Dur
   - A stalled writer holds the next version's reservation, so the move takes it over, and the OCFL engine warns "took over an expired version reservation" inside the move's activity span.
   - The test asserts that every `ocfl.engine.*` entry the journal layer writes carries the move's operation ID.
   - It has a binary of its own: `tracing` caches callsite interest for the whole process, so a parallel test that reaches the engine's callsites without a subscriber raced with this test's thread-local subscriber.
-- The `commit_staged` span that API-F2.8 wired is the code under test.
+- The code under test is the `activity` span (`trace_layer::activity_span`, opened through `canonical::message::commit_span` with the commit's operation ID) that API-F2.8 wraps around every file-route commit in `files::provenance::commit_staged`.
 
 ## SRS traceability
 
@@ -26,11 +26,11 @@ Also API-S-028 (PROV-O record per commit and journal linkage) and API-S-032 (Dur
 
 ## TDD
 
-With the commit's activity span removed (`commit.await` instead of `commit.instrument(prepared.span()).await`):
+With the commit's activity span removed (`commit.await` instead of `commit.instrument(prepared.span()).await` in `commit_staged`), `cargo test -p filesquid-api --test integration_engine_warnings`:
 
 ```text
-thread 'an_engine_warning_during_a_file_route_commit_carries_its_operation_id' (3960) panicked at crates/api/tests/integration/commit_linkage.rs:530:5:
-test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 12 filtered out; finished in 0.03s
+thread 'an_engine_warning_during_a_file_route_commit_carries_its_operation_id' (25961) panicked at crates/api/tests/integration/engine_warnings.rs:54:5:
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
 ```
 
 ## Test output
