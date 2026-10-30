@@ -444,7 +444,7 @@ enum FileOutcome {
 /// How the manifest's run ended.
 enum Ended {
     /// Every entry is done; the run still holds its lease.
-    Done(RunningJob),
+    Done(Box<RunningJob>),
     /// The run gave its lease back; the job is now in this state.
     Halted(JobState),
 }
@@ -514,7 +514,7 @@ async fn run_manifest(
     let mut index = checkpoint_next(running.checkpoint_text());
     for _ in 0..manifest.len().saturating_add(MAX_CONTINUED_HALTS) {
         let Some(entry) = manifest.get(index) else {
-            return Ok(Ended::Done(running));
+            return Ok(Ended::Done(Box::new(running)));
         };
         let next = match import_entry(context, &running, plan, entry, &mut run.retries).await {
             FileOutcome::Imported(view) => {

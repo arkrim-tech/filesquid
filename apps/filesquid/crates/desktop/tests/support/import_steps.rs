@@ -1,5 +1,5 @@
-//! Steps of `desktop_imports_F-002.feature` (Tasks DE-1.2, DE-1.7; SRS-F-002, API-S-036,
-//! DE-S-019, DE-S-018, API-S-011, DE-S-006): the desktop's import route over a library in its
+//! Steps of `desktop_imports_F-002.feature` (Tasks DE-1.2, DE-1.7, DE-1.9; SRS-F-002,
+//! API-S-036, DE-S-019, DE-S-018, API-S-011, DE-S-006, DE-S-020, API-S-037): the desktop's import route over a library in its
 //! own folder, attached to its catalog index, driven through the `filesquid://` scheme with
 //! the per-launch token and a scripted dialog ([`ImportRig`](super::import_rig::ImportRig)),
 //! in a scratch directory that is removed when the scenario ends.
@@ -12,6 +12,7 @@ use filesquid_api::navigation::{FolderScope, NodeRef};
 use filesquid_core::CollectionId;
 use serde_json::{json, Value};
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
 /// What one import scenario set up and saw.
 #[derive(Debug, Default)]
@@ -259,4 +260,94 @@ async fn folders_in(world: &mut DesktopWorld, first: String, second: String, par
         .await;
     assert_eq!(status, 200, "{page}");
     assert_eq!(shown(&page, "nodes"), [first, second]);
+}
+
+/// Longest wait for an import job to reach a state.
+const JOB_WAIT: Duration = Duration::from_secs(30);
+
+/// The job the first started import answered.
+fn job_id(world: &mut DesktopWorld) -> String {
+    let answers = &scenario(world).answers;
+    let job = answers
+        .iter()
+        .find_map(|(_, answer)| answer["job_id"].as_str());
+    job.expect("a started job").to_string()
+}
+
+#[given("the import worker will be held on its first file")]
+fn held(world: &mut DesktopWorld) {
+    rig(world).gate.arm();
+}
+
+/// POST the control `control` of the scenario's job, asserting it is answered.
+async fn control(world: &mut DesktopWorld, control: &str) -> Value {
+    let job = job_id(world);
+    let path = format!("/api/v1/jobs/{job}/{control}");
+    let (status, answer) = rig(world).post(&path).await;
+    assert_eq!(status, 200, "{control}: {answer}");
+    answer
+}
+
+#[when(expr = "the owner {word} the import while its first file is in hand")]
+async fn control_in_hand(world: &mut DesktopWorld, verb: String) {
+    assert!(
+        rig(world).gate.wait_held(),
+        "the worker holds the first file"
+    );
+    let name = match verb.as_str() {
+        "pauses" => "pause",
+        "cancels" => "cancel",
+        other => panic!("no control {other}"),
+    };
+    control(world, name).await;
+    rig(world).gate.release();
+}
+
+#[when("the owner resumes the import job")]
+async fn resume(world: &mut DesktopWorld) {
+    let answer = control(world, "resume").await;
+    assert_eq!(
+        answer["scheduled"], true,
+        "handed to the import runner: {answer}"
+    );
+}
+
+#[then(expr = "the import job should be {word} with {int} of {int} files done")]
+async fn job_reaches(world: &mut DesktopWorld, state: String, done: u64, total: u64) {
+    let job = job_id(world);
+    let reached = |view: &Value| match state.as_str() {
+        "paused" => view["paused"] == true,
+        other => view["state"] == other,
+    };
+    let deadline = Instant::now() + JOB_WAIT;
+    let mut view = Value::Null;
+    while Instant::now() < deadline {
+        view = rig(world).get(&format!("/api/v1/jobs/{job}")).await.1;
+        if reached(&view) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert!(reached(&view), "{state}: {view}");
+    assert_eq!(view["done"], done, "{view}");
+    assert_eq!(view["total"], total, "{view}");
+}
+
+#[then(expr = "the job control {string} should be journaled once")]
+fn control_journaled(world: &mut DesktopWorld, operation: String) {
+    let job = job_id(world);
+    let entries = rig(world)
+        .journal()
+        .into_iter()
+        .filter(|e| e.operation == operation && e.target_ids.contains(&job))
+        .count();
+    assert_eq!(entries, 1, "{operation}");
+}
+
+#[then("only the file in hand should be imported")]
+fn only_in_hand(world: &mut DesktopWorld) {
+    let rig = rig(world);
+    rig.stop_worker();
+    assert_eq!(rig.imported().len(), 1, "no further file read");
+    assert_eq!(rig.file_objects(), 1);
 }
