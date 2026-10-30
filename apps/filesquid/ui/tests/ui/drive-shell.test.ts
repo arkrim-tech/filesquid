@@ -224,6 +224,35 @@ describe("<fs-destination-picker>", () => {
     ]);
   });
 
+  it("reads a node's children once when it is expanded twice before the first read ends", async () => {
+    const source = new MemoryNavigationSource(TREE);
+    const list = source.list.bind(source);
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    let hold = false;
+    let reads = 0;
+    source.list = async (parent, cursor, limit) => {
+      if (hold && parent === "c1") {
+        reads += 1;
+        await gate;
+      }
+      return list(parent, cursor, limit);
+    };
+    const picker = document.createElement("fs-destination-picker") as FsDestinationPicker;
+    picker.configure({ labels, source });
+    document.body.append(picker);
+    await settle();
+    hold = true;
+    const chevron = rows(picker)[1]?.querySelector(".chevron") as HTMLElement;
+    chevron.click();
+    chevron.click();
+    await settle();
+    release();
+    await settle();
+    expect(reads).toBe(1);
+    expect(rows(picker).map((li) => li.textContent?.trim())).toEqual(["Family", "Photos", "2025"]);
+  });
+
   it("shows the error state with Try again when a lazy read of a node fails", async () => {
     const source = new MemoryNavigationSource(TREE);
     const list = source.list.bind(source);

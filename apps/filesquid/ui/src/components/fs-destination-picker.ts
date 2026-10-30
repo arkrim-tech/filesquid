@@ -83,6 +83,7 @@ export class FsDestinationPicker extends HTMLElement {
   private options?: DestinationPickerOptions;
   private levels = new Map<string, readonly NavigationNode[]>();
   private expanded = new Set<string>();
+  private readonly reading = new Map<string, Promise<void>>();
   private roots: readonly NavigationNode[] = [];
   private chosen?: DestinationChoice;
   private generation = 0;
@@ -150,6 +151,7 @@ export class FsDestinationPicker extends HTMLElement {
     const source = this.options?.source;
     if (!source) return;
     const generation = ++this.generation;
+    this.reading.clear();
     this.show({ kind: "loading" });
     try {
       const staged = new Map<string, readonly NavigationNode[]>();
@@ -197,15 +199,33 @@ export class FsDestinationPicker extends HTMLElement {
 
   /** Read the children of a node, if not read yet, and show it open. */
   private async expand(node: string): Promise<void> {
-    if (!this.levels.has(node)) {
-      const generation = this.generation;
-      const staged = new Map<string, readonly NavigationNode[]>();
-      await this.level(node, staged);
-      if (generation !== this.generation) return;
-      // Merge into the current map: another expand may have finished while this one read.
-      this.levels = new Map([...this.levels, ...staged]);
-    }
+    const generation = this.generation;
+    if (!this.levels.has(node)) await this.readChildren(node);
+    if (generation !== this.generation) return;
     this.expanded.add(node);
+  }
+
+  /** Read a node's children; a read already running for the node is joined, not repeated. */
+  private readChildren(node: string): Promise<void> {
+    let running = this.reading.get(node);
+    if (!running) {
+      const read: Promise<void> = this.fetchChildren(node).finally(() => {
+        if (this.reading.get(node) === read) this.reading.delete(node);
+      });
+      running = read;
+      this.reading.set(node, read);
+    }
+    return running;
+  }
+
+  /** One read of a node's children, kept only if the tree was not read again meanwhile. */
+  private async fetchChildren(node: string): Promise<void> {
+    const generation = this.generation;
+    const staged = new Map<string, readonly NavigationNode[]>();
+    await this.level(node, staged);
+    if (generation !== this.generation) return;
+    // Merge into the current map: another node's read may have finished while this one ran.
+    this.levels = new Map([...this.levels, ...staged]);
   }
 
   /** The visible rows: libraries (not places), then collections and folders below them. */

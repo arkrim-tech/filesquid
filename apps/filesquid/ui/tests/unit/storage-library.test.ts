@@ -205,6 +205,29 @@ describe("the storage block", () => {
     }
   });
 
+  it("drops a read still in flight when it is stopped", async () => {
+    defineElements();
+    const shell = document.createElement("fs-app-shell") as FsAppShell;
+    let answer: (bytes: number) => void = () => undefined;
+    const request = vi.fn(async (path: string) => {
+      if (path.startsWith("/api/v1/libraries/recent")) return { libraries: [library("lib", true)] };
+      const bytes = await new Promise<number>((resolve) => (answer = resolve));
+      return { library_id: "lib", objects: 1, contents: 1, bytes, truncated: false };
+    });
+    const seen: unknown[] = [];
+    Object.defineProperty(shell, "storage", {
+      set: (value) => seen.push(value),
+      configurable: true,
+    });
+    const stop = bindStorage(shell, { request } as never, 0);
+    shell.dispatchEvent(new CustomEvent("fs-summary", { detail: { text: "x" } }));
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    stop();
+    answer(1000);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(seen).toEqual([]);
+  });
+
   it("keeps the newest summary when an older read finishes last", async () => {
     defineElements();
     const shell = document.createElement("fs-app-shell") as FsAppShell;

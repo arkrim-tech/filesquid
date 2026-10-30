@@ -84,6 +84,7 @@ export function bindStorage(
   shell.addEventListener("fs-summary", first);
   shell.addEventListener("fs-drive-change", refresh);
   return () => {
+    latest += 1; // a read still in flight must not set the block after teardown
     clearTimeout(timer);
     shell.removeEventListener("fs-summary", first);
     shell.removeEventListener("fs-drive-change", refresh);
