@@ -18,3 +18,9 @@ members = [
 [workspace.package]
 edition = "2021"
 license = "MIT"
+
+# SHA-256 runs over every byte an import stages (at least twice, OCFL-S-026); unoptimised it
+# hashes a few MiB per second, so the large-file import tests of Task DE-1.9 would take
+# minutes. Optimise only this crate in dev and test builds.
+[profile.dev.package.sha2]
+opt-level = 3

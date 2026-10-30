@@ -495,22 +495,33 @@ async fn a_file_that_keeps_failing_is_quarantined_after_five_attempts_and_the_re
 }
 
 #[tokio::test]
-async fn a_file_too_large_for_this_build_is_quarantined_without_retries() {
-    let dir = TempDir::new("large");
+async fn a_file_that_streams_longer_than_the_lease_keeps_the_job_s_lease_alive() {
+    let dir = TempDir::new("lease");
     let rig = Rig::new(&dir.0).await;
-    let folder = holiday_folder(&dir.0);
-    let huge = std::fs::File::create(folder.join("huge.bin")).expect("huge");
-    huge.set_len(513 * 1024 * 1024).expect("sparse");
+    let folder = dir.0.join("Big");
+    std::fs::create_dir_all(&folder).expect("folder");
+    let big = std::fs::File::create(folder.join("big.raw")).expect("big");
+    big.set_len(96 * 1024 * 1024).expect("sparse");
     let plan = plan(&folder);
-    let job = rig.submit(&plan, "op-large");
+    let job = rig.submit(&plan, "op-lease");
     let journal = rig.monitor.journal();
-    let run = run_import_job(&rig.context(&journal), &job.id, &plan)
+    let short = rig.jobs.clone().with_lease_ttl(LEASE_TTL_MS);
+    let context = ImportContext {
+        jobs: &short,
+        ..rig.context(&journal)
+    };
+    let run = run_import_job(&context, &job.id, &plan)
         .await
-        .expect("ran");
-    assert_eq!(run.imported.len(), 3);
-    assert_eq!(run.quarantined, ["too_large_for_this_build"]);
-    assert_eq!(run.retries, 0);
+        .expect("the lease held through the file");
+    assert_eq!(run.state, JobState::Completed);
+    assert_eq!(run.imported.len(), 1);
+    assert_eq!(rig.jobs.job(&job.id).expect("job").attempts, 1, "one run");
 }
+
+/// The lease of [`a_file_that_streams_longer_than_the_lease_keeps_the_job_s_lease_alive`]:
+/// far shorter than staging and committing its 96 MiB file takes (two reads, two hashes and
+/// two writes of the file), so the run's lease must be renewed while the file is imported.
+const LEASE_TTL_MS: i64 = 300;
 
 #[tokio::test]
 async fn a_quit_suspends_between_files_and_the_resume_imports_only_the_rest() {

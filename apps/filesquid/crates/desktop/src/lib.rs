@@ -774,8 +774,8 @@ pub fn import_build() -> filesquid_native::import::host::Build {
 
 /// Open the import plans in `data_dir`, start the native import worker (setting `stop`
 /// suspends it; it runs the unfinished import jobs when the job store was `recovered`), and install
-/// the import route with the native `rfd` dialog (Task DE-1.2). Starts a thread; database
-/// I/O.
+/// the import route with the native `rfd` dialog (Task DE-1.2) and the worker as the `import`
+/// job runner (Task DE-1.9). Starts a thread; database I/O.
 ///
 /// # Errors
 /// The plans could not be opened, the worker not started, or the route not installed.
@@ -812,7 +812,23 @@ fn start_imports(
         dialog: Box::new(imports::RfdSources::new(app.clone())),
     };
     install_import_route(&app.state::<ApiState>(), starting)?;
+    install_import_runner(&app.state::<ApiState>(), worker.clone())?;
     Ok(worker)
+}
+
+/// Install the import worker as the runner of `import` jobs in `state`, so
+/// `POST /api/v1/jobs/{job}/resume` hands a resumed import to it (Task DE-1.9, DE-S-020).
+///
+/// # Errors
+/// An import runner is already installed.
+pub fn install_import_runner(
+    state: &ApiState,
+    worker: Arc<filesquid_native::import::worker::ImportWorker>,
+) -> Result<(), String> {
+    if !state.install_job_runner(filesquid_native::import::job::IMPORT_KIND, worker) {
+        return Err("an import runner was already installed".to_string());
+    }
+    Ok(())
 }
 
 /// Install the import route's starter over `starting` in `state` (API-S-036).

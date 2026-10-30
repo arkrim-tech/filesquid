@@ -12,6 +12,7 @@ pub mod job;
 pub mod names;
 pub mod placing;
 pub mod plans;
+pub mod source;
 pub mod time;
 pub mod volume;
 pub mod worker;

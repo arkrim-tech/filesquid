@@ -418,3 +418,39 @@ fn a_paused_backfill_job_waits_until_it_is_resumed() {
     launch.stop();
     folder_library::remove_all(&dir);
 }
+
+#[test]
+fn import_jobs_are_transfers_so_at_most_four_run_at_once() {
+    use filesquid_native::import::job::IMPORT_KIND;
+    let dir = data_dir("transfers");
+    let state = ApiState::new();
+    let host = open_host_monitor(&state, &dir, None).expect("monitor");
+    let jobs = open_jobs(&dir, &host).expect("jobs");
+    let submit = |n: usize| {
+        jobs.submit(JobSpec {
+            kind: IMPORT_KIND.into(),
+            operation_id: format!("op-transfer-{n}"),
+            source: format!("import:{n}"),
+        })
+        .expect("submitted")
+    };
+    let mut running = Vec::new();
+    for n in 0..4 {
+        let job = submit(n);
+        running.push(jobs.start(&job.id, &job.source).expect("a free slot"));
+    }
+    let fifth = submit(4);
+    let refused = jobs.start(&fifth.id, &fifth.source).expect_err("no slot");
+    assert_eq!(refused.error_code(), "slots_full", "CORE-S-006's cap of 4");
+    assert_eq!(jobs.job(&fifth.id).expect("job").state, JobState::Pending);
+    for run in running {
+        run.suspend().expect("suspended");
+    }
+    jobs.start(&fifth.id, &fifth.source)
+        .expect("a slot is free again")
+        .suspend()
+        .expect("suspended");
+    host.stop();
+    drop(jobs);
+    folder_library::remove_all(&dir);
+}

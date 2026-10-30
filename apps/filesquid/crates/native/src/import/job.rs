@@ -20,6 +20,12 @@
 //!   free after the file, and no file may exceed the staging cap of [`STAGING_CAP_BYTES`];
 //!   when space runs short the job is suspended with its checkpoint, to resume later.
 //! - Setting the stop flag (quit) suspends the job between files with its checkpoint.
+//! - A pause or cancel asked through the job routes (API-S-037, Task DE-1.9) is read after
+//!   every per-file checkpoint and every lease renewal between a file's attempts; the job then
+//!   halts only through the API's atomic [`RunningJob::halt_if_requested`], so a pause leaves
+//!   it pending with its checkpoint after the file in hand, a cancel ends it cancelled with no
+//!   further file read, and a resume that cleared the pause first keeps the run going. The API
+//!   journals each control and the halt; the job journals none of them.
 //!
 //! - Every import names its destination collection and folder (ADR 041 "Must choose"): a
 //!   plan without one fails its job (`destination_required`), as does a collection the library
@@ -35,7 +41,7 @@
 //! Every file's outcome is journaled as [`IMPORT_FILE_OPERATION`] with opaque IDs and an error
 //! code only, never a path or a file name.
 
-use super::file::{import_file, FileImport};
+use super::file::{import_file, FileImport, ImportFailure};
 use super::host::Build;
 use super::index::ImportIndex;
 use super::placing::{logical_path, source_roots};
@@ -43,7 +49,7 @@ use super::plans::{ImportPlan, ManifestEntry, SqliteImportPlans};
 use crate::catalog::{PendingIntent, RegisterFile, Registration, REGISTER_OPERATION};
 use crate::HostFiles;
 use filesquid_api::files::UploadView;
-use filesquid_api::jobs::{JobError, JobSpec, JobState, Jobs, RunningJob};
+use filesquid_api::jobs::{Halt, JobError, JobSpec, JobState, Jobs, RunningJob};
 use filesquid_api::journal::{JournalEntry, Level, Outcome};
 use filesquid_api::journal_writer::JournalSender;
 use filesquid_api::library::mint_uuid_v4;
@@ -76,6 +82,10 @@ pub const STAGING_CAP_BYTES: u64 = 10 * 1024 * 1024 * 1024;
 
 /// The smallest free-space reserve kept on the destination (NFR-003, 2 GiB).
 pub const MIN_RESERVE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+
+/// Most halts one run lets a resume undo before the file in hand is done (AGENTS.md §22); a
+/// run past it suspends with its checkpoint, to go on at the next resume or launch.
+pub const MAX_CONTINUED_HALTS: usize = 1_000;
 
 /// What one run of an import job did.
 #[derive(Clone, Debug)]
@@ -426,6 +436,23 @@ enum FileOutcome {
     Suspend,
     /// The job's lease was lost; the run must stop without writing the job again.
     Lost(JobError),
+    /// A pause or cancel was asked while the file was being retried: the file is not done,
+    /// and the job must halt if the request still stands.
+    Halt,
+    /// The file's object is committed but the index kept refusing its registration: the job
+    /// must suspend and keep the import's intent, so the next run registers it.
+    Unregistered,
+}
+
+/// How the manifest's run ended.
+enum Ended {
+    /// Every entry is done; the run still holds its lease.
+    Done(Box<RunningJob>),
+    /// The run gave its lease back; the job is now in this state.
+    Halted(JobState),
+    /// The run gave its lease back with a committed file still unregistered; the job is now
+    /// in this state, and the import's intent is kept even if it was cancelled.
+    Unregistered(JobState),
 }
 
 /// Run the import job `job_id` for `plan`: start it (resuming at its checkpoint), keep or
@@ -442,7 +469,7 @@ pub async fn run_import_job(
     job_id: &str,
     plan: &ImportPlan,
 ) -> Result<ImportRun, JobError> {
-    let mut running = context.jobs.start(job_id, &import_source(plan))?;
+    let running = context.jobs.start(job_id, &import_source(plan))?;
     let operation_id = running.job().operation_id.clone();
     let manifest = match prepare(context, &running, plan) {
         Ok(manifest) => manifest,
@@ -459,26 +486,84 @@ pub async fn run_import_job(
         quarantined: Vec::new(),
         retries: 0,
     };
-    let next = checkpoint_next(running.checkpoint_text());
+    match run_manifest(context, running, plan, &manifest, &mut run).await? {
+        Ended::Done(running) => {
+            running.complete()?;
+            finish(context, job_id, plan, &operation_id);
+            run.state = JobState::Completed;
+        }
+        Ended::Halted(state) => {
+            if state == JobState::Cancelled {
+                finish(context, job_id, plan, &operation_id);
+            }
+            run.state = state;
+        }
+        Ended::Unregistered(state) => run.state = state,
+    }
+    Ok(run)
+}
+
+/// Import every entry of `manifest` from the checkpoint of `running` on, checkpointing after
+/// each; after each checkpoint a pause or cancel asked of the job halts it through
+/// [`RunningJob::halt_if_requested`], and a quit or a lack of space suspends it with its
+/// checkpoint. Filesystem, database and journal I/O.
+///
+/// # Errors
+/// The job could not be written, or its lease was lost.
+async fn run_manifest(
+    context: &ImportContext<'_>,
+    mut running: RunningJob,
+    plan: &ImportPlan,
+    manifest: &[ManifestEntry],
+    run: &mut ImportRun,
+) -> Result<Ended, JobError> {
     let total = Some(manifest.len() as u64);
-    for (index, entry) in manifest.iter().enumerate().skip(next) {
-        match import_entry(context, &running, plan, entry, &mut run.retries).await {
-            FileOutcome::Imported(view) => run.imported.push(view),
-            FileOutcome::Quarantined(code) => run.quarantined.push(code),
+    let mut index = checkpoint_next(running.checkpoint_text());
+    for _ in 0..manifest.len().saturating_add(MAX_CONTINUED_HALTS) {
+        let Some(entry) = manifest.get(index) else {
+            return Ok(Ended::Done(Box::new(running)));
+        };
+        let next = match import_entry(context, &running, plan, entry, &mut run.retries).await {
+            FileOutcome::Imported(view) => {
+                run.imported.push(view);
+                index + 1
+            }
+            FileOutcome::Quarantined(code) => {
+                run.quarantined.push(code);
+                index + 1
+            }
             FileOutcome::Lost(err) => return Err(err),
+            FileOutcome::Halt => index,
             FileOutcome::Suspend => {
                 running.checkpoint(&import_checkpoint(index), index as u64, total)?;
-                running.suspend()?;
-                run.state = JobState::Pending;
-                return Ok(run);
+                return Ok(Ended::Halted(running.suspend()?));
             }
-        }
-        running.checkpoint(&import_checkpoint(index + 1), index as u64 + 1, total)?;
+            FileOutcome::Unregistered => {
+                running.checkpoint(&import_checkpoint(index), index as u64, total)?;
+                return Ok(Ended::Unregistered(running.suspend()?));
+            }
+        };
+        running.checkpoint(&import_checkpoint(next), next as u64, total)?;
+        index = next;
+        running = match halt_if_asked(running)? {
+            Halt::Continued(running) => *running,
+            Halt::Halted(state) => return Ok(Ended::Halted(state)),
+        };
     }
-    running.complete()?;
-    finish(context, job_id, plan, &operation_id);
-    run.state = JobState::Completed;
-    Ok(run)
+    Ok(Ended::Halted(running.suspend()?))
+}
+
+/// Halt `running` through the API's atomic check when the last checkpoint or renewal read a
+/// pause or cancel asked of it; otherwise keep it running. Database I/O only when one was
+/// read.
+///
+/// # Errors
+/// [`JobError::Fenced`] or a store failure.
+fn halt_if_asked(running: RunningJob) -> Result<Halt, JobError> {
+    match running.requested() {
+        Some(_) => running.halt_if_requested(),
+        None => Ok(Halt::Continued(Box::new(running))),
+    }
 }
 
 /// Check `plan`'s destination, record the import's intent and keep or read its manifest.
@@ -513,6 +598,17 @@ fn import_intent(library: &LibraryId, operation_id: &str) -> Result<PendingInten
         expected_revision: ExpectedRevision::new("0").map_err(|_| "unavailable")?,
         recorded_at_ms: filesquid_api::journal::now_ms(),
     })
+}
+
+/// Close out the import job `job`, found finished before it ran (cancelled while pending, for
+/// example): mark it finished in the plans and clear the import's intent, as the end of a run
+/// does. Database I/O; a failure is logged.
+pub fn close_finished(
+    context: &ImportContext<'_>,
+    job: &filesquid_api::jobs::Job,
+    plan: &ImportPlan,
+) {
+    finish(context, &job.id, plan, &job.operation_id);
 }
 
 /// Mark `job_id` finished in the plans and clear the import's intent; a failure of either is
@@ -585,6 +681,83 @@ async fn import_entry(
             import_with_attempts(context, running, &request, &placed, retries).await
         }
     }
+}
+
+/// How often a run renews its lease while one file streams: a third of the lease's length,
+/// so two renewals can be late before it ends. Pure.
+pub fn renewal_interval(jobs: &Jobs) -> Duration {
+    let third = u64::try_from(jobs.lease_ttl_ms() / 3).unwrap_or(1).max(1);
+    Duration::from_millis(third)
+}
+
+/// Renew the lease of `running` while a file is imported; a failure is logged with its code
+/// (a lost lease stops the run at its next checkpoint). Database I/O.
+fn renew_lease(running: &RunningJob) {
+    if let Err(err) = running.renew() {
+        tracing::warn!(
+            operation = IMPORT_FILE_OPERATION,
+            job_id = running.job().id.as_str(),
+            error_code = err.error_code(),
+            "an import job's lease could not be renewed while a file was imported"
+        );
+    }
+}
+
+/// How long the heartbeat sleeps between two looks at the import.
+const HEARTBEAT_STEP: Duration = Duration::from_millis(50);
+
+/// Most looks one file's heartbeat takes (a day of [`HEARTBEAT_STEP`]s, AGENTS.md §22); past
+/// it the heartbeat stops renewing and waits for the import to end.
+const MAX_HEARTBEAT_STEPS: u32 = 24 * 60 * 60 * 20;
+
+/// Import `request` on a scoped thread with a runtime of its own while this thread renews the
+/// lease of `running` every [`renewal_interval`], so a file that takes longer than one lease
+/// to stage and commit keeps the job's lease (Task DE-1.9; the storage backends block, so the
+/// renewal cannot share the import's thread). Starts a thread; filesystem, storage and
+/// database I/O.
+///
+/// # Errors
+/// As [`import_file`]; a runtime that cannot be built is `unavailable`, an import that
+/// panicked `internal`.
+fn import_with_heartbeat(
+    context: &ImportContext<'_>,
+    running: &RunningJob,
+    request: &FileImport<'_>,
+) -> Result<UploadView, ImportFailure> {
+    let every = renewal_interval(context.jobs);
+    std::thread::scope(|scope| {
+        let importing = scope.spawn(|| import_on_own_runtime(context.files, request));
+        let mut renewed = Instant::now();
+        for _ in 0..MAX_HEARTBEAT_STEPS {
+            if importing.is_finished() {
+                break;
+            }
+            std::thread::sleep(HEARTBEAT_STEP);
+            if renewed.elapsed() >= every {
+                renew_lease(running);
+                renewed = Instant::now();
+            }
+        }
+        importing.join().unwrap_or(Err(ImportFailure::Commit {
+            code: "internal",
+            retryable: false,
+        }))
+    })
+}
+
+/// Run [`import_file`] for `request` to its end on a current-thread runtime of this thread.
+/// Filesystem and storage I/O.
+fn import_on_own_runtime(
+    files: &HostFiles,
+    request: &FileImport<'_>,
+) -> Result<UploadView, ImportFailure> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .map_err(|_| ImportFailure::Commit {
+            code: "unavailable",
+            retryable: true,
+        })?;
+    runtime.block_on(import_file(files, request))
 }
 
 /// Where a file of the manifest is registered.
@@ -662,7 +835,7 @@ async fn import_with_attempts(
             Ok(()) => {}
         }
         *retries += u32::from(attempt > 1);
-        match import_file(context.files, request).await {
+        match import_with_heartbeat(context, running, request) {
             Ok(view) => match register(
                 context,
                 running,
@@ -686,6 +859,9 @@ async fn import_with_attempts(
         if let Err(err) = running.renew() {
             return FileOutcome::Lost(err);
         }
+        if !committed && attempt < MAX_ATTEMPTS && running.requested().is_some() {
+            return FileOutcome::Halt;
+        }
     }
     match committed {
         true => unregistered(running),
@@ -694,9 +870,10 @@ async fn import_with_attempts(
 }
 
 /// Suspend the job whose file object is committed but whose registration the index kept
-/// refusing to take: the job and the import's intent stay, so the next run answers the same
-/// object and registers it, rather than leave a committed object outside every collection.
-/// Logs the code (stdout).
+/// refusing to take: the job and the import's intent stay (even under a cancel, which ends
+/// the job but keeps the intent pending for the index's reconciliation), so the committed
+/// object is never left outside every collection with its intent cleared. Logs the code
+/// (stdout).
 fn unregistered(running: &RunningJob) -> FileOutcome {
     tracing::warn!(
         operation = IMPORT_FILE_OPERATION,
@@ -704,7 +881,7 @@ fn unregistered(running: &RunningJob) -> FileOutcome {
         error_code = "unavailable",
         "an imported file is committed but not yet registered; the job is suspended"
     );
-    FileOutcome::Suspend
+    FileOutcome::Unregistered
 }
 
 /// Journal an imported file and answer it.

@@ -5,12 +5,18 @@
 //! from the plans [`RECOVERY_PAGE`] at a time until every one was tried once this launch.
 //! Setting the stop flag (quit) suspends the running job with its checkpoint and ends the
 //! thread; the next launch tries every unfinished job again.
+//!
+//! The worker is also the `import` kind's [`JobRunner`] (Task DE-1.9, DE-S-020): a job resumed
+//! through `POST /api/v1/jobs/{job}/resume` is queued like a new one. A job paused through the
+//! job routes is never started, whether queued or found by the recovery: it waits for its
+//! resume, with no refusal journaled. A job found finished (cancelled while pending) has its
+//! plan finished and its intent cleared.
 
 use super::host::Build;
-use super::job::{run_import_job, ImportContext};
+use super::job::{close_finished, run_import_job, ImportContext};
 use super::plans::SqliteImportPlans;
 use crate::HostFiles;
-use filesquid_api::jobs::{JobError, Jobs};
+use filesquid_api::jobs::{Job, JobError, JobRunner, Jobs};
 use filesquid_api::journal::{JournalEntry, Level, Outcome};
 use filesquid_api::journal_writer::JournalSender;
 use std::collections::HashSet;
@@ -122,6 +128,12 @@ impl ImportWorker {
         }
     }
 
+    /// Queue the resumed job `job`, as [`ImportWorker::enqueue`] does.
+    fn queue_resumed(&self, job: &Job) -> Result<(), JobError> {
+        self.enqueue(&job.id, &job.source)
+            .map_err(|code| JobError::Unavailable(code.to_string()))
+    }
+
     /// Wait, at most `limit`, for the thread to end after the stop flag was set. A thread
     /// still running then is logged and left to end with the process.
     pub fn wait(&self, limit: Duration) {
@@ -140,6 +152,14 @@ impl ImportWorker {
                 "the import worker did not stop in time"
             );
         }
+    }
+}
+
+impl JobRunner for ImportWorker {
+    /// Queue the resumed import job `job` on the worker; a full queue or an ended worker
+    /// leaves it pending for the next launch.
+    fn resume(&self, job: &Job) -> Result<(), JobError> {
+        self.queue_resumed(job)
     }
 }
 
@@ -220,7 +240,8 @@ fn recover_page(
 }
 
 /// Run the job `job_id` from its plan; a job without a plan is failed (when its `source`
-/// is known) and journaled, and a job that cannot run is journaled with its code only.
+/// is known) and journaled, a paused job is left for its resume, a finished one is closed
+/// out, and a job that cannot run is journaled with its code only.
 fn run_one(
     services: &ImportServices,
     runtime: &tokio::runtime::Runtime,
@@ -244,6 +265,11 @@ fn run_one(
         stop: &services.stop,
         retry_unit: services.retry_unit,
     };
+    match services.jobs.job(job_id) {
+        Ok(job) if job.is_paused() => return,
+        Ok(job) if job.state.is_finished() => return close_finished(&context, &job, &plan),
+        _ => {}
+    }
     let Err(err) = runtime.block_on(run_import_job(&context, job_id, &plan)) else {
         return;
     };
