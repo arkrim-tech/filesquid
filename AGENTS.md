@@ -103,14 +103,14 @@
 **Purpose:** Guarantee architectural specs can survive aggressive timeline refactoring without requiring massive document rewrites by isolating execution phases from the core requirements.
 
 - **Active Enforcement:** This principle is tactically enforced on all AI agents via the instructions in `[decoupled-execution.md](./.agents/rules/decoupled-execution.md)`.
-- **Release priority:** after the FileSquid MVP closes (Task FS-3.9), the next product is encrypted backup and sync (phase F4, closed by Task FS-4.2). The Drive is the interface for day-to-day file work. OCFL stays behind that Drive. Phase F3R (the first consumer release, Task FS-3.5) MUST NOT start while Task FS-4.2 is open. ImageSquid follows both ([C-025](./resources/product-vision.md#release-sequence), [ADR 029](./resources/architecture/029-filesquid-unified-product-and-distributions.md)).
+- **Release priority:** after the FileSquid MVP closes (Task FS-3.9), two tracks start. Encrypted backup and sync (phase F4, closed by Task FS-4.2) is the primary product. Ubuntu (GNOME) and Windows Tauri desktop releases (Task FS-3.11) are Release 1 and start at the same time. Neither track waits on the other. The Drive is the interface for day-to-day file work. OCFL stays behind that Drive. The rest of phase F3R (the first consumer release, Task FS-3.5) MUST NOT start while Task FS-4.2 is open. ImageSquid follows both ([C-025](./resources/product-vision.md#release-sequence), [ADR 029](./resources/architecture/029-filesquid-unified-product-and-distributions.md)).
 
 ## 13. Security by Design
 
 **Purpose:** Protect user data with architecture, not policy.
 
 - **Client-side encryption:** private content is encrypted on the owner's device before it reaches any hosted service. The `*.filesquid.tech` backup and sync service stores and relays ciphertext only and never processes private content ([ADR 004](./resources/architecture/004-axum-hosted-ciphertext-mailbox.md), [ADR 032](./resources/architecture/032-hosting-and-privacy-model.md)).
-- **Owner-held keys:** key custody and recovery stay with the owner. No hosted service can decrypt a library ([ADR 009](./resources/architecture/009-cryptography-webcrypto-compatible-suite.md)). The owner of a Drive enrolls another user's device public key as permission to upload into that Drive. A password is not that permission. Each Drive's backup keeps recovery points in more than one geography ([F-029](./resources/prd.md#f-029-client-encryption-and-key-custody), [F-031](./resources/prd.md#f-031-encrypted-backup-and-verified-restore), [ADR 012](./resources/architecture/012-s3-compatible-ciphertext-storage.md)).
+- **Owner-held keys:** key custody and recovery stay with the owner. No hosted service can decrypt a library ([ADR 009](./resources/architecture/009-cryptography-webcrypto-compatible-suite.md)). The owner of a Drive enrolls device public keys onto that node's whitelist. Several devices may upload, and a key that is not on the whitelist is refused. A password is not that permission. Each Drive's backup keeps recovery points in more than one geography ([F-029](./resources/prd.md#f-029-client-encryption-and-key-custody), [F-031](./resources/prd.md#f-031-encrypted-backup-and-verified-restore), [ADR 012](./resources/architecture/012-s3-compatible-ciphertext-storage.md)).
 - **Deny by default:** every API call is authorised by `filesquid-api` before it touches files, SQL or keys. The desktop host opens no TCP listener and grants Tauri capabilities explicitly ([ADR 002](./resources/architecture/002-tauri2-desktop-shell.md), [ADR 030](./resources/architecture/030-filesquid-api-and-transports.md)).
 - **Reviewed cryptography only:** the WebCrypto-compatible suite in ADR 009, with no home-grown primitives.
 
@@ -165,7 +165,7 @@
 **Purpose:** Describe how the app works offline, prioritizes local data, and syncs data when back online.
 
 - **OCFL on disk is the source of truth:** the operational database and search indexes are rebuildable from it ([ADR 010](./resources/architecture/010-ocfl-1-1-dual-profile.md), [ADR 023](./resources/architecture/023-filesquid-ocfl-engine-and-parquet.md)).
-- **Fully offline:** the desktop app works without a connection. Backup and sync are optional additions, and sync is never treated as a backup.
+- **Fully offline:** the desktop app works without a connection. Backup and sync are optional additions, and sync is never treated as a backup. Devices on one node's whitelist sync the live working set with Automerge. OCFL snapshots, on demand or every 1 or 24 hours, are the backup.
 - **Portable libraries:** owners can inspect and copy a library with ordinary file tools and reconstruct it without the app.
 - **Safe resumption:** encrypted backup and sync resume after interruption. Conflicting writers rebase or report a conflict, never silently overwrite ([ADR 016](./resources/architecture/016-rust-ocfl-library.md)).
 

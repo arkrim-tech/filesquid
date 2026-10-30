@@ -1,9 +1,9 @@
 # Implementation Plan Checklist: FileSquid
 
 <!-- mvp-progress:start -->
-![MVP progress: 76% complete](./assets/mvp-progress.svg)
+![MVP progress: 78% complete](./assets/mvp-progress.svg)
 
-**MVP progress: 76%**, about 890 of 1170 estimated hours. 20 of 28 tasks are done and 5 more are under way. Each segment of the bar is one task below, as wide as its estimated hours in the implementation plan; an open task fills by the share of its module rows that are ticked. Below the bar, In progress lists the open tasks being worked on (global tasks with at least one module row ticked, including those whose module rows are all ticked but whose own box is still open, and tasks with an open pull request); the count of tasks under way is the number of distinct open tasks listed there. Up next lists the next five new module tasks whose listed dependencies are done or in progress. Regenerate with `python3 scripts/docs/update_mvp_progress.py` after ticking boxes or opening a pull request; the check run by `scripts/verify_docs.sh` does not call GitHub and uses the pull requests recorded in the block. In a clone that registers the `mvp-progress` git merge driver (see the README), merging two pull requests that both redraw it merges their ticks and redraws it when it can, and otherwise leaves a conflict.
+**MVP progress: 78%**, about 907 of 1170 estimated hours. 20 of 28 tasks are done and 5 more are under way. Each segment of the bar is one task below, as wide as its estimated hours in the implementation plan; an open task fills by the share of its module rows that are ticked. Below the bar, In progress lists the open tasks being worked on (global tasks with at least one module row ticked, including those whose module rows are all ticked but whose own box is still open, and tasks with an open pull request); the count of tasks under way is the number of distinct open tasks listed there. Up next lists the next five new module tasks whose listed dependencies are done or in progress. Regenerate with `python3 scripts/docs/update_mvp_progress.py` after ticking boxes or opening a pull request; the check run by `scripts/verify_docs.sh` does not call GitHub and uses the pull requests recorded in the block. In a clone that registers the `mvp-progress` git merge driver (see the README), merging two pull requests that both redraw it merges their ticks and redraws it when it can, and otherwise leaves a conflict.
 
 **In progress**
 
@@ -12,12 +12,11 @@
     - [DE-1.8](../apps/filesquid/crates/desktop/resources/plan.md#phases-f2-i1-and-f5-library-import-gallery-organize-and-setup-global-tasks-1116) Host side of the upload review, per-file progress, rebuild job and library facts
     - [UI-1.2](../apps/filesquid/ui/resources/plan.md#phase-f2-default-ui-global-tasks-fs-21-fs-22-fs-24-fs-25-11-12-after-the-mvp-ui-f26-in-global-task-fs-23-ui-f210-and-ui-f212-in-global-task-fs-27-ui-f213-in-global-task-fs-26-ui-f25-in-global-task-fs-c1-phase-c) Import UI with job progress
     - [UI-1.3](../apps/filesquid/ui/resources/plan.md#phase-f2-default-ui-global-tasks-fs-21-fs-22-fs-24-fs-25-11-12-after-the-mvp-ui-f26-in-global-task-fs-23-ui-f210-and-ui-f212-in-global-task-fs-27-ui-f213-in-global-task-fs-26-ui-f25-in-global-task-fs-c1-phase-c) First use, library facts, recent libraries and the rebuild job
-- [Task FS-2.5](./implementation-plan.md#task-fs-2.5) Drive-parity views, search and version restore: 4 of 12 module rows ticked
+- [Task FS-2.5](./implementation-plan.md#task-fs-2.5) Drive-parity views, search and version restore: 5 of 12 module rows ticked
     - [API-F2.2](../apps/filesquid/crates/api/resources/plan.md#phase-f2-activity-and-health-monitoring-global-task-fs-24-and-drive-parity-operations-global-task-fs-25-api-f24-in-global-task-fs-27-after-the-mvp) View operation, preferences, storage use, copy, move and ZIP download
     - [API-F2.3](../apps/filesquid/crates/api/resources/plan.md#phase-f2-activity-and-health-monitoring-global-task-fs-24-and-drive-parity-operations-global-task-fs-25-api-f24-in-global-task-fs-27-after-the-mvp) Search operation and operator grammar
     - [API-F2.14](../apps/filesquid/crates/api/resources/plan.md#phase-f2-activity-and-health-monitoring-global-task-fs-24-and-drive-parity-operations-global-task-fs-25-api-f24-in-global-task-fs-27-after-the-mvp) Home collections for uploads, copies and moves
     - [API-F2.15](../apps/filesquid/crates/api/resources/plan.md#phase-f2-activity-and-health-monitoring-global-task-fs-24-and-drive-parity-operations-global-task-fs-25-api-f24-in-global-task-fs-27-after-the-mvp) Recently deleted filter, restore, retention and expiry settings, and retirement of "unfiled"
-    - [API-F2.19](../apps/filesquid/crates/api/resources/plan.md#phase-f2-activity-and-health-monitoring-global-task-fs-24-and-drive-parity-operations-global-task-fs-25-api-f24-in-global-task-fs-27-after-the-mvp) Command envelopes on the library routes
     - [UI-F2.8](../apps/filesquid/ui/resources/plan.md#phase-f2-default-ui-global-tasks-fs-21-fs-22-fs-24-fs-25-11-12-after-the-mvp-ui-f26-in-global-task-fs-23-ui-f210-and-ui-f212-in-global-task-fs-27-ui-f213-in-global-task-fs-26-ui-f25-in-global-task-fs-c1-phase-c) Drive-style views, sorting, selection and preferences
     - [UI-F2.9](../apps/filesquid/ui/resources/plan.md#phase-f2-default-ui-global-tasks-fs-21-fs-22-fs-24-fs-25-11-12-after-the-mvp-ui-f26-in-global-task-fs-23-ui-f210-and-ui-f212-in-global-task-fs-27-ui-f213-in-global-task-fs-26-ui-f25-in-global-task-fs-c1-phase-c) Global search bar and filter chips
     - [UI-F2.17](../apps/filesquid/ui/resources/plan.md#phase-f2-default-ui-global-tasks-fs-21-fs-22-fs-24-fs-25-11-12-after-the-mvp-ui-f26-in-global-task-fs-23-ui-f210-and-ui-f212-in-global-task-fs-27-ui-f213-in-global-task-fs-26-ui-f25-in-global-task-fs-c1-phase-c) Uploads and imports always target a collection or folder
@@ -163,7 +162,7 @@ FileSquid MVP (early access) on the macOS desktop: phases F0 to F3, closed by ga
     - [x] [API-F2.13](../apps/filesquid/crates/api/resources/plan.md#phase-f2-activity-and-health-monitoring-global-task-fs-24-and-drive-parity-operations-global-task-fs-25-api-f24-in-global-task-fs-27-after-the-mvp) Command envelopes and operation-ID idempotency on the file write routes
     - [ ] [API-F2.14](../apps/filesquid/crates/api/resources/plan.md#phase-f2-activity-and-health-monitoring-global-task-fs-24-and-drive-parity-operations-global-task-fs-25-api-f24-in-global-task-fs-27-after-the-mvp) Home collections for uploads, copies and moves
     - [ ] [API-F2.15](../apps/filesquid/crates/api/resources/plan.md#phase-f2-activity-and-health-monitoring-global-task-fs-24-and-drive-parity-operations-global-task-fs-25-api-f24-in-global-task-fs-27-after-the-mvp) Recently deleted filter, restore, retention and expiry settings, and retirement of "unfiled"
-    - [ ] [API-F2.19](../apps/filesquid/crates/api/resources/plan.md#phase-f2-activity-and-health-monitoring-global-task-fs-24-and-drive-parity-operations-global-task-fs-25-api-f24-in-global-task-fs-27-after-the-mvp) Command envelopes on the library routes
+    - [x] [API-F2.19](../apps/filesquid/crates/api/resources/plan.md#phase-f2-activity-and-health-monitoring-global-task-fs-24-and-drive-parity-operations-global-task-fs-25-api-f24-in-global-task-fs-27-after-the-mvp) Command envelopes on the library routes
     - [x] [UI-F2.18](../apps/filesquid/ui/resources/plan.md#phase-f2-default-ui-global-tasks-fs-21-fs-22-fs-24-fs-25-11-12-after-the-mvp-ui-f26-in-global-task-fs-23-ui-f210-and-ui-f212-in-global-task-fs-27-ui-f213-in-global-task-fs-26-ui-f25-in-global-task-fs-c1-phase-c) Conform the built surfaces and the shell to the active v3 mockups
     - [ ] [UI-F2.8](../apps/filesquid/ui/resources/plan.md#phase-f2-default-ui-global-tasks-fs-21-fs-22-fs-24-fs-25-11-12-after-the-mvp-ui-f26-in-global-task-fs-23-ui-f210-and-ui-f212-in-global-task-fs-27-ui-f213-in-global-task-fs-26-ui-f25-in-global-task-fs-c1-phase-c) Drive-style views, sorting, selection and preferences
     - [ ] [UI-F2.9](../apps/filesquid/ui/resources/plan.md#phase-f2-default-ui-global-tasks-fs-21-fs-22-fs-24-fs-25-11-12-after-the-mvp-ui-f26-in-global-task-fs-23-ui-f210-and-ui-f212-in-global-task-fs-27-ui-f213-in-global-task-fs-26-ui-f25-in-global-task-fs-c1-phase-c) Global search bar and filter chips
@@ -196,59 +195,64 @@ FileSquid MVP (early access) on the macOS desktop: phases F0 to F3, closed by ga
     - [ ] [UI-F3.1](../apps/filesquid/ui/resources/plan.md#phase-f3-mvp-performance-global-task-fs-34) Production-build browsing performance
 28. [ ] [Task FS-3.9](./implementation-plan.md#task-fs-3.9) FileSquid MVP gate (macOS desktop)
 
+## Desktop
+
+Ubuntu (GNOME) and Windows Tauri desktop releases are Release 1 and start right after the MVP (owner decision 2026-10-29). Task FS-3.11 starts when Task FS-3.9 is checked. It does not wait on Task FS-4.2, and phase F4 does not wait on it (0 of 1 done).
+
+29. [ ] [Task FS-3.11](./implementation-plan.md#task-fs-3.11) Ubuntu (GNOME) and Windows Tauri desktop releases
+    - [ ] [DE-F3.3](../apps/filesquid/crates/desktop/resources/plan.md#phase-f3-installers-and-performance-global-tasks-fs-31-fs-34-and-after-the-mvp-fs-311) Ubuntu (GNOME) and Windows installers, ImageSquid overlay
+    - [ ] [UI-F3.3](../apps/filesquid/ui/resources/plan.md#phase-f3r-linux-media-playback-global-task-fs-311-after-the-mvp) MediaSource video player for WebKitGTK
+
 ## Backup
 
-Encrypted backup and sync is the primary product after the MVP (phase F4), closed by gate Task FS-4.2 (0 of 9 done). The Drive is the interface for day-to-day file work. OCFL stays behind that Drive. The owner of a Drive enrolls a device key so another user can upload into that Drive. That Drive's backup keeps recovery points in more than one geography. This section starts after Task FS-3.9. Phase F3R waits until Task FS-4.2 is checked.
+Encrypted backup and sync is the primary product after the MVP (phase F4), closed by gate Task FS-4.2 (0 of 9 done). The Drive is the interface for day-to-day file work. OCFL stays behind that Drive. A node whitelist holds every device key allowed to upload, and several devices may be on it. Those devices sync with Automerge. OCFL snapshots are the backup package, on demand or every 1 or 24 hours. Upload strips embedded and sidecar metadata into the file's Markdown record and adds Prov-O and a C2PA proof. This section starts after Task FS-3.9 and runs beside the Ubuntu and Windows desktop releases. The rest of phase F3R waits until Task FS-4.2 is checked.
 
 ### Encrypted backup and sync (phase F4)
 
-29. [ ] [Task FS-4.1](./implementation-plan.md#task-fs-4.1) Ciphertext-only hosted service at `*.filesquid.tech`
+30. [ ] [Task FS-4.1](./implementation-plan.md#task-fs-4.1) Ciphertext-only hosted service at `*.filesquid.tech`
     - [ ] [SV-F4.1](../apps/filesquid/crates/server/resources/plan.md#phase-f4-ciphertext-only-hosted-service-binary-global-task-fs-41) Hosted-service binary and dependency-graph gate
     - [ ] [SV-F4.2](../apps/filesquid/crates/server/resources/plan.md#phase-f4-ciphertext-only-hosted-service-binary-global-task-fs-41) `*.filesquid.tech` deployment
     - [ ] [API-F4.1](../apps/filesquid/crates/api/resources/plan.md#phase-f4-backup-and-sync-control-global-task-fs-41) Backup and sync control routes
-30. [ ] [Task 0.6](./implementation-plan.md#task-0.6) Hosted mailbox isolation and operational schema
+31. [ ] [Task 0.6](./implementation-plan.md#task-0.6) Hosted mailbox isolation and operational schema
     - [ ] [BE-0.1](../apps/filesquid/crates/server/resources/plan.md#phase-f4-hosted-service-isolation-and-operational-foundation-global-task-06-be-06-in-global-task-fs-310) Isolation gate
     - [ ] [BE-0.2](../apps/filesquid/crates/server/resources/plan.md#phase-f4-hosted-service-isolation-and-operational-foundation-global-task-06-be-06-in-global-task-fs-310) Stdout JSON logs and Prometheus /metrics
     - [ ] [BE-0.3](../apps/filesquid/crates/server/resources/plan.md#phase-f4-hosted-service-isolation-and-operational-foundation-global-task-06-be-06-in-global-task-fs-310) PostgreSQL operational schema
     - [ ] [BE-0.4](../apps/filesquid/crates/server/resources/plan.md#phase-f4-hosted-service-isolation-and-operational-foundation-global-task-06-be-06-in-global-task-fs-310) Hosted-safe core path dependency
     - [ ] [BE-0.5](../apps/filesquid/crates/server/resources/plan.md#phase-f4-hosted-service-isolation-and-operational-foundation-global-task-06-be-06-in-global-task-fs-310) Versioned HTTPS command/query surface
-31. [ ] [Task 5.1](./implementation-plan.md#task-5.1) Client encryption, key custody, and independent crypto vectors
+32. [ ] [Task 5.1](./implementation-plan.md#task-5.1) Client encryption, key custody, and independent crypto vectors
     - [ ] [CO-5.1](../apps/filesquid/crates/core/resources/plan.md#phase-f4-protection-contracts-global-tasks-51-52) Key hierarchy and access-record types
     - [ ] [DE-5.1](../apps/filesquid/crates/desktop/resources/plan.md#phase-f4-keys-sync-hosted-ocfl-global-tasks-51-52-54-de-53-in-global-task-56-phase-i5) Key custody
     - [ ] [UI-5.1](../apps/filesquid/ui/resources/plan.md#phase-f4-protection-ui-global-tasks-5153) Unlock, key recovery, and lock/logout
-32. [ ] [Task 0.11](./implementation-plan.md#task-0.11) Browser-to-canonical commit protocol
+33. [ ] [Task 0.11](./implementation-plan.md#task-0.11) Browser-to-canonical commit protocol
     - [ ] [CL-0.4](../apps/filesquid/crates/api/resources/plan.md#phase-f1-application-layer-global-task-010-cl-04-in-global-task-011-phase-f4-cl-05-in-global-task-012-phase-i1) Browser-to-canonical commit types
-33. [ ] [Task 5.2](./implementation-plan.md#task-5.2) Personal sync, encrypted backup, and verified restore
+34. [ ] [Task 5.2](./implementation-plan.md#task-5.2) Personal sync, encrypted backup, and verified restore
     - [ ] [CO-5.2](../apps/filesquid/crates/core/resources/plan.md#phase-f4-protection-contracts-global-tasks-51-52) Sync operation, conflict, and tombstone types
     - [ ] [DE-5.2](../apps/filesquid/crates/desktop/resources/plan.md#phase-f4-keys-sync-hosted-ocfl-global-tasks-51-52-54-de-53-in-global-task-56-phase-i5) Sync and backup clients
     - [ ] [BE-5.1](../apps/filesquid/crates/server/resources/plan.md#phase-f4-accounts-sync-relay-snapshots-global-tasks-5255) Encrypted change relay and snapshot receipts
     - [ ] [UI-5.2](../apps/filesquid/ui/resources/plan.md#phase-f4-protection-ui-global-tasks-5153) Sync and backup status UI
     - [ ] [IO-5.1](../apps/filesquid/crates/ocfl/resources/plan.md#phase-f4-s3-compatible-ciphertext-backend-global-task-52) S3-compatible backend with CAS on inventory heads
-34. [ ] [Task 5.3](./implementation-plan.md#task-5.3) Accounts, entitlements, and scoped job billing (F-032)
+35. [ ] [Task 5.3](./implementation-plan.md#task-5.3) Accounts, entitlements, and scoped job billing (F-032)
     - [ ] [BE-5.2](../apps/filesquid/crates/server/resources/plan.md#phase-f4-accounts-sync-relay-snapshots-global-tasks-5255) Accounts, entitlements, membership, and cancellation
     - [ ] [UI-5.3](../apps/filesquid/ui/resources/plan.md#phase-f4-protection-ui-global-tasks-5153) Accounts, entitlements, and job billing
-35. [ ] [Task 5.4](./implementation-plan.md#task-5.4) Hosted ciphertext OCFL preservation
+36. [ ] [Task 5.4](./implementation-plan.md#task-5.4) Hosted ciphertext OCFL preservation
     - [ ] [DE-5.4](../apps/filesquid/crates/desktop/resources/plan.md#phase-f4-keys-sync-hosted-ocfl-global-tasks-51-52-54-de-53-in-global-task-56-phase-i5) Hosted OCFL via filesquid-ocfl S3 backend
     - [ ] [BE-5.3](../apps/filesquid/crates/server/resources/plan.md#phase-f4-accounts-sync-relay-snapshots-global-tasks-5255) Hosted object-store receipts (no OCFL writer)
-36. [ ] [Task 5.5](./implementation-plan.md#task-5.5) Hosted-protection readiness close (C-2)
+37. [ ] [Task 5.5](./implementation-plan.md#task-5.5) Hosted-protection readiness close (C-2)
     - [ ] [BE-5.5](../apps/filesquid/crates/server/resources/plan.md#phase-f4-accounts-sync-relay-snapshots-global-tasks-5255) Hosted-protection readiness operational evidence
-37. [ ] [Task FS-4.2](./implementation-plan.md#task-fs-4.2) Encrypted backup and sync release gate
+38. [ ] [Task FS-4.2](./implementation-plan.md#task-fs-4.2) Encrypted backup and sync release gate
 
 ## Release1
 
-FileSquid release 1 follows Task FS-4.2 and waits while that gate is open: server host, accounts and sharing, Linux and Windows installers, signing, the published `ocfl` and `metadata` crates and the `@filesquid/ui` package (phase F3R), closed by gate Task FS-3.5 and followed by the ImageSquid extraction in Task FS-3.8 (0 of 14 done). C2PA signing, edits, scans and crate publishing moved to phase C.
+The rest of FileSquid release 1 follows Task FS-4.2 and waits while that gate is open: server host, accounts and sharing, signing, the published `ocfl` and `metadata` crates and the `@filesquid/ui` package (phase F3R), closed by gate Task FS-3.5 and followed by the ImageSquid extraction in Task FS-3.8 (0 of 13 done). Ubuntu (GNOME) and Windows Tauri desktop releases are the section above and do not wait here. C2PA signing, edits, scans and crate publishing moved to phase C.
 
-38. [ ] [Task FS-3.10](./implementation-plan.md#task-fs-3.10) Server host: HTTP binding, storage root, accounts and groups
+39. [ ] [Task FS-3.10](./implementation-plan.md#task-fs-3.10) Server host: HTTP binding, storage root, accounts and groups
     - [ ] [SV-F1.1](../apps/filesquid/crates/server/resources/plan.md#phase-f3r-multi-user-host-global-tasks-fs-310-and-fs-27-not-in-the-macos-desktop-mvp) HTTP and event-channel transport
     - [ ] [SV-F1.3](../apps/filesquid/crates/server/resources/plan.md#phase-f3r-multi-user-host-global-tasks-fs-310-and-fs-27-not-in-the-macos-desktop-mvp) Storage root configuration
     - [ ] [API-F1.9](../apps/filesquid/crates/api/resources/plan.md#phase-f1-the-api-global-tasks-fs-11fs-14-after-the-mvp-api-f18-in-fs-15-api-f19-in-fs-310-and-api-f15-in-fs-c1) Server accounts, groups and collection permissions in the authorisation layer
     - [ ] [SV-F1.2](../apps/filesquid/crates/server/resources/plan.md#phase-f3r-multi-user-host-global-tasks-fs-310-and-fs-27-not-in-the-macos-desktop-mvp) Accounts, groups, sessions and collection permissions
     - [ ] [BE-0.6](../apps/filesquid/crates/server/resources/plan.md#phase-f4-hosted-service-isolation-and-operational-foundation-global-task-06-be-06-in-global-task-fs-310) Allure reporting and static SPA serving
-39. [ ] [Task FS-1.5](./implementation-plan.md#task-fs-1.5) Distribution manifest and module switches
+40. [ ] [Task FS-1.5](./implementation-plan.md#task-fs-1.5) Distribution manifest and module switches
     - [ ] [API-F1.8](../apps/filesquid/crates/api/resources/plan.md#phase-f1-the-api-global-tasks-fs-11fs-14-after-the-mvp-api-f18-in-fs-15-api-f19-in-fs-310-and-api-f15-in-fs-c1) Distribution manifest and module switches
-40. [ ] [Task FS-3.11](./implementation-plan.md#task-fs-3.11) Linux and Windows desktop installers
-    - [ ] [DE-F3.3](../apps/filesquid/crates/desktop/resources/plan.md#phase-f3-installers-and-performance-global-tasks-fs-31-fs-34-and-after-the-mvp-fs-311) Linux and Windows installers, ImageSquid overlay
-    - [ ] [UI-F3.3](../apps/filesquid/ui/resources/plan.md#phase-f3r-linux-media-playback-global-task-fs-311-after-the-mvp) MediaSource video player for WebKitGTK
 41. [ ] [Task FS-3.7](./implementation-plan.md#task-fs-3.7) Publish `@filesquid/ui` and a versioned API contract
     - [ ] [API-F3.1](../apps/filesquid/crates/api/resources/plan.md#phase-f3r-versioned-api-contract-global-task-fs-37-after-the-mvp) Version and publish the API contract
     - [ ] [UI-F3.2](../apps/filesquid/ui/resources/plan.md#phase-f3r-package-publishing-global-task-fs-37-after-the-mvp) Publish `@filesquid/ui` as a versioned package

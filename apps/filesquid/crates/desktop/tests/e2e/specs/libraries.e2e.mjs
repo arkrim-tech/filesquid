@@ -67,6 +67,36 @@ async function call(method, route, body) {
   );
 }
 
+/** Operation IDs handed out by {@link command}. */
+let operations = 0;
+
+/**
+ * POST the library command `input` to `route` under a fresh operation ID with the scope and
+ * expected revision the route takes (API-F2.19): `location:<id>` and `0` for create and open,
+ * `library:<id>` and `1` for copy and rebuild. Answers the status, the answer text and, for a
+ * 200, the outcome's `result` as `json` (else the whole body).
+ *
+ * @param route The path below the scheme base.
+ * @param input The command's input.
+ * @returns The status, the answer text and its JSON.
+ */
+async function command(route, input) {
+  const binds = route === "/api/v1/libraries" || route.endsWith("/openings");
+  const scope = binds ? `location:${input.location_id}` : `library:${input.library_id}`;
+  operations += 1;
+  const envelope = {
+    schema_version: 1,
+    operation_id: `op-e2e-${Date.now()}-${operations}`,
+    expected_revision: binds ? "0" : "1",
+    scope,
+  };
+  const answer = await call("POST", route, { envelope, input });
+  if (answer.status === 200 && answer.json !== null) {
+    return { ...answer, json: answer.json.result };
+  }
+  return answer;
+}
+
 /** Most reads of a job by {@link finishedJob}, 50 ms apart. */
 const MAX_JOB_POLLS = 200;
 
@@ -109,7 +139,7 @@ describe("the library routes in a packaged window", () => {
   });
 
   it("creates a library in an owner-chosen folder and answers an opaque ID", async () => {
-    const created = await call("POST", "/api/v1/libraries", { location_id: CREATE_LOCATION });
+    const created = await command("/api/v1/libraries", { location_id: CREATE_LOCATION });
     expect(created.status).toBe(200);
     expect(created.json.spec_version).toBe("1.1");
     expect(created.json.objects).toBe(0);
@@ -118,20 +148,20 @@ describe("the library routes in a packaged window", () => {
   });
 
   it("opens, copies and rebuilds the media library through its location ID", async () => {
-    const opened = await call("POST", "/api/v1/libraries/openings", {
+    const opened = await command("/api/v1/libraries/openings", {
       location_id: MEDIA_LOCATION,
       library_id: E2E_LIBRARY_ID,
     });
     expect(opened.status).toBe(200);
     expect(opened.json.library_id).toBe(E2E_LIBRARY_ID);
     expect(opened.json.objects).toBeGreaterThan(0);
-    const copied = await call("POST", "/api/v1/libraries/snapshot-copies", {
+    const copied = await command("/api/v1/libraries/snapshot-copies", {
       library_id: E2E_LIBRARY_ID,
       destination_location_id: COPY_LOCATION,
     });
     expect(copied.status).toBe(200);
     expect(copied.json.invalid_objects).toEqual([]);
-    const rebuilt = await call("POST", "/api/v1/libraries/rebuilds", {
+    const rebuilt = await command("/api/v1/libraries/rebuilds", {
       library_id: E2E_LIBRARY_ID,
     });
     expect(rebuilt.status).toBe(200);
@@ -149,7 +179,7 @@ describe("the library routes in a packaged window", () => {
     const copy = path.join(process.env.FILESQUID_E2E_LOCATIONS, "copy");
     const heads = removeHeadInventories(copy);
     expect(heads.length).toBe(1);
-    const opened = await call("POST", "/api/v1/libraries/openings", {
+    const opened = await command("/api/v1/libraries/openings", {
       location_id: COPY_LOCATION,
       library_id: COPY_LIBRARY_ID,
     });

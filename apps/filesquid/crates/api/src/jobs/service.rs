@@ -127,13 +127,23 @@ impl Jobs {
         self.ttl_ms
     }
 
-    /// Store a new pending job for `spec` and journal `job.created`; a job the store
-    /// refuses is journaled as `job.refused` (store I/O).
+    /// Store a new pending job for `spec` under a fresh job ID and journal `job.created`; a
+    /// job the store refuses is journaled as `job.refused` (store I/O).
     ///
     /// # Errors
-    /// [`JobError::Unavailable`] when no ID can be minted, or a store failure.
+    /// [`JobError::Unavailable`] when no ID can be minted (not journaled), or a store failure.
     pub fn submit(&self, spec: JobSpec) -> Result<Job, JobError> {
-        let id = mint_uuid_v4().map_err(|err| JobError::Unavailable(err.to_string()))?;
+        let id = mint_job_id()?;
+        self.submit_as(id, spec)
+    }
+
+    /// Store a new pending job for `spec` under the job ID `id` (from [`mint_job_id`]) and
+    /// journal `job.created`; a job the store refuses is journaled as `job.refused` (store
+    /// I/O). For a caller that journals a failed mint itself.
+    ///
+    /// # Errors
+    /// A store failure, journaled.
+    pub fn submit_as(&self, id: String, spec: JobSpec) -> Result<Job, JobError> {
         let job = new_job(id, spec, (self.clock)());
         self.store
             .insert(&job)
@@ -486,6 +496,14 @@ impl Jobs {
 /// The refusal of a per-file call on a host without the port. Pure.
 fn no_items() -> JobError {
     JobError::Unavailable("this host keeps no per-file progress".into())
+}
+
+/// A fresh job ID (a version 4 UUID). Reads the platform's random source.
+///
+/// # Errors
+/// [`JobError::Unavailable`] when the random source cannot be read.
+pub fn mint_job_id() -> Result<String, JobError> {
+    mint_uuid_v4().map_err(|err| JobError::Unavailable(err.to_string()))
 }
 
 /// A new pending job `id` for `spec`, submitted at `now`. Pure.

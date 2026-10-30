@@ -18,7 +18,7 @@ use filesquid_api::navigation::{
     MemoryFolderIndex, NavigationAccess, NavigationService, NodeRef, RepositoryInfo,
 };
 use filesquid_core::{LibraryId, RepositoryId};
-use library_routes_fixture::{Answer, LibraryRig, Mount};
+use library_routes_fixture::{command, library_command, operation_id, Answer, LibraryRig, Mount};
 use serde_json::{json, Value};
 use std::sync::Arc;
 
@@ -31,13 +31,38 @@ fn assert_error(answer: &Answer, status: u16, code: &str) {
     assert_eq!(answer.json()["code"], code, "{}", answer.text());
 }
 
+/// The create or open command of `location` with `fields` beside `location_id` (a name, a
+/// library ID), under a fresh operation ID, expecting `0` (Task API-F2.19).
+fn bind_body(location: &str, fields: Value) -> Value {
+    bind_body_at(location, "0", fields)
+}
+
+/// The create or open command of `location` expecting `revision`, with the input `fields`
+/// beside the location ID: an open that renames an open library expects its current one.
+fn bind_body_at(location: &str, revision: &str, fields: Value) -> Value {
+    let mut input = json!({ "location_id": location });
+    for (key, value) in fields.as_object().expect("fields") {
+        input[key] = value.clone();
+    }
+    command(
+        &format!("location:{location}"),
+        &operation_id(),
+        revision,
+        input,
+    )
+}
+
 /// Create a library named `name` on a new location `folder`; answer its ID and location.
 async fn create_named(rig: &LibraryRig, folder: &str, name: &str) -> (String, String) {
     let location = rig.locations.register(folder);
-    let body = json!({ "location_id": location, "name": name });
-    let answer = rig.post("/api/v1/libraries", body).await;
+    let answer = rig
+        .post(
+            "/api/v1/libraries",
+            bind_body(&location, json!({ "name": name })),
+        )
+        .await;
     assert_eq!(answer.status, StatusCode::OK, "{}", answer.text());
-    let library = answer.json()["library_id"]
+    let library = answer.result()["library_id"]
         .as_str()
         .expect("id")
         .to_string();
@@ -49,9 +74,15 @@ async fn facts(rig: &LibraryRig, library: &str) -> Answer {
     rig.get(&format!("/api/v1/libraries/{library}/facts")).await
 }
 
-/// `POST /api/v1/libraries/renames` of `library` to `name`.
+/// `POST /api/v1/libraries/renames` of `library` to `name`, as a command expecting the
+/// revision its facts answer (`1` for a library the host does not know).
 async fn rename(rig: &LibraryRig, library: &str, name: &str) -> Answer {
-    let body = json!({ "library_id": library, "name": name });
+    let revision = facts(rig, library).await.json()["revision"]
+        .as_str()
+        .unwrap_or("1")
+        .to_string();
+    let input = json!({ "library_id": library, "name": name });
+    let body = library_command(library, &operation_id(), &revision, input);
     rig.post("/api/v1/libraries/renames", body).await
 }
 
@@ -124,6 +155,7 @@ async fn a_library_is_created_with_its_name_and_the_facts_answer_it() {
                 "name": "Family archive",
                 "free_bytes": 1_000_000,
                 "free_bytes_reason": null,
+                "revision": "1",
             })
         );
         assert_redacted(&rig, &[&answer], &["Family archive"]);
@@ -135,7 +167,11 @@ async fn a_library_created_without_a_name_is_untitled_and_open_may_name_it() {
     let rig = LibraryRig::new(Mount::Desktop);
     let (library, location) = rig.create("plain").await;
     assert_eq!(facts(&rig, &library).await.json()["name"], UNTITLED_LIBRARY);
-    let body = json!({ "location_id": location, "name": "Holidays" });
+    let stale = bind_body(&location, json!({ "name": "Holidays" }));
+    let refused = rig.post("/api/v1/libraries/openings", stale).await;
+    assert_eq!(refused.status, StatusCode::CONFLICT, "{}", refused.text());
+    assert_eq!(facts(&rig, &library).await.json()["name"], UNTITLED_LIBRARY);
+    let body = bind_body_at(&location, "1", json!({ "name": "Holidays" }));
     let opened = rig.post("/api/v1/libraries/openings", body).await;
     assert_eq!(opened.status, StatusCode::OK, "{}", opened.text());
     assert_eq!(facts(&rig, &library).await.json()["name"], "Holidays");
@@ -150,7 +186,7 @@ async fn a_name_that_breaks_the_rules_is_refused_before_anything_is_created() {
         .enumerate()
     {
         let location = rig.locations.register(&format!("bad-{n}"));
-        let body = json!({ "location_id": location, "name": bad });
+        let body = bind_body(&location, json!({ "name": bad }));
         let answer = rig.post("/api/v1/libraries", body).await;
         assert_error(&answer, 400, "invalid_request");
         assert!(rig.files(&location).is_empty(), "nothing was written");
@@ -171,7 +207,13 @@ async fn a_rename_is_journaled_with_the_library_only_and_a_same_name_changes_not
         let (library, _) = create_named(&rig, "family", "Family archive").await;
         let renamed = rename(&rig, &library, "Family archive 1990s").await;
         assert_eq!(renamed.status, StatusCode::OK, "{}", renamed.text());
-        assert_eq!(renamed.json()["name"], "Family archive 1990s");
+        assert_eq!(renamed.json()["kind"], "committed", "{}", renamed.text());
+        assert_eq!(renamed.result()["name"], "Family archive 1990s");
+        assert_eq!(
+            renamed.result()["revision"],
+            "2",
+            "a changed name advances it"
+        );
         assert_eq!(
             facts(&rig, &library).await.json()["name"],
             "Family archive 1990s"
@@ -354,8 +396,10 @@ async fn a_caller_who_may_not_read_the_repository_reads_no_library_facts() {
 async fn a_name_given_on_open_that_replaces_another_is_journaled_as_a_rename() {
     let rig = LibraryRig::new(Mount::Desktop);
     let (library, location) = create_named(&rig, "reopened", "First name").await;
-    let reopen =
-        |name: &str| json!({ "location_id": location, "library_id": library, "name": name });
+    let reopen = |name: &str| {
+        let fields = json!({ "library_id": library, "name": name });
+        bind_body_at(&location, "1", fields)
+    };
     let answer = rig
         .post("/api/v1/libraries/openings", reopen("First name"))
         .await;
