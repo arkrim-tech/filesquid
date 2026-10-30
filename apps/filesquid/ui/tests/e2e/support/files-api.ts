@@ -79,9 +79,14 @@ export interface FilesApi {
 /** The normalisation forms the upload route names. */
 const NAME_FORMS = new Set(["nfc", "nfd", "nfkc", "nfkd", "unnormalised"]);
 
-/** The `input` keys `PUT /api/v1/files/upload` takes (contract 0.25.0); any other is refused. */
+/** A collection of the library: the destination the fake accepts (API-S-011 Destination). */
+export const COLLECTION = "9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d";
+
+/** The `input` keys `PUT /api/v1/files/upload` takes (contract 0.33.0); any other is refused. */
 const UPLOAD_KEYS = new Set([
   "library_id",
+  "collection_id",
+  "folder",
   "file_id",
   "name",
   "size",
@@ -334,7 +339,8 @@ async function routeWrites(page: Page, api: FilesApi): Promise<void> {
 /**
  * Answer an upload as the API's input rules do: an unknown key (a `path` or `object_id` of the
  * old upload form among them), a fact other than `size` that is not text, a missing
- * `library_id`, `name` or `size`, a normalisation form
+ * `library_id`, `name` or `size`, a missing `collection_id` (`destination_required`, answered
+ * 400 `invalid_request` before the source is asked), a collection of no library here (404), a normalisation form
  * the contract does not name, or a declared size that is not the file part's is refused with
  * `invalid_request` before the source is asked.
  */
@@ -350,11 +356,15 @@ async function uploadAsTheApi(
     ([key, value]) => key !== "size" && value !== null && typeof value !== "string",
   );
   const missing = ["library_id", "name", "size"].some((key) => input[key] === undefined);
+  const collection = text("collection_id");
   const form = text("name_normalization");
   const badForm = form !== undefined && !NAME_FORMS.has(form);
   const badSize = input.size !== bytes.byteLength;
-  if (unknown || notText || missing || badForm || badSize) {
+  if (unknown || notText || missing || badForm || badSize || collection === undefined) {
     throw new ApiError(400, "/api/v1/files/upload", { code: "invalid_request" });
+  }
+  if (collection !== COLLECTION) {
+    throw new ApiError(404, "/api/v1/files/upload", { code: "not_found" });
   }
   const facts = {
     name: text("name") ?? "",
@@ -364,7 +374,13 @@ async function uploadAsTheApi(
     name_normalization: form as NameNormalization | undefined,
   };
   const body = new Blob([new Uint8Array(bytes)]);
-  return source.upload({ library_id: text("library_id") ?? "" }, facts, body, { revision });
+  const folder = text("folder");
+  const target = {
+    library_id: text("library_id") ?? "",
+    collection_id: collection,
+    ...(folder === undefined ? {} : { folder }),
+  };
+  return source.upload(target, facts, body, { revision });
 }
 
 /** Mint a handle and serve the content it names. */

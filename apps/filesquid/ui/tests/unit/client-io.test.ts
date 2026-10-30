@@ -265,7 +265,12 @@ describe("FileSquidClient.upload", () => {
     const result = { library_id: "lib", file_id: "f", object_id: "o", version: "v1" };
     const outcome = { operation_id: "op-1", kind: "committed", error: null, result };
     const { client, seen } = clientWith(() => json(200, outcome));
-    const input = { library_id: "lib", name: "a.png", size: 6 };
+    const input = {
+      library_id: "lib",
+      collection_id: "9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d",
+      name: "a.png",
+      size: 6,
+    };
     const answer = await client.upload("/api/v1/files/upload", new Blob(["pixels"]), ENVELOPE, {
       method: "PUT",
       input,

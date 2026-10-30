@@ -27,6 +27,7 @@ import type {
   ObjectRef,
   UploadCommit,
   UploadFacts,
+  UploadTarget,
 } from "./model";
 import { MAX_UPLOAD_BYTES, isControl, isMediaType, lastSegment, validLabel } from "./model";
 import type { DownloadSource } from "./download-source";
@@ -81,6 +82,10 @@ export interface MemoryUpload {
   readonly size: number;
   /** The file object's head version. */
   readonly version: string;
+  /** The collection the upload named as its home. */
+  readonly collection_id: string;
+  /** The collection logical path it was given, `<folder>/<name>`. */
+  readonly path: string;
 }
 
 /** An uploaded file with its bytes. */
@@ -149,6 +154,11 @@ const TYPES: Readonly<Record<string, string>> = {
 /** An `ApiError` with a contract code. */
 function refusal(status: number, code: "not_found" | "conflict" | "invalid_request"): ApiError {
   return new ApiError(status, ROUTE, { code });
+}
+
+/** Whether an upload names a collection, as the route requires (it never defaults one). */
+function hasCollection(target: UploadTarget): boolean {
+  return typeof target.collection_id === "string" && target.collection_id !== "";
 }
 
 /** Whether a display name is one the rename route takes: 1 to 1,024 bytes, no `/` or NUL. */
@@ -318,18 +328,20 @@ export class MemoryFileSource implements FileSource, HistorySource, DownloadSour
   /**
    * Upload one file as the route does (API-S-026): a new file object at `v1`, or the next
    * version of `facts.file_id`'s object. The object shown is not changed. Refuses what the
-   * route refuses: a body over 64 MiB, a bad name, media type, time or `file_id`, or a
+   * route refuses: no collection (`invalid_request`, API-S-011 **Destination**: the API words it
+   * `destination_required`), a body over 64 MiB, a bad name, media type, time or `file_id`, or a
    * non-ASCII name without its form (`invalid_request`); an unknown file (`not_found`);
    * unchanged bytes, or a revision that is not the file's head (`0` for a new file)
    * (`conflict`).
    */
   async upload(
-    library: LibraryRef,
+    target: UploadTarget,
     facts: UploadFacts,
     body: Blob,
     options: UploadSourceOptions = {},
   ): Promise<UploadCommit> {
     this.check();
+    if (!hasCollection(target)) throw refusal(400, "invalid_request");
     const form = uploadForm(facts);
     if (form === null || body.size > MAX_UPLOAD_BYTES) throw refusal(400, "invalid_request");
     const bytes = await readBlob(body);
@@ -348,12 +360,23 @@ export class MemoryFileSource implements FileSource, HistorySource, DownloadSour
       last_modified: facts.last_modified ?? null,
       size: bytes.byteLength,
       version,
+      collection_id: target.collection_id,
+      path: target.folder === undefined ? facts.name : `${target.folder}/${facts.name}`,
     };
     this.uploaded.set(file_id, { upload, bytes });
     this.uploadCount += 1;
     const created = new Date(BASE_TIME + this.uploadCount * 60_000).toISOString();
     const object_id = `urn:uuid:${file_id}`;
-    return { library_id: library.library_id, file_id, object_id, version, created };
+    const { collection_id, path } = upload;
+    return {
+      library_id: target.library_id,
+      file_id,
+      object_id,
+      version,
+      created,
+      collection_id,
+      path,
+    };
   }
 
   /** Create a folder: pending when no file lies below it yet. */

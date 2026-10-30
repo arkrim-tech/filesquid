@@ -11,6 +11,12 @@ import labels from "../../src/theme/labels.en.json";
 /** The library and object of the fixture. */
 export const LOCATION: FileLocation = { library_id: "lib", object_id: "obj", prefix: "" };
 
+/** A collection of the library: the place an upload may go (API-S-011 Destination). */
+export const COLLECTION = "9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d";
+
+/** The fixture's location when it is shown as the root of {@link COLLECTION}. */
+export const COLLECTION_LOCATION: FileLocation = { ...LOCATION, collection_id: COLLECTION };
+
 /** Stored names that must never appear in the page. */
 export const STORED_NAMES = [
   "3f9a0001",

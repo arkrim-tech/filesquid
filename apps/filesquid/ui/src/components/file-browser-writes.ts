@@ -35,6 +35,7 @@ import {
   renameFailureText,
   renameFileId,
   uploadFiles,
+  uploadTarget,
   type UploadFailure,
   type UploadResult,
 } from "../files/ops";
@@ -119,7 +120,7 @@ export class FileWrites {
     private readonly host: WritesHost,
   ) {
     const { bar, form } = frame;
-    bar.upload.addEventListener("click", () => this.guard(bar.upload, () => bar.input.click()));
+    bar.upload.addEventListener("click", () => this.guard(bar.upload, () => this.chooseFiles()));
     bar.input.addEventListener("change", () => void this.chosen());
     bar.newFolder.addEventListener("click", () =>
       this.guard(bar.newFolder, () => this.open({ kind: "folder" }, bar.newFolder)),
@@ -207,22 +208,54 @@ export class FileWrites {
   }
 
   /**
-   * Upload files into a library, each as its own file (API-S-026): the library shown (the
-   * chosen files, or dropped ones), or the one a failed batch was meant for when it is tried
-   * again. Each file is one `PUT` that commits one version in that file's own object, so the
-   * folder shown gains no version.
+   * Open the file dialog, but only where an upload has a destination: the dialog is the first
+   * step of an upload, so a location that shows no collection is refused here (Upload button)
+   * before any dialog opens (ADR 041 "Must choose"). Side effect: opens the file dialog or
+   * shows the refusal.
+   */
+  private chooseFiles(): void {
+    if (this.refuseWithoutDestination(this.host.location())) return;
+    this.frame.bar.input.click();
+  }
+
+  /**
+   * Refuse an upload from `where` when it names no collection: say why in the alert region and
+   * report true. Nothing is sent and no default collection is picked. Minimal on purpose: the
+   * disabled controls with their reason, the drop target that names its destination and the
+   * words of `destination_required` are UI-F2.17's (UI-S-002, UI-S-028).
+   */
+  private refuseWithoutDestination(where: FileLocation): boolean {
+    if (uploadTarget(where) !== undefined) return false;
+    this.retryable = [];
+    this.showAlert([this.host.labels.fileUploadDisabledReason], []);
+    return true;
+  }
+
+  /**
+   * Upload files into a collection of a library, each as its own file (API-S-026) registered
+   * in that collection and folder (API-S-011 **Destination**): the collection and folder shown
+   * (the chosen files, or dropped ones), or the ones a failed batch was meant for when it is
+   * tried again. Where the location names no collection the upload is refused with no call.
+   * Each file is one `PUT` that commits one version in that file's own object, so the folder
+   * shown gains no version.
    *
    * @param files The files.
-   * @param where The location whose library to upload into; the one shown by default.
+   * @param where The location whose collection and folder to upload into; the one shown by
+   *   default.
    * @returns Resolves when every file was tried and the listing refreshed.
    */
   async upload(files: readonly File[], where: FileLocation = this.host.location()): Promise<void> {
     if (files.length === 0 || this.busy) return;
+    const target = uploadTarget(where);
+    if (target === undefined) {
+      this.refuseWithoutDestination(where);
+      return;
+    }
     const { labels, source } = this.host;
     this.setBusy(true);
     const result = await uploadFiles(
       source,
-      where,
+      target,
       files,
       (current, total, name) =>
         this.showStatus(
