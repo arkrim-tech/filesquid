@@ -21,7 +21,7 @@ use std::io::Read;
 use std::path::Path;
 
 /// Bytes read at a time while a file is hashed for its review.
-const HASH_CHUNK: usize = 8 * 1024 * 1024;
+pub const HASH_CHUNK: usize = 8 * 1024 * 1024;
 
 /// What the review of one plan found.
 #[derive(Clone, Debug, PartialEq, Eq)]
