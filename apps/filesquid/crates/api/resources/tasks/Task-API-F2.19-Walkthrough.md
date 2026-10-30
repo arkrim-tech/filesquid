@@ -167,6 +167,20 @@ Running 12 tests using 1 worker
   12 passed (29.8s)
 ```
 
+After PR #139 merged (the rename route): `cargo test -p filesquid-api --locked --test integration_library_commands --test integration_library_routes --test integration_library_facts --test unit_contract --test unit_rebuild_job --test features`, then the desktop integration and cucumber suites:
+
+```text
+396 scenarios (294 passed, 102 skipped)
+1415 steps (1313 passed, 102 skipped)
+     Running tests/integration/library_commands.rs (<target>/debug/deps/integration_library_commands-8f4de0436091e84b)
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
+     Running tests/integration/library_facts.rs (<target>/debug/deps/integration_library_facts-5ae061bbd5d57a20)
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.12s
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.30s
+48 scenarios (48 passed)
+206 steps (206 passed)
+```
+
 The head-commit hook run (`FULL=1 bash scripts/pre-commit.sh` with a private Cargo target, `Test scope: full`) is recorded in the pull request.
 
 ## Sync Execution Report
