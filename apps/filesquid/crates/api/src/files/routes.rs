@@ -561,7 +561,7 @@ async fn set_label(
     .await
 }
 
-/// A published version with its commit's journal entries ([`super::provenance`]): the
+/// A published version with its commit's journal entries ([`super::Committed`]): the
 /// `ocfl.commit` entry and the operation's own, each journaled once.
 pub(super) fn recorded<V>(committed: Committed<V>) -> Done<V> {
     Done {

@@ -4,7 +4,7 @@
 //!
 //! Restore and label commits carry the structured `filesquid.operation.v1` message (kind
 //! `revert`, `reinstate` or `label`) and are linked to the journal like every other file
-//! write ([`super::provenance`]): with provenance installed they write their PROV-O record in
+//! write ([`super::Committed`]): with provenance installed they write their PROV-O record in
 //! the same version, and they answer the journal entries to append after the commit.
 //! Nothing here deletes, expires or thins a version: OCFL keeps every one.
 

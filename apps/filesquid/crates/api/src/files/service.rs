@@ -566,7 +566,7 @@ where
 {
     /// Move or rename one file or folder in one new version, if the object's head is
     /// `expected` (else a `conflict`). A folder moves every file below it; no bytes are
-    /// written. The commit is linked to the journal ([`super::provenance`]).
+    /// written. The commit is linked to the journal ([`super::Committed`]).
     pub async fn move_path(
         &self,
         request: MoveRequest,
@@ -607,7 +607,7 @@ where
 
     /// Remove one file or folder in one new version, if the object's head is `expected`
     /// (else a `conflict`); its bytes stay for history. The commit is linked to the journal
-    /// ([`super::provenance`]).
+    /// ([`super::Committed`]).
     pub async fn remove(
         &self,
         request: RemoveRequest,
@@ -644,7 +644,7 @@ where
     }
 
     /// The version record of an import by `actor` with `message`: the caller as `user`. The
-    /// file and metadata routes commit through [`super::provenance`] instead.
+    /// file and metadata routes commit through [`super::Committed`] instead.
     pub(super) fn meta(
         &self,
         actor: &str,

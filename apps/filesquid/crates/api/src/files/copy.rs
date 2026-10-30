@@ -79,7 +79,7 @@ where
     S: StorageBackend,
 {
     /// Copy the file `request.file_id` at its head by `caller` into a new file, in one commit
-    /// linked to the journal ([`super::provenance`]).
+    /// linked to the journal ([`super::Committed`]).
     ///
     /// # Errors
     /// `invalid_request` for a malformed file ID or message, or a source over

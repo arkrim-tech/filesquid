@@ -43,7 +43,7 @@ where
 {
     /// Commit one upload of `bytes` by `caller`: a new file object, or a new version of the
     /// object of `query.file_id`. The commit is linked to the journal
-    /// ([`super::provenance`]), and the record's import entry names its operation ID.
+    /// ([`super::Committed`]), and the record's import entry names its operation ID.
     ///
     /// # Errors
     /// `invalid_request` for a name, media type, time, size or message that is refused (a

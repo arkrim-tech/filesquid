@@ -533,7 +533,7 @@ where
 
     /// Apply `edit` to the head record of a file and commit it by `caller` as `operation` of
     /// `kind`; with an `expected` revision (a command's), only when the file object's head is
-    /// it. The commit is linked to the journal ([`super::provenance`]).
+    /// it. The commit is linked to the journal ([`super::Committed`]).
     async fn edit_record(
         &self,
         (library_id, file_id): (&String, &String),
