@@ -341,6 +341,46 @@ footer {
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; }
 }
+@media print {
+  html, html[data-mode="light"], html[data-mode="dark"] {
+    --bg: #FFFFFF;
+    --card: #FFFFFF;
+    --raised: #F5F5F5;
+    --border-sub: #E0E0E0;
+    --border-def: #CCCCCC;
+    --text-head: #000000;
+    --text-body: #111111;
+    --text-sec: #555555;
+    --text-muted: #777777;
+    --text-link: #0f8a39;
+    --code-bg: #F5F5F5;
+    --code-text: #111111;
+    --code-border: #E0E0E0;
+    --green: #16AC49;
+    --green-tint: #F0FAF4;
+    --green-text: #0f8a39;
+    --error: #E53935;
+    --nav-bg: #FFFFFF;
+    color-scheme: light;
+  }
+  @page { size: A4; margin: 16mm 14mm 18mm; }
+  html, body { background: #FFFFFF; }
+  * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .sidenav { display: none !important; }
+  .page { display: block; max-width: none; min-height: 0; }
+  .main { padding: 0; }
+  .prose { max-width: none; }
+  h1 { font-size: 28pt; }
+  h2 { font-size: 16pt; margin: 22pt 0 8pt; break-after: avoid; }
+  h3.feature, h3.label { break-after: avoid; }
+  p, li { font-size: 11pt; }
+  .standfirst { font-size: 13pt; }
+  a { text-decoration: none; }
+  .tbl { overflow: visible; }
+  table { min-width: 0; font-size: 9.5pt; }
+  tr, .callout, .flow li, figure, .card, .two > div { break-inside: avoid; }
+  footer { break-inside: avoid; }
+}
 </style>
 </head>
 <body>
