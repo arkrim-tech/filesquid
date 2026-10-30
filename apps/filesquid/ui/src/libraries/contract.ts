@@ -13,6 +13,7 @@ import {
   type LocationChoice,
   type ObjectFindings,
   type ObjectRepair,
+  type RebuildJobAnswer,
   type RebuildReport,
   type RebuiltObject,
   type RepairAnswer,
@@ -72,9 +73,96 @@ export function parseLocationChoice(value: unknown): LocationChoice {
  */
 export function parseLibraryView(value: unknown): LibraryView {
   if (!isRecord(value)) throw breaks("library");
-  const { library_id: id, spec_version: version, objects } = value;
-  if (!isText(id) || !isText(version) || !isCount(objects)) throw breaks("library");
-  return { library_id: id, spec_version: version, objects };
+  const { library_id: id, spec_version: version, objects, revision } = value;
+  const shaped = isText(id) && isText(version) && isCount(objects) && isText(revision);
+  if (!shaped) throw breaks("library");
+  return { library_id: id, spec_version: version, objects, revision };
+}
+
+/**
+ * Check the answer of a rebuild command: its pending job (API-S-025, API-F2.19).
+ *
+ * @param value The parsed JSON `result` of the pending outcome.
+ * @returns The job answer, its job view built again from the checked fields.
+ * @throws TypeError when the outcome is not `pending`, the job ID is missing, `scheduled` is
+ *   not a boolean, or the job view breaks the contract.
+ */
+export function parseRebuildJob(value: unknown): RebuildJobAnswer {
+  if (!isRecord(value) || value.outcome !== "pending") throw breaks("rebuild job");
+  const { job_id: jobId, scheduled } = value;
+  if (!isText(jobId) || typeof scheduled !== "boolean") throw breaks("rebuild job");
+  const job = jobView(value.job);
+  if (job === undefined) throw breaks("rebuild job");
+  return { outcome: "pending", job_id: jobId, job, scheduled };
+}
+
+/** The job states of the contract's `JobState`. */
+const JOB_STATES: readonly string[] = ["pending", "running", "completed", "failed", "cancelled"];
+/** The controls of the contract's `JobControl`. */
+const JOB_CONTROLS: readonly string[] = ["pause", "cancel"];
+
+/** True for a value of the closed list `allowed`. */
+function isOneOf<T extends string>(value: unknown, allowed: readonly string[]): value is T {
+  return typeof value === "string" && allowed.includes(value);
+}
+
+/** True for an RFC 3339 date-time that names a real instant. */
+function isDateTime(value: unknown): value is string {
+  return value !== undefined && isOptionalDateTime(value);
+}
+
+/** The rebuild report a job holds as its result: null while unfinished, else a checked report. */
+function jobResult(value: unknown): RebuildReport | null | undefined {
+  if (value === null) return null;
+  try {
+    return parseRebuildReport(value);
+  } catch {
+    return undefined;
+  }
+}
+
+/** The fields every job view carries, or undefined when one is malformed. */
+function jobCore(value: Record<string, unknown>): RebuildJobAnswer["job"] | undefined {
+  const { id, kind, operation_id: operationId, state, paused, done, attempts } = value;
+  const named = isText(id) && isText(kind) && isText(operationId);
+  const counted = typeof paused === "boolean" && isCount(done) && isCount(attempts);
+  const stated = isOneOf<RebuildJobAnswer["job"]["state"]>(state, JOB_STATES);
+  const dated = isDateTime(value.created) && isDateTime(value.updated);
+  if (!named || !counted || !stated || !dated) return undefined;
+  const result = jobResult(value.result);
+  if (result === undefined) return undefined;
+  const { created, updated } = value as { created: string; updated: string };
+  return {
+    id,
+    kind,
+    operation_id: operationId,
+    state,
+    paused,
+    done,
+    attempts,
+    created,
+    updated,
+    result,
+  };
+}
+
+/**
+ * One job view (API-S-037), built again from its checked fields, or undefined when it breaks
+ * the contract. Pure.
+ */
+function jobView(value: unknown): RebuildJobAnswer["job"] | undefined {
+  if (!isRecord(value)) return undefined;
+  const job = jobCore(value);
+  const { control, total, error_code: code } = value;
+  const controlled = control === undefined || isOneOf(control, JOB_CONTROLS);
+  const totalled = total === undefined || isCount(total);
+  if (job === undefined || !controlled || !totalled || !isOptionalText(code)) return undefined;
+  return {
+    ...job,
+    ...(control === undefined ? {} : { control: control as RebuildJobAnswer["job"]["control"] }),
+    ...(total === undefined ? {} : { total }),
+    ...(code === undefined ? {} : { error_code: code }),
+  };
 }
 
 /** An RFC 3339 date-time: full date, `T`, full time with optional fraction, `Z` or an offset. */

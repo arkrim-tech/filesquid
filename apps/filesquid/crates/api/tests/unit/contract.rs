@@ -557,7 +557,8 @@ fn every_error_response_carries_the_api_error_schema() {
                 let body = checker
                     .resolve(&response["content"]["application/json"]["schema"])
                     .expect("schema $ref");
-                if status == "409" && *body == *schema(&doc, "FileCommandConflict") {
+                let conflicts = ["FileCommandConflict", "LibraryCommandConflict"];
+                if status == "409" && conflicts.iter().any(|name| *body == *schema(&doc, name)) {
                     assert_carries_api_error(body, api_error, &format!("{method} {path}"));
                     continue;
                 }
@@ -567,7 +568,8 @@ fn every_error_response_carries_the_api_error_schema() {
     }
 }
 
-/// Assert the 409 answer `body` of a file write command (Task API-F2.13) carries every
+/// Assert the 409 answer `body` of a file write command (Task API-F2.13) or a library
+/// command (Task API-F2.19) carries every
 /// `ApiError` field a denial does not add, with the same schema and required, beside its
 /// outcome fields.
 fn assert_carries_api_error(body: &Value, api_error: &Value, at: &str) {

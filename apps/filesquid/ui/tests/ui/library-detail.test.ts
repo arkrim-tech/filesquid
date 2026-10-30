@@ -20,7 +20,6 @@ import {
   COPY_REPORT,
   FakeLibrarySource,
   LIBRARY,
-  REBUILD,
   apiError,
 } from "../support/library-fakes";
 
@@ -243,30 +242,32 @@ describe("<fs-library-detail>", () => {
     expect(text(page, '[data-for="actions"] .alert')).toBe(labels.libraryConflictCopy);
   });
 
-  it("rebuild: reads the library from its files and reports each count, then reads the candidates again", async () => {
-    const { page, source, registry } = await mount();
+  it("rebuild: starts the durable job expecting the library's revision, keeps Working. while it runs, then reads the candidates again", async () => {
+    const { page, source } = await mount();
     action(page, "rebuild").click();
     await settle();
     expect(source.calls).toEqual(["candidates:lib-1", "rebuild:lib-1", "candidates:lib-1"]);
-    expect(registry.lastRebuild("lib-1")).toEqual(REBUILD);
+    expect(source.revisions).toEqual(["1"]);
     const result = rootOf(page).querySelector('[data-result="rebuild"]');
-    const lines = [...(result?.querySelectorAll("p, li") ?? [])].map((node) => node.textContent);
-    expect(lines).toEqual([
-      labels.libraryRebuilt
-        .replace("{objects}", "2")
-        .replace("{unreadable}", "1")
-        .replace("{invalid}", "1"),
-      labels.libraryRebuiltInvalid.replace("{object}", "urn:uuid:obj-c").replace("{codes}", "E023"),
-      labels.libraryUnreadable.replace("{code}", "E001"),
-    ]);
+    expect(result).not.toBeNull();
+    expect(result?.children.length).toBe(0);
+    expect(text(page, '[data-for="actions"] .status')).toBe(labels.libraryWorking);
   });
 
-  it("shows the report the recover flow kept for this library", async () => {
+  it("copy and rebuild expect the initial revision of a library this page did not open", async () => {
     const registry = new LibraryRegistry();
-    registry.remember(LIBRARY);
-    registry.rememberRebuild("lib-1", REBUILD);
-    const { page } = await mount(new FakeLibrarySource(), registry);
-    expect(rootOf(page).querySelector('[data-result="rebuild"]')).not.toBeNull();
+    const { page, source } = await mount(new FakeLibrarySource(), registry);
+    action(page, "rebuild").click();
+    await settle();
+    action(page, "copy").click();
+    await settle();
+    expect(source.calls.slice(1)).toEqual([
+      "rebuild:lib-1",
+      "candidates:lib-1",
+      "choose:copy_destination",
+      "copy:lib-1:loc-1",
+    ]);
+    expect(source.revisions).toEqual(["1", "1"]);
   });
 
   it("shows an error state with Retry when the candidates cannot be read", async () => {

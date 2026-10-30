@@ -1,11 +1,12 @@
 /**
- * An in-memory record of the libraries this page has created, opened or rebuilt (UI-1.1): the
- * library page shows the facts and the last rebuild report the flow just produced without a
- * second request. It holds only what the API answered (opaque IDs, counts, error codes), never
+ * An in-memory record of the libraries this page has created or opened (UI-1.1): the library
+ * page shows the facts the flow just read, and the revision a copy or rebuild expects, without
+ * a second request. A rebuild is a durable job (API-F2.19), so its report is the job's result,
+ * read from the job routes (UI-1.3), and is not kept here. It holds only what the API answered (opaque IDs, counts, error codes), never
  * a path, and nothing is written to Web Storage: the library's address `#/library/<id>` is what
  * later pages (such as the import UI) read the open library from.
  */
-import type { LibraryView, RebuildReport } from "./model";
+import { INITIAL_LIBRARY_REVISION, type LibraryView } from "./model";
 
 /** Most libraries kept; the API allows at most 64 open libraries. */
 const MAX_LIBRARIES = 64;
@@ -13,7 +14,6 @@ const MAX_LIBRARIES = 64;
 /** Libraries seen in this page's session, oldest first, bounded to 64. */
 export class LibraryRegistry {
   private readonly views = new Map<string, LibraryView>();
-  private readonly rebuilds = new Map<string, RebuildReport>();
 
   /** How many libraries are remembered. */
   get size(): number {
@@ -22,7 +22,7 @@ export class LibraryRegistry {
 
   /**
    * Remember a created or opened library, replacing its earlier view and, when the registry is
-   * full, forgetting the oldest library and its rebuild report.
+   * full, forgetting the oldest library.
    *
    * @param view The library as the API answered it.
    */
@@ -33,7 +33,6 @@ export class LibraryRegistry {
       const oldest = this.views.keys().next().value;
       if (oldest === undefined) return;
       this.views.delete(oldest);
-      this.rebuilds.delete(oldest);
     }
   }
 
@@ -48,28 +47,14 @@ export class LibraryRegistry {
   }
 
   /**
-   * Keep the last rebuild report of a library.
+   * The revision a copy or rebuild of the library expects (API-S-019, API-F2.19): the one
+   * the API answered when this page created or opened it, else the initial revision of a
+   * bound library.
    *
    * @param libraryId The library ID.
-   * @param report What the rebuild found.
+   * @returns The expected revision.
    */
-  rememberRebuild(libraryId: string, report: RebuildReport): void {
-    this.rebuilds.delete(libraryId);
-    this.rebuilds.set(libraryId, report);
-    while (this.rebuilds.size > MAX_LIBRARIES) {
-      const oldest = this.rebuilds.keys().next().value;
-      if (oldest === undefined) return;
-      this.rebuilds.delete(oldest);
-    }
-  }
-
-  /**
-   * The last rebuild report of a library.
-   *
-   * @param libraryId The library ID.
-   * @returns The report, or undefined when none was made in this session.
-   */
-  lastRebuild(libraryId: string): RebuildReport | undefined {
-    return this.rebuilds.get(libraryId);
+  revisionOf(libraryId: string): string {
+    return this.views.get(libraryId)?.revision ?? INITIAL_LIBRARY_REVISION;
   }
 }

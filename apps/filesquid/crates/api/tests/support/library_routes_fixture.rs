@@ -179,6 +179,54 @@ impl Answer {
     pub fn text(&self) -> String {
         String::from_utf8_lossy(&self.body).into_owned()
     }
+
+    /// The `result` of a command answer (null when the body has none).
+    pub fn result(&self) -> Value {
+        self.json()["result"].clone()
+    }
+}
+
+/// Operation IDs handed out by [`operation_id`].
+static OPERATIONS: AtomicU64 = AtomicU64::new(0);
+
+/// A fresh operation ID, unique in this process.
+pub fn operation_id() -> String {
+    let n = OPERATIONS.fetch_add(1, Ordering::SeqCst);
+    format!("op-{}-{n}", std::process::id())
+}
+
+/// The command body `{envelope, input}` of `input` under `operation`, expecting `revision`,
+/// with the scope `scope`.
+pub fn command(scope: &str, operation: &str, revision: &str, input: Value) -> Value {
+    json!({
+        "envelope": {
+            "schema_version": 1,
+            "operation_id": operation,
+            "expected_revision": revision,
+            "scope": scope,
+        },
+        "input": input,
+    })
+}
+
+/// The create or open command of `location` (scope `location:<id>`), naming `library` when
+/// given.
+pub fn location_command(
+    location: &str,
+    operation: &str,
+    revision: &str,
+    library: Option<&str>,
+) -> Value {
+    let mut input = json!({ "location_id": location });
+    if let Some(id) = library {
+        input["library_id"] = json!(id);
+    }
+    command(&format!("location:{location}"), operation, revision, input)
+}
+
+/// The command of the open library `library` (scope `library:<id>`) with `input`.
+pub fn library_command(library: &str, operation: &str, revision: &str, input: Value) -> Value {
+    command(&format!("library:{library}"), operation, revision, input)
 }
 
 /// Which mount a rig serves: the desktop owner or the server administrator.
@@ -405,11 +453,10 @@ impl LibraryRig {
     /// and location ID.
     pub async fn create(&self, name: &str) -> (String, String) {
         let location = self.locations.register(name);
-        let answer = self
-            .post("/api/v1/libraries", json!({ "location_id": location }))
-            .await;
+        let body = location_command(&location, &operation_id(), "0", None);
+        let answer = self.post("/api/v1/libraries", body).await;
         assert_eq!(answer.status, StatusCode::OK, "{}", answer.text());
-        let library = answer.json()["library_id"]
+        let library = answer.result()["library_id"]
             .as_str()
             .expect("library id")
             .to_string();

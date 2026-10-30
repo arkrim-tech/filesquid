@@ -54,6 +54,7 @@ pub mod auth;
 pub mod canonical;
 pub mod client_events;
 pub mod content;
+pub mod envelope;
 pub mod error;
 pub mod events;
 pub mod files;
@@ -325,6 +326,12 @@ impl ApiState {
 
     /// The receipts of the file write commands.
     pub fn file_receipts(&self) -> &Arc<files::CommandReceipts> {
+        &self.file_receipts
+    }
+
+    /// The receipts of every command route of this host: one store, so an operation ID is
+    /// one idempotency key across the file write routes and the library routes (API-S-019).
+    pub fn command_receipts(&self) -> &Arc<files::CommandReceipts> {
         &self.file_receipts
     }
 

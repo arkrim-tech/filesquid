@@ -5,6 +5,7 @@
 #![allow(dead_code)]
 
 use axum::http::Method;
+use filesquid_api::envelope::{Command, CommandAnswer, ConflictAnswer};
 use filesquid_api::imports::{
     ImportAnswer, ImportOutcome, ImportRequest, ImportSource, ImportStartError, ImportStarter,
 };
@@ -24,6 +25,10 @@ use filesquid_api::local_library::{
     UnreadableObject, CONSENT_STATEMENT_ID, REBUILD_JOB_KIND,
 };
 use filesquid_api::monitor::Monitor;
+use filesquid_api::operation::{
+    CommandEnvelope, CommandOutcome, CommandOutcomeKind, ExpectedRevision, OperationId,
+    OperationScope,
+};
 use filesquid_api::ApiState;
 use filesquid_core::LibraryId;
 use filesquid_ocfl::change::{ChangeModel, StagingArea, VersionMeta};
@@ -32,6 +37,9 @@ use filesquid_ocfl::write::{rfc3339_utc, LeaseConfig, LeaseStore, SystemClock};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::Arc;
+
+/// The name the sample library is created with.
+const SAMPLE_NAME: &str = "Sample library";
 
 /// The library the samples name.
 pub const LIBRARY: &str = "0d6e1f2a-3b4c-4d5e-8f60-718293a4b5c6";
@@ -95,9 +103,12 @@ pub async fn install(state: &ApiState, monitor: &Monitor) {
     let request = LocationRequest {
         location_id: SAMPLE.to_string(),
         library_id: Some(library()),
-        name: Some("Sample library".to_string()),
+        name: Some(SAMPLE_NAME.to_string()),
     };
-    commands.create("owner", request).await.expect("create");
+    commands
+        .create("owner", request, "0")
+        .await
+        .expect("create");
     commit_w010(&sample).await;
     assert!(state.install_libraries(Arc::new(commands)));
     assert!(state.install_location_chooser(Arc::new(PickingChooser)));
@@ -191,18 +202,69 @@ fn json_body(body: Value) -> SampleBody {
     Some(("application/json", body.to_string().into_bytes()))
 }
 
+/// The sample envelope of the command of `route` with `scope`, expecting `revision`; each
+/// route has its own operation ID, so one sample never replays or reuses another's.
+fn envelope(route: &str, scope: &str, revision: &str) -> CommandEnvelope {
+    CommandEnvelope::new(
+        operation_of(route),
+        ExpectedRevision::new(revision).expect("revision"),
+        OperationScope::new(scope).expect("scope"),
+    )
+}
+
+/// The sample operation ID of `route`.
+fn operation_of(route: &str) -> OperationId {
+    let last = route.rsplit('/').next().unwrap_or("command");
+    OperationId::new(format!("contract-library-{last}")).expect("operation")
+}
+
+/// The sample operation ID of the schema samples.
+fn operation() -> OperationId {
+    operation_of("sample")
+}
+
+/// The sample command body `{envelope, input}` of `route` with `scope`, expecting
+/// `revision`.
+fn command_body(route: &str, scope: &str, revision: &str, input: Value) -> Value {
+    json!({ "envelope": to_value(envelope(route, scope, revision)), "input": input })
+}
+
+/// The sample library at its initial revision.
+fn library_view() -> LibraryView {
+    LibraryView {
+        library_id: library(),
+        spec_version: "1.1".to_string(),
+        objects: 1,
+        revision: "1".to_string(),
+    }
+}
+
 /// The request URI and body of the sample call of `method path`, or `None` when `path` is
-/// not a library route.
+/// not a library route. The command routes carry the envelope of Task API-F2.19.
 pub fn sample(method: &Method, path: &str) -> Option<(String, SampleBody)> {
+    let library_scope = format!("library:{LIBRARY}");
     let body = match (method.as_str(), path) {
-        ("POST", "/api/v1/libraries") => json!({ "location_id": NEW }),
-        ("POST", "/api/v1/libraries/openings") => {
-            json!({ "location_id": SAMPLE, "library_id": LIBRARY })
+        ("POST", "/api/v1/libraries") => command_body(
+            path,
+            &format!("location:{NEW}"),
+            "0",
+            json!({ "location_id": NEW }),
+        ),
+        ("POST", "/api/v1/libraries/openings") => command_body(
+            path,
+            &format!("location:{SAMPLE}"),
+            "0",
+            json!({ "location_id": SAMPLE, "library_id": LIBRARY }),
+        ),
+        ("POST", "/api/v1/libraries/snapshot-copies") => command_body(
+            path,
+            &library_scope,
+            "1",
+            json!({ "library_id": LIBRARY, "destination_location_id": COPY }),
+        ),
+        ("POST", "/api/v1/libraries/rebuilds") => {
+            command_body(path, &library_scope, "1", json!({ "library_id": LIBRARY }))
         }
-        ("POST", "/api/v1/libraries/snapshot-copies") => {
-            json!({ "library_id": LIBRARY, "destination_location_id": COPY })
-        }
-        ("POST", "/api/v1/libraries/rebuilds") => json!({ "library_id": LIBRARY }),
         ("POST", "/api/v1/libraries/location-choices") => json!({ "purpose": "create" }),
         ("POST", "/api/v1/imports") => serde_json::to_value(import_request()).expect("json"),
         ("GET", "/api/v1/libraries/repair-candidates") => {
@@ -211,9 +273,14 @@ pub fn sample(method: &Method, path: &str) -> Option<(String, SampleBody)> {
         ("POST", "/api/v1/libraries/repairs") => {
             serde_json::to_value(repair_request()).expect("json")
         }
-        ("POST", "/api/v1/libraries/renames") => {
-            json!({ "library_id": LIBRARY, "name": "Renamed sample library" })
-        }
+        // A rename to the current name changes nothing, so the sample library stays at
+        // revision 1 for the copy and rebuild samples that follow it.
+        ("POST", "/api/v1/libraries/renames") => command_body(
+            path,
+            &library_scope,
+            "1",
+            json!({ "library_id": LIBRARY, "name": SAMPLE_NAME }),
+        ),
         ("GET", "/api/v1/libraries/{library}/facts") => {
             return Some((format!("/api/v1/libraries/{LIBRARY}/facts"), None));
         }
@@ -388,12 +455,90 @@ pub fn samples() -> Vec<(&'static str, Vec<Value>)> {
                 name: Some("Family archive".to_string()),
             })],
         ),
+        ("LibraryView", vec![to_value(library_view())]),
         (
-            "LibraryView",
-            vec![to_value(LibraryView {
-                library_id: library(),
-                spec_version: "1.1".to_string(),
-                objects: 1,
+            "LibraryLocationCommand",
+            vec![to_value(Command {
+                envelope: envelope("sample", "location:loc-sample", "0"),
+                input: LocationRequest {
+                    location_id: SAMPLE.to_string(),
+                    library_id: Some(library()),
+                    name: None,
+                },
+            })],
+        ),
+        (
+            "RenameLibraryCommand",
+            vec![to_value(Command {
+                envelope: envelope("sample", &format!("library:{LIBRARY}"), "1"),
+                input: RenameLibraryRequest {
+                    library_id: library(),
+                    name: "Family archive 1990s".to_string(),
+                },
+            })],
+        ),
+        (
+            "LibraryFactsOutcome",
+            vec![to_value(CommandAnswer {
+                outcome: CommandOutcome::new(operation(), CommandOutcomeKind::Committed),
+                result: Some(LibraryFacts {
+                    library_id: library(),
+                    name: "Family archive 1990s".to_string(),
+                    free_bytes: Some(1_000_000),
+                    free_bytes_reason: None,
+                    revision: Some("2".to_string()),
+                }),
+            })],
+        ),
+        (
+            "SnapshotCopyCommand",
+            vec![to_value(Command {
+                envelope: envelope("sample", &format!("library:{LIBRARY}"), "1"),
+                input: SnapshotCopyRequest {
+                    library_id: library(),
+                    destination_location_id: COPY.to_string(),
+                },
+            })],
+        ),
+        (
+            "RebuildLibraryCommand",
+            vec![to_value(Command {
+                envelope: envelope("sample", &format!("library:{LIBRARY}"), "1"),
+                input: LibraryRequest {
+                    library_id: library(),
+                },
+            })],
+        ),
+        (
+            "LibraryViewOutcome",
+            vec![to_value(CommandAnswer {
+                outcome: CommandOutcome::new(operation(), CommandOutcomeKind::Committed),
+                result: Some(library_view()),
+            })],
+        ),
+        (
+            "SnapshotCopyOutcome",
+            vec![to_value(CommandAnswer {
+                outcome: CommandOutcome::new(operation(), CommandOutcomeKind::Committed),
+                result: Some(copy.clone()),
+            })],
+        ),
+        (
+            "RebuildJobOutcome",
+            vec![to_value(CommandAnswer {
+                outcome: CommandOutcome::new(operation(), CommandOutcomeKind::Pending),
+                result: Some(rebuild_answer()),
+            })],
+        ),
+        (
+            "LibraryCommandConflict",
+            vec![to_value(ConflictAnswer {
+                outcome: CommandOutcome::new(operation(), CommandOutcomeKind::Conflict),
+                result: None,
+                error: filesquid_api::ApiError::new(
+                    filesquid_api::ErrorCode::Conflict,
+                    "The library changed since it was last read.",
+                ),
             })],
         ),
         (
@@ -521,10 +666,12 @@ fn facts_samples() -> Vec<(&'static str, Vec<Value>)> {
         name: "Family archive".to_string(),
         free_bytes: Some(1_000_000),
         free_bytes_reason: None,
+        revision: Some("1".to_string()),
     };
     let unknown = LibraryFacts {
         free_bytes: None,
         free_bytes_reason: Some(FreeBytesReason::NotLocal),
+        revision: None,
         ..known.clone()
     };
     let recent = RecentLibrary {

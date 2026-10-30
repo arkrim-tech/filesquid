@@ -14,7 +14,9 @@ Accepted: 2026-10-18. Amends [ADR 035](./035-macos-first-desktop-mvp.md) (the MV
 
 Amended 2026-10-19 by [ADR 040](./040-prov-o-history.md) (this record's Decision 6; ADR 040 Decision 10): the `filesquid-core` PROV-O types of CO-0.8 are no longer C2PA leftovers; CO-0.11 extends them for the MVP's PROV-O history, which does not depend on the `c2pa` module. Also amended 2026-10-19 by the owner decision recorded in [ADR 038](./038-import-file-record.md): the import record of Decision 5 is the `import` section of each file's `<file-uuid>.metadata.md`.
 
-Noted 2026-10-29: Decision 6 also keeps phase C from delaying encrypted backup (Task FS-4.2), which sits between the MVP and the first consumer release ([ADR 029](./029-filesquid-unified-product-and-distributions.md)).
+Noted 2026-10-29: Decision 6 also keeps phase C from delaying encrypted backup (Task FS-4.2), which sits between the MVP and the rest of the first consumer release ([ADR 029](./029-filesquid-unified-product-and-distributions.md)).
+
+Amended 2026-10-29 (owner decision): an upload into a node, Task 5.2 in phase F4, adds a ProofMode-shaped PROV-O record and a C2PA proof signed by the uploading device key (Decision 7). That proof records the upload and cites metadata stripped into the file's Markdown record. It does not move the Content Credentials panel, scans, edits or crate publishing out of phase C. Decisions 2 and 3 still hold for those.
 
 ## Context / Requirement Reference
 
@@ -30,6 +32,7 @@ Noted 2026-10-29: Decision 6 also keeps phase C from delaying encrypted backup (
 4. **Records for files imported earlier.** When the `c2pa` module is enabled for a library, FileSquid MUST give every file imported before then an initial record through a resumable backfill job. That record states its own creation time and cites the file's import record ([ADR 038](./038-import-file-record.md)) and OCFL version (`created` time and SHA-256 digest) as the import evidence (or, for a file with no import record, the OCFL version alone with that absence stated); it MUST NOT claim FileSquid import time ([F-043](../prd.md#f-043-c2pa-records-and-action-disclosure)). From then on every import initialises its record at import time, as F-043 requires.
 5. **An import record instead, from the MVP on.** In place of the C2PA record, every import in the MVP and release 1 commits an import record of source-system and host facts ([ADR 038](./038-import-file-record.md)). The `generator:` search operator, which reads C2PA claim generators, is not part of the MVP search grammar; it joins the grammar with the `c2pa` module.
 6. **Work already done stays.** CP-0.1 to CP-0.3 (crate foundation, manifest-store parsing, hard bindings and JPEG/PNG handlers) and the `filesquid-core` C2PA and PROV-O record types (CO-0.8) remain in the repository and in the workspace test run. The remaining C2PA rows MAY start after the MVP gate and MAY run beside backup and release-1 work, and MUST NOT delay the MVP gate, the backup gate (Task FS-4.2) or the release-1 gate.
+7. **A node upload carries a proof.** An upload into a FileSquid node (phase F4, Task 5.2) MUST add a PROV-O record and a C2PA proof on the ProofMode model, signed by the uploading device key. The proof binds the content hash of the stored bytes (the content after embedded metadata and sidecars have been moved into `<file-uuid>.metadata.md`), the device, the time, and location when the device has it. It records the upload and cites the stripped metadata. It MUST NOT claim FileSquid witnessed the original capture. This proof is not the Content Credentials panel, a collection scan, an edit, or publication of the `filesquid-c2pa` crate.
 
 ## Rationale
 

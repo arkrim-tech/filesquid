@@ -256,9 +256,14 @@ export { FsLibraryRepair, type RepairPageOptions } from "./components/fs-library
 export type { LibraryPageOptions } from "./components/library-parts";
 export { bindLibraryRoute } from "./app/library-route";
 export * from "./libraries/model";
-export { ClientLibrarySource, type LibraryClient } from "./libraries/client-source";
+export {
+  ClientLibrarySource,
+  MAX_RETAINED_COMMANDS,
+  type LibraryClient,
+} from "./libraries/client-source";
 export {
   parseLibraryView,
+  parseRebuildJob,
   parseLocationChoice,
   parseRebuildReport,
   parseRepairAnswer,
