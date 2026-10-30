@@ -138,6 +138,8 @@ export class FakeLibrarySource implements LibrarySource {
   choice: Answer<LocationChoice> = { outcome: "chosen", location_id: "loc-1" };
   created: Answer<LibraryView> = LIBRARY;
   opened: Answer<LibraryView> = LIBRARY;
+  /** The current revision the facts answer for a library the page did not open. */
+  current: Answer<string> = "1";
   copied: Answer<SnapshotCopyReport> = COPY_REPORT;
   rebuilt: Answer<RebuildJobAnswer> = REBUILD_JOB;
   candidates: Answer<RepairCandidates> = CANDIDATES;
@@ -192,6 +194,11 @@ export class FakeLibrarySource implements LibrarySource {
     this.calls.push(`rebuild:${libraryId}`);
     this.revisions.push(expectedRevision);
     return answer(this.rebuilt);
+  }
+  /** @inheritdoc */
+  revision(libraryId: string): Promise<string> {
+    this.calls.push(`revision:${libraryId}`);
+    return answer(this.current);
   }
   /** @inheritdoc */
   repairCandidates(libraryId: string): Promise<RepairCandidates> {

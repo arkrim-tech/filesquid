@@ -128,8 +128,9 @@ impl<L: LibraryLocations> LibraryCommands<L> {
     /// Rename a library open on this host, for `actor`, when the caller expects its current
     /// revision, and answer its facts: a changed name advances the revision; a rename that
     /// changes nothing answers the facts, advances nothing and is not journaled. Answers the
-    /// facts and whether the name changed. The check and the rename run under the binding
-    /// lock, so a rename never lands between an open's revision check and its advance.
+    /// facts and whether the name changed. The check, the rename and the read of the name and
+    /// revision answered run under the binding lock, so a rename never lands between an open's
+    /// revision check and its advance, and the facts describe one state.
     ///
     /// # Errors
     ///
@@ -147,18 +148,18 @@ impl<L: LibraryLocations> LibraryCommands<L> {
         let checked = self.registry().and_then(|registry| {
             name_or_refusal(Some(&request.name))?;
             let changed = self.rename_at(registry.as_ref(), library, &request.name, expected)?;
-            Ok((registry, changed))
+            let entry = registry.entry(library).ok_or(LocalLibraryError::Internal)?;
+            Ok((registry, changed, entry, self.revision_of(library)))
         });
         drop(serialised);
-        let (registry, changed) = self.refused(actor, RENAME_OPERATION, Some(library), checked)?;
+        let (registry, changed, entry, revision) =
+            self.refused(actor, RENAME_OPERATION, Some(library), checked)?;
         if changed {
             self.service
                 .journal_success(actor, RENAME_OPERATION, library);
         }
-        let entry = registry.entry(library).ok_or(LocalLibraryError::Internal)?;
         let space = read_free_space(registry, &entry.location_id).await;
-        let facts = LibraryFacts::of(&entry, &space, self.revision_of(library));
-        Ok((facts, changed))
+        Ok((LibraryFacts::of(&entry, &space, revision), changed))
     }
 
     /// Rename the open library `library` to `name` in `registry` under the open-library

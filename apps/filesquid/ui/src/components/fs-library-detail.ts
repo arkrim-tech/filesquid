@@ -280,15 +280,16 @@ export class FsLibraryDetail extends HTMLElement {
 
   /** Choose a destination unless one is kept, copy the snapshot there and report it. */
   private async copy(feedback: Feedback, generation: number): Promise<void> {
-    const { labels, source, registry } = this.options as LibraryPageOptions;
+    const { labels, source } = this.options as LibraryPageOptions;
     const id = this.library as string;
     this.showResult("copy", []);
     this.destination ??= await this.chooseDestination(feedback, generation);
     const destination = this.destination;
     if (generation !== this.generation || destination === undefined) return;
     feedback.note(labels.libraryWorking);
-    const revision = registry.revisionOf(id);
-    const report = await step("copy", () => source.copy(id, destination, revision));
+    const report = await step("copy", async () =>
+      source.copy(id, destination, await this.expectedRevision(id)),
+    );
     if (generation !== this.generation) return;
     feedback.clear();
     this.showResult("copy", copyReport(report, labels));
@@ -319,13 +320,24 @@ export class FsLibraryDetail extends HTMLElement {
    * "Working." note stays until UI-1.3 follows the job's progress and shows its report.
    */
   private async rebuild(feedback: Feedback, generation: number): Promise<void> {
-    const { labels, source, registry } = this.options as LibraryPageOptions;
+    const { labels, source } = this.options as LibraryPageOptions;
     const id = this.library as string;
     this.showResult("rebuild", []);
     feedback.note(labels.libraryWorking);
-    await step("rebuild", () => source.rebuild(id, registry.revisionOf(id)));
+    await step("rebuild", async () => source.rebuild(id, await this.expectedRevision(id)));
     if (generation !== this.generation) return;
     await this.loadCandidates();
+  }
+
+  /**
+   * The revision a copy or rebuild of `id` expects: the one the registry kept when this page
+   * created or opened the library, else its current revision read from its facts, so a page
+   * reached by its address never sends a revision a rename has left behind. Network I/O when
+   * the registry has none.
+   */
+  private async expectedRevision(id: string): Promise<string> {
+    const { source, registry } = this.options as LibraryPageOptions;
+    return registry.revisionOf(id) ?? source.revision(id);
   }
 
   /** Mark the action buttons busy. */

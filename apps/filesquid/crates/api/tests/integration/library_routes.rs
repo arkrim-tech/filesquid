@@ -733,18 +733,29 @@ async fn the_routes_answer_unavailable_once_until_the_host_installs_its_commands
     state.install_authoriser(filesquid_api::auth::Authoriser::desktop_owner(&token));
     state.install_monitor(rig.monitor.clone());
     let before = failures(&rig).len();
+    let body = rebuild_body(LIBRARY);
+    let operation = body["envelope"]["operation_id"]
+        .as_str()
+        .expect("id")
+        .to_string();
     let request = axum::http::Request::builder()
         .method(Method::POST)
         .uri("/api/v1/libraries/rebuilds")
         .header("authorization", format!("Bearer {}", token.secret()))
         .header("content-type", "application/json")
-        .body(axum::body::Body::from(rebuild_body(LIBRARY).to_string()))
+        .body(axum::body::Body::from(body.to_string()))
         .expect("request");
     let response = tower::ServiceExt::oneshot(filesquid_api::router(state), request)
         .await
         .expect("answer");
     assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
     assert_one_refusal(&rig, before, REBUILD_OPERATION, "unavailable");
+    let refusal = failures(&rig).pop().expect("the refusal");
+    assert_eq!(
+        refusal.operation_id.as_deref(),
+        Some(operation.as_str()),
+        "the envelope's operation ID is journaled with the refusal"
+    );
 }
 
 #[tokio::test]

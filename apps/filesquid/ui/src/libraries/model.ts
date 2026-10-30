@@ -96,6 +96,11 @@ export interface LibrarySource {
    * library's `revision` as last read; answers the pending job, never a report.
    */
   rebuild(libraryId: string, expectedRevision: string): Promise<RebuildJobAnswer>;
+  /**
+   * The current revision of a library this host opened, read from its facts (API-S-038), for
+   * a page that did not create or open it; the initial revision when it is not open now.
+   */
+  revision(libraryId: string): Promise<string>;
   /** List the objects whose head lacks its version inventory or its sidecar. */
   repairCandidates(libraryId: string): Promise<RepairCandidates>;
   /** Run the consented version-inventory repair. */

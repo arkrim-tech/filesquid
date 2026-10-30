@@ -127,7 +127,7 @@ impl Jobs {
     ///
     /// # Errors
     /// A store failure, journaled.
-    pub fn submit_as(&self, id: String, spec: JobSpec) -> Result<Job, JobError> {
+    pub(crate) fn submit_as(&self, id: String, spec: JobSpec) -> Result<Job, JobError> {
         let job = new_job(id, spec, (self.clock)());
         self.store
             .insert(&job)

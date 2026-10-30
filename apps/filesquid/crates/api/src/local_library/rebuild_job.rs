@@ -117,8 +117,9 @@ impl SubmitRefusal {
 /// out is never duplicated.
 ///
 /// # Errors
-/// A store failure (journaled by the job service); [`JobError::Unavailable`] when the bound
-/// is reached or no job ID can be minted (both the caller's to journal).
+/// A store failure of the read of unfinished jobs (the caller's to journal) or of the insert
+/// of the new job (journaled by the job service); [`JobError::Unavailable`] when the bound is
+/// reached or no job ID can be minted (both the caller's to journal).
 pub fn submit_rebuild(
     jobs: &Jobs,
     library: &LibraryId,
