@@ -2,12 +2,13 @@
 //! (Task API-F2.8; API-S-028, API-S-017; ADR 040 Decision 6), through the router against a
 //! real OCFL storage root on the local filesystem.
 //!
-//! Every commit a file route (upload, move, remove, copy, rename, restore, label) or a
+//! Every commit that a file route (upload, move, remove, copy, rename, restore, label) or a
 //! metadata route (set or remove a statement, register a namespace) publishes writes the
-//! `filesquid.operation.v1` message with the operation ID and kind and is journaled with
+//! `filesquid.operation.v1` message with the operation ID and kind, and is journaled with
 //! exactly one `ocfl.commit` entry naming the operation ID and the object version. With
-//! provenance installed its version `user` is the installation; without, the caller. Every metadata write is also journaled as `metadata.edit`. A refused
-//! attempt is journaled as before and never reaches the version history.
+//! provenance installed its version `user` is the installation; without, the caller. Every
+//! metadata write is also journaled as `metadata.edit`. A refused attempt is journaled as
+//! before and never reaches the version history.
 
 #[path = "../support/files_fixture.rs"]
 mod files_fixture;

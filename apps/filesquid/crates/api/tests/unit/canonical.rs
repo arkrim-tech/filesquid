@@ -507,7 +507,17 @@ fn a_file_originals_bound_files_pass_the_journal_checks() {
         JPEG,
         committed,
     ));
-    assert!(refused.is_err(), "a journal no replay can read is refused");
+    match refused {
+        Err(CanonicalError::Failed(reason)) => {
+            assert!(reason.contains("journal exceeds"), "{reason}");
+        }
+        other => panic!("a journal no replay can read is refused: {other:?}"),
+    }
+    let root = file_object_root(&file).unwrap();
+    assert!(
+        ready(Object::open(&rig.root, &root)).is_err(),
+        "nothing was published"
+    );
     let one = BoundJournal { lines: 1 };
     let committed = BoundMeta {
         meta: meta(&record_of("op-12")),
