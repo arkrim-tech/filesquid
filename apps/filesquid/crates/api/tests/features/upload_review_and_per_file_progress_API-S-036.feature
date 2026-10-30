@@ -44,8 +44,22 @@ Feature: Upload review step and per-file job progress
 
   Scenario: A repeated request answers the open plan without a second dialog
     Given the owner has asked to upload a folder into a collection
-    When the same request is sent again
+    When the same request is sent again with the same operation ID
     Then the open plan should be answered again
+    And the dialog should have been shown once
+
+  Scenario: A repeated request after the upload started answers the started job
+    Given the owner has asked to upload a folder into a collection
+    And the owner has confirmed the upload
+    When the same request is sent again with the same operation ID
+    Then the started job should be answered again
+    And the dialog should have been shown once
+
+  Scenario: A repeated request after the owner closed the dialog answers cancelled
+    Given a desktop host whose import dialog the owner closes
+    And the owner has asked to upload a folder into a collection
+    When the same request is sent again with the same operation ID
+    Then the upload should be answered as cancelled again
     And the dialog should have been shown once
 
   # Edge cases
@@ -54,6 +68,11 @@ Feature: Upload review step and per-file job progress
     When the owner discards the plan
     Then the plan should be gone and no job should have started
     And the discard should be journaled once with the plan
+
+  Scenario: A page of planned files holds at most 1,000 files
+    Given the owner has asked to upload a folder into a collection
+    When the owner asks for 1001 planned files at once
+    Then the read should be refused as an invalid request
 
   Scenario: A plan that nobody confirms expires after an hour
     Given the owner has asked to upload a folder into a collection
@@ -67,6 +86,11 @@ Feature: Upload review step and per-file job progress
     When the owner confirms the upload
     Then the upload should be refused as "source_changed"
     And the plan should still be open
+
+  Scenario: A host without an import dialog or per-file progress answers unavailable
+    Given a host without an import dialog or per-file progress
+    When the owner asks to upload, reads a plan's files and reads a job's files
+    Then every answer should be unavailable
 
   # Per-file progress
   Scenario: An upload job shows its destination and every file's state
@@ -82,6 +106,13 @@ Feature: Upload review step and per-file job progress
     And the retry should be journaled once for that file without its name
     When the owner retries the failed file
     Then nothing should change and nothing should be handed to the runner
+
+  Scenario: Retrying all failed files queues every failed file and hands the job to its runner
+    Given an upload job with a copied, a copying and a failed file
+    And the copying file failed too
+    When the owner retries all failed files
+    Then both failed files should be queued again and the job handed to its runner
+    And the retry should be journaled once for each file without its name
 
   Scenario: A paused job refuses a retry and nothing changes
     Given an upload job with a copied, a copying and a failed file

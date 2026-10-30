@@ -233,6 +233,38 @@ async fn a_paused_job_refuses_a_retry_with_job_paused_and_nothing_changes() {
 }
 
 #[tokio::test]
+async fn a_running_job_asked_to_pause_refuses_a_retry_with_job_paused() {
+    let host = Host::start();
+    host.upload_job(UPLOAD, JobState::Running, Some(JobControl::Pause));
+    let (status, refused) = host
+        .post(&format!("/api/v1/jobs/{UPLOAD}/retry-failed"))
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{refused}");
+    assert_eq!(host.states(UPLOAD)[2], JobItemState::Failed, "unchanged");
+    assert_eq!(
+        host.journaled(JOB_REFUSED)[0].error_code.as_deref(),
+        Some("job_paused")
+    );
+    assert!(host.handed().is_empty());
+}
+
+#[tokio::test]
+async fn a_name_a_host_hands_over_with_a_folder_is_cut_to_its_base_name() {
+    let host = Host::start();
+    host.store.insert(&pending("job-paths")).expect("job");
+    let mut named = files();
+    named[0].name = "DCIM/100CANON/IMG_4101.JPG".into();
+    named[1].name = "C:\\Users\\owner\\IMG_4102.CR3".into();
+    host.items.put("job-paths", None, named);
+    let (status, page) = host.get("/api/v1/jobs/job-paths/items").await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert_eq!(page["items"][0]["name"], "IMG_4101.JPG");
+    assert_eq!(page["items"][1]["name"], "IMG_4102.CR3");
+    assert!(!page.to_string().contains("DCIM"), "{page}");
+    assert!(!page.to_string().contains("Users"), "{page}");
+}
+
+#[tokio::test]
 async fn a_file_that_is_not_failed_an_unknown_item_and_a_finished_job_are_handled_as_the_rule_says()
 {
     let host = Host::start();
@@ -293,6 +325,9 @@ async fn a_host_without_the_per_file_port_answers_unavailable() {
     state.install_monitor(monitor.clone());
     let store = Arc::new(MemoryJobStore::new());
     store.insert(&pending(UPLOAD)).expect("job");
+    let mut paused = pending("job-paused");
+    paused.control = Some(JobControl::Pause);
+    store.insert(&paused).expect("job");
     let jobs = Jobs::new(
         store,
         monitor.journal(),
@@ -313,6 +348,17 @@ async fn a_host_without_the_per_file_port_answers_unavailable() {
         .post(&format!("/api/v1/jobs/{UPLOAD}/retry-failed"))
         .await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    let (status, _) = host.post("/api/v1/jobs/job-paused/retry-failed").await;
+    assert_eq!(
+        status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "the port before the state"
+    );
+    let refused = host.journaled(JOB_REFUSED);
+    assert_eq!(refused.len(), 3, "every unavailable answer is journaled");
+    assert!(refused
+        .iter()
+        .all(|e| e.error_code.as_deref() == Some("unavailable")));
     let (status, view) = host.get(&format!("/api/v1/jobs/{UPLOAD}")).await;
     assert_eq!(status, StatusCode::OK, "{view}");
     assert_eq!(view.get("destination"), None);

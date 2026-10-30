@@ -187,11 +187,25 @@ impl Jobs {
         cursor: Option<&str>,
         limit: usize,
     ) -> Result<JobItemPage, JobError> {
+        let items = self.item_port(id)?;
         let job = self
             .job(id)
             .inspect_err(|err| self.journal_refusal(id, None, err))?;
-        let items = self.items.as_ref().ok_or_else(no_items)?;
-        items.page(&job.id, cursor, limit)
+        items
+            .page(&job.id, cursor, limit)
+            .map(super::items::named_page)
+    }
+
+    /// The per-file progress port, checked before the job so a host without one answers
+    /// `unavailable` for every job; the refusal is journaled against job `id`.
+    ///
+    /// # Errors
+    /// [`JobError::Unavailable`] on a host that keeps no per-file progress.
+    fn item_port(&self, id: &str) -> Result<&Arc<dyn JobItems>, JobError> {
+        self.items
+            .as_ref()
+            .ok_or_else(no_items)
+            .inspect_err(|err| self.journal_refusal(id, None, err))
     }
 
     /// Put the failed file `item` of job `id` (every failed file when `None`) back to queued
@@ -204,12 +218,12 @@ impl Jobs {
     /// (`job_finished`, `cancel_requested`, `job_paused`), [`JobError::Unavailable`] on a
     /// host that keeps no per-file progress, or a store failure; each refusal is journaled.
     pub fn retry(&self, id: &str, item: Option<&str>) -> Result<(Job, Vec<String>), JobError> {
+        let items = self.item_port(id)?;
         let job = self
             .job(id)
             .inspect_err(|err| self.journal_refusal(id, None, err))?;
         let operation = Some(job.operation_id.as_str());
         rules::retry_allowed(&job).inspect_err(|err| self.journal_refusal(id, operation, err))?;
-        let items = self.items.as_ref().ok_or_else(no_items)?;
         let put_back = items
             .retry(&job.id, item)
             .inspect_err(|err| self.journal_refusal(id, operation, err))?;

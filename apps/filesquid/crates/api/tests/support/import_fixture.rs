@@ -9,7 +9,7 @@ use axum::http::{header, Method, Request, StatusCode};
 use filesquid_api::auth::{Authoriser, LaunchToken};
 use filesquid_api::imports::{
     ImportAnswer, ImportRequest, ImportStartError, ImportStarter, PlanBook, PlanFacts, PlanItem,
-    PlanItemPage, StartDecision,
+    PlanItemPage,
 };
 use filesquid_api::journal::{JournalEntry, JournalQuery, MemoryJournal, Outcome};
 use filesquid_api::library::{
@@ -61,6 +61,11 @@ impl ScriptedStarter {
 }
 
 impl ImportStarter for ScriptedStarter {
+    /// Scripted: every request the tests send is a first request.
+    fn replay(&self, _request: &ImportRequest) -> Result<Option<ImportAnswer>, ImportStartError> {
+        Ok(None)
+    }
+
     fn start(
         &self,
         _actor: &str,
@@ -123,30 +128,8 @@ impl Host {
         body: Option<Value>,
         owner: bool,
     ) -> (StatusCode, Value) {
-        let mut request = Request::builder()
-            .method(method)
-            .uri(path)
-            .header(header::CONTENT_TYPE, "application/json");
-        if owner {
-            request = request.header(header::AUTHORIZATION, format!("Bearer {}", self.token));
-        }
-        let bytes = body.map(|b| b.to_string()).unwrap_or_default();
-        let request = request.body(Body::from(bytes)).expect("request");
-        let response = router(self.state.clone())
-            .oneshot(request)
-            .await
-            .expect("answer");
-        let status = response.status();
-        let bytes = response
-            .into_body()
-            .collect()
-            .await
-            .expect("body")
-            .to_bytes();
-        (
-            status,
-            serde_json::from_slice(&bytes).unwrap_or(Value::Null),
-        )
+        let token = owner.then_some(self.token.as_str());
+        send_as(self.state.clone(), token, method, path, body).await
     }
 
     /// The journal entries of `operation`, oldest first.
@@ -232,6 +215,44 @@ pub fn body_of(operation: &str, scope: &str) -> Value {
         "collection_id": COLLECTION,
         "source": "folder"
     })
+}
+
+/// `POST /api/v1/imports` with `body` and the bearer `token` to the router over `state`, so a
+/// test can send it from a spawned task.
+pub async fn post_as(state: ApiState, token: &str, body: Value) -> (StatusCode, Value) {
+    send_as(state, Some(token), Method::POST, PATH, Some(body)).await
+}
+
+/// Send `method` `path` with `body`, with the bearer `token` when given, to the router over
+/// `state`; answer the status and the JSON body (`Null` when there is none).
+pub async fn send_as(
+    state: ApiState,
+    token: Option<&str>,
+    method: Method,
+    path: &str,
+    body: Option<Value>,
+) -> (StatusCode, Value) {
+    let mut request = Request::builder()
+        .method(method)
+        .uri(path)
+        .header(header::CONTENT_TYPE, "application/json");
+    if let Some(token) = token {
+        request = request.header(header::AUTHORIZATION, format!("Bearer {token}"));
+    }
+    let bytes = body.map(|b| b.to_string()).unwrap_or_default();
+    let request = request.body(Body::from(bytes)).expect("request");
+    let response = router(state).oneshot(request).await.expect("answer");
+    let status = response.status();
+    let bytes = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body")
+        .to_bytes();
+    (
+        status,
+        serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+    )
 }
 
 /// The scope of [`LIBRARY`].
@@ -352,13 +373,10 @@ impl ImportStarter for PlanningStarter {
 
     fn start_plan(&self, _actor: &str, plan_id: &str) -> Result<ImportAnswer, ImportStartError> {
         let fingerprint = self.fingerprint.lock().expect("fingerprint").clone();
-        match self.book.starting(plan_id, &fingerprint, self.now())? {
-            StartDecision::Started(answer) => Ok(answer),
-            StartDecision::Open(_, _) => {
-                let n = self.jobs.fetch_add(1, Ordering::SeqCst) + 1;
-                self.book.started(plan_id, &format!("job-{n}"))
-            }
-        }
+        self.book.start(plan_id, &fingerprint, self.now(), |_, _| {
+            let n = self.jobs.fetch_add(1, Ordering::SeqCst) + 1;
+            Ok(format!("job-{n}"))
+        })
     }
 
     fn discard(&self, _actor: &str, plan_id: &str) -> Result<(), ImportStartError> {

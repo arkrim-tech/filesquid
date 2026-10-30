@@ -39,8 +39,8 @@ mod store;
 mod view;
 
 pub use items::{
-    page_of as page_of_items, requeue, JobDestination, JobItem, JobItemPage, JobItemState,
-    JobItems, MemoryJobItems, MAX_LISTED_ITEMS,
+    display_name, named_page, page_of as page_of_items, requeue, JobDestination, JobItem,
+    JobItemPage, JobItemState, JobItems, MemoryJobItems, MAX_LISTED_ITEMS,
 };
 pub use model::{Job, JobControl, JobError, JobSpec, JobState, Lease};
 pub use runner::JobRunner;

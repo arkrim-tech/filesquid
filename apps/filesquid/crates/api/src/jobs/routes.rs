@@ -79,14 +79,16 @@ async fn list(
         Ok(filter) => filter,
         Err(()) => return invalid(&jobs, FILTER_MESSAGE).into_response(),
     };
-    let listing = jobs.clone();
-    let listed = blocking(move || listing.list(&filter)).await;
-    match listed {
-        Ok(list) => Json(JobPage {
+    let listed = blocking(move || {
+        let list = jobs.list(&filter)?;
+        Ok(JobPage {
             jobs: list.jobs.iter().map(|job| jobs.summary(job)).collect(),
             truncated: list.truncated,
         })
-        .into_response(),
+    })
+    .await;
+    match listed {
+        Ok(page) => Json(page).into_response(),
         Err(err) => api_error(&err).into_response(),
     }
 }
@@ -152,11 +154,7 @@ async fn retried(state: &ApiState, id: String, item: Option<String>) -> Response
         Err(err) => return api_error(&err).into_response(),
     };
     let scheduled = !put_back.is_empty() && schedule(state, &job);
-    Json(JobControlAnswer {
-        job: jobs.view(&job),
-        scheduled,
-    })
-    .into_response()
+    answered(jobs, job, scheduled).await
 }
 
 /// `GET /api/v1/jobs/{job}`: one job.
@@ -165,9 +163,8 @@ async fn one(State(state): State<ApiState>, Path(id): Path<String>) -> Response 
         Ok(jobs) => jobs,
         Err(err) => return err.into_response(),
     };
-    let reading = jobs.clone();
-    match blocking(move || reading.job(&id)).await {
-        Ok(job) => Json(jobs.view(&job)).into_response(),
+    match blocking(move || jobs.job(&id).map(|job| jobs.view(&job))).await {
+        Ok(view) => Json(view).into_response(),
         Err(err) => api_error(&err).into_response(),
     }
 }
@@ -194,11 +191,7 @@ async fn resume(State(state): State<ApiState>, Path(id): Path<String>) -> Respon
         Err(err) => return api_error(&err).into_response(),
     };
     let scheduled = schedule(&state, &job);
-    Json(JobControlAnswer {
-        job: jobs.view(&job),
-        scheduled,
-    })
-    .into_response()
+    answered(jobs, job, scheduled).await
 }
 
 /// Hand the pending `job` to the runner of its kind; false when it has none or it refused.
@@ -229,11 +222,17 @@ async fn controlled(
     };
     let acting = jobs.clone();
     match blocking(move || act(&acting)).await {
-        Ok(job) => Json(JobControlAnswer {
-            job: jobs.view(&job),
-            scheduled: false,
-        })
-        .into_response(),
+        Ok(job) => answered(jobs, job, false).await,
+        Err(err) => api_error(&err).into_response(),
+    }
+}
+
+/// Answer the control's `job` with its view, whose destination is read from the host's
+/// per-file progress port on a blocking thread, and whether it was handed to its runner.
+async fn answered(jobs: Arc<Jobs>, job: Job, scheduled: bool) -> Response {
+    let view = blocking(move || Ok(jobs.view(&job))).await;
+    match view {
+        Ok(job) => Json(JobControlAnswer { job, scheduled }).into_response(),
         Err(err) => api_error(&err).into_response(),
     }
 }

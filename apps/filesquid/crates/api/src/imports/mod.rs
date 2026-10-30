@@ -39,12 +39,15 @@
 //! [`IMPORT_START_OPERATION`] (`succeeded` with the job ID, or `failed`), each discard as
 //! [`IMPORT_DISCARD_OPERATION`]; never a path or a file name.
 
+mod flight;
 mod plan;
 pub(crate) mod routes;
 
+pub(crate) use flight::InFlight;
+
 pub use plan::{
     ImportDestination, ImportPlanView, PlanBook, PlanDiscarded, PlanFacts, PlanItem, PlanItemPage,
-    StartDecision, MAX_PLAN_ITEMS, MAX_REMEMBERED_PLANS, PLAN_TTL_MS,
+    MAX_PLAN_ITEMS, MAX_REMEMBERED_PLANS, PLAN_TTL_MS,
 };
 
 use filesquid_core::{CommandEnvelope, CommandOutcome, CommandOutcomeKind, OperationId};
@@ -228,17 +231,19 @@ pub trait ImportStarter: Send + Sync {
     /// dialog: its open plan (`planned`, with the same plan ID), its started job
     /// (`started`), or `cancelled` when the owner closed the dialog. The route answers a
     /// repeated operation with it before checking the destination again, so a retry is
-    /// never refused because its collection changed since. The default knows of nothing.
+    /// never refused because its collection changed since. Every host implements it, the
+    /// one-step host of [`Self::start`] included: a host that forgot what an operation ID
+    /// produced would open a second dialog and submit a second job for a retried request.
+    /// The route never asks two requests of one operation ID at once (it answers the second
+    /// `dialog_open`), so a host answers a repeat from what it recorded when the first
+    /// request ended.
     ///
     /// # Errors
     /// [`ImportStartError::OperationReused`] when the operation ID produced an import of
     /// another library, collection, folder or kind of source;
     /// [`ImportStartError::PlanNotFound`] when its plan expired or was discarded;
     /// [`ImportStartError::Unavailable`] when the host cannot tell.
-    fn replay(&self, request: &ImportRequest) -> Result<Option<ImportAnswer>, ImportStartError> {
-        let _ = request;
-        Ok(None)
-    }
+    fn replay(&self, request: &ImportRequest) -> Result<Option<ImportAnswer>, ImportStartError>;
 
     /// Let the owner pick the source of `request` in the host's dialog, as `actor`, and plan
     /// the import without staging a byte: `planned` with the plan, or `cancelled` when the

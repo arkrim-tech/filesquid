@@ -8,7 +8,6 @@ use axum::http::Method;
 use filesquid_api::imports::{
     ImportAnswer, ImportDestination, ImportOutcome, ImportPlanView, ImportRequest, ImportSource,
     ImportStartError, ImportStarter, PlanBook, PlanDiscarded, PlanFacts, PlanItem, PlanItemPage,
-    StartDecision,
 };
 use filesquid_api::local_library::choice::{
     ChoiceOutcome, ChoicePurpose, ChooseError, LocationChoice, LocationChoiceRequest,
@@ -165,10 +164,8 @@ impl ImportStarter for PlanningImports {
     }
 
     fn start_plan(&self, _actor: &str, plan_id: &str) -> Result<ImportAnswer, ImportStartError> {
-        match self.book.starting(plan_id, "fp", Self::now())? {
-            StartDecision::Started(answer) => Ok(answer),
-            StartDecision::Open(_, _) => self.book.started(plan_id, "job-1"),
-        }
+        self.book
+            .start(plan_id, "fp", Self::now(), |_, _| Ok("job-1".to_string()))
     }
 
     fn discard(&self, _actor: &str, plan_id: &str) -> Result<(), ImportStartError> {

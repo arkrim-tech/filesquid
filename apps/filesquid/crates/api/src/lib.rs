@@ -149,6 +149,8 @@ pub struct ApiState {
     /// The host's import dialog and job runner, installed once at startup (the import route
     /// answers 503 until then).
     import_starter: Arc<OnceLock<Arc<dyn imports::ImportStarter>>>,
+    /// The operation IDs of the import plan requests in flight, in memory only (API-S-036).
+    import_flights: Arc<imports::InFlight>,
 }
 
 /// The installed job runners, by job kind.
@@ -232,6 +234,7 @@ impl ApiState {
             jobs: Arc::new(OnceLock::new()),
             job_runners: Arc::new(std::sync::Mutex::new(JobRunners::new())),
             import_starter: Arc::new(OnceLock::new()),
+            import_flights: Arc::new(imports::InFlight::new()),
         }
     }
 
@@ -406,6 +409,11 @@ impl ApiState {
     /// The installed import starter, if any.
     pub fn import_starter(&self) -> Option<Arc<dyn imports::ImportStarter>> {
         self.import_starter.get().cloned()
+    }
+
+    /// The operation IDs of the import plan requests in flight.
+    pub(crate) fn import_flights(&self) -> Arc<imports::InFlight> {
+        Arc::clone(&self.import_flights)
     }
 
     /// The installed folder dialog, if any.

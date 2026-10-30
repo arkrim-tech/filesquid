@@ -61,6 +61,19 @@ impl Host {
     }
 
     pub fn with_policy(policy: Arc<dyn Policy>) -> Self {
+        Self::assembled(policy, true)
+    }
+
+    /// A host whose job service keeps no per-file progress (as `filesquid-server`), holding
+    /// the pending job [`UPLOAD`].
+    pub fn without_items() -> Self {
+        let host = Self::assembled(Arc::new(filesquid_api::auth::HostPolicy), false);
+        host.store.insert(&pending(UPLOAD)).expect("job");
+        host
+    }
+
+    /// A host under `policy` whose job service has the per-file port when `per_file`.
+    fn assembled(policy: Arc<dyn Policy>, per_file: bool) -> Self {
         let state = ApiState::new();
         let owner = TokenAuthenticator::new(TOKEN, Principal::Owner);
         state.install_authoriser(Authoriser::new(Arc::new(owner), policy));
@@ -79,8 +92,11 @@ impl Host {
             monitor.registry().clone(),
             "launch",
         )
-        .with_events(state.events.clone())
-        .with_items(items.clone());
+        .with_events(state.events.clone());
+        let jobs = match per_file {
+            true => jobs.with_items(items.clone()),
+            false => jobs,
+        };
         assert!(state.install_jobs(Arc::new(jobs)));
         let runner = Arc::new(RecordingRunner::default());
         assert!(state.install_job_runner("import", runner.clone()));
@@ -93,7 +109,8 @@ impl Host {
         }
     }
 
-    /// Store a pending upload job with three files: one copied, one copying, one failed.
+    /// Store upload job `id` in `state` under `control` with three files (one copied, one
+    /// copying, one failed) going to the `Site photos` folder of [`COLLECTION`].
     pub fn upload_job(&self, id: &str, state: JobState, control: Option<JobControl>) {
         let mut job = pending(id);
         job.state = state;

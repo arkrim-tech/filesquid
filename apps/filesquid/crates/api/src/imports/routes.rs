@@ -2,8 +2,9 @@
 //! `files.write` (API-S-004), asks the host's [`ImportStarter`] off the async executor, and
 //! journals its request once with IDs and codes only.
 //!
-//! - `POST /api/v1/imports`: a repeated operation ID is answered first with what it already
-//!   produced; then the destination is checked before any dialog; then the host plans (or,
+//! - `POST /api/v1/imports`: the request claims its operation ID (a second request of the
+//!   same ID while the first runs is `dialog_open`); a repeated operation ID is answered first
+//!   with what it already produced; then the destination is checked before any dialog; then the host plans (or,
 //!   without a review, starts). Journaled as `import.plan` (`import.start` when the host
 //!   started at once).
 //! - `GET /api/v1/imports/{plan_id}/items`: the planned files, paged; a refusal is journaled
@@ -54,6 +55,10 @@ async fn plan(
     let request = match request.ok().map(|Json(r)| r).filter(scoped) {
         Some(request) => request,
         None => return refuse_invalid(&state, &actor).await,
+    };
+    let flights = state.import_flights();
+    let Some(_claim) = flights.claim(request.envelope.operation_id().as_str()) else {
+        return refuse(&state, &actor, Some(&request), ImportStartError::Busy).await;
     };
     let starter = state.import_starter();
     match replayed(starter.clone(), request.clone()).await {
@@ -108,7 +113,7 @@ async fn items(
     .await
     .unwrap_or(Err(ImportStartError::Unavailable));
     match paged {
-        Ok(page) => Json::<PlanItemPage>(page).into_response(),
+        Ok(page) => Json::<PlanItemPage>(super::plan::named_plan_page(page)).into_response(),
         Err(err) => refuse_items(&state, &actor, err).await,
     }
 }

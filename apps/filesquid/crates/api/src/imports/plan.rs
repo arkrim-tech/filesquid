@@ -7,7 +7,7 @@
 use super::{ImportAnswer, ImportRequest, ImportSource, ImportStartError};
 use crate::journal::format_rfc3339_ms;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::{Mutex, MutexGuard};
 
 /// How long an open plan lasts before the host discards it on its own: 1 hour.
@@ -90,7 +90,8 @@ pub struct ImportPlanView {
 pub struct PlanItem {
     /// The file ID the host minted for it; the item ID of the job once started.
     pub item_id: String,
-    /// Its display name: the base name only, never a folder path.
+    /// Its display name: the base name only, never a folder path. A host's name is cut to its
+    /// base name before the route answers it.
     pub name: String,
     /// Its size in bytes.
     pub bytes: u64,
@@ -148,23 +149,42 @@ impl Entry {
     }
 }
 
-/// What a start found: the job a started plan already runs as, or the open plan to start.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum StartDecision {
-    /// The plan was started before; the answer names its job again.
-    Started(ImportAnswer),
-    /// The plan is open and its source unchanged: the host submits its job, then records it
-    /// with [`PlanBook::started`]. Carries the operation ID and the request of the plan.
-    Open(String, ImportRequest),
-}
-
 /// The bounded, in-memory book of a host's import plans, the one meaning of the replay rule,
 /// the expiry and the items paging (API-S-036 **Review**). Every method is answered from
 /// memory; the caller passes the time.
 #[derive(Debug, Default)]
 pub struct PlanBook {
     plans: Mutex<HashMap<String, Entry>>,
-    cancelled: Mutex<HashMap<String, ImportRequest>>,
+    cancelled: Mutex<Cancelled>,
+}
+
+/// The operations whose dialog the owner closed, with their requests, and the order they
+/// were remembered in, so the oldest is forgotten first.
+#[derive(Debug, Default)]
+struct Cancelled {
+    requests: HashMap<String, ImportRequest>,
+    order: VecDeque<String>,
+}
+
+impl Cancelled {
+    /// Remember `request` as the cancelled operation `operation`; a new operation forgets the
+    /// oldest once [`MAX_REMEMBERED_PLANS`] are kept, a known one is only overwritten.
+    fn remember(&mut self, operation: &str, request: &ImportRequest) {
+        let known = self
+            .requests
+            .insert(operation.to_string(), request.clone())
+            .is_some();
+        if known {
+            return;
+        }
+        self.order.push_back(operation.to_string());
+        if self.order.len() > MAX_REMEMBERED_PLANS {
+            let oldest = self.order.pop_front();
+            if let Some(oldest) = oldest {
+                self.requests.remove(&oldest);
+            }
+        }
+    }
 }
 
 impl PlanBook {
@@ -214,14 +234,7 @@ impl PlanBook {
     /// answers `cancelled` without a dialog.
     pub fn cancelled(&self, request: &ImportRequest) -> ImportAnswer {
         let operation = request.envelope.operation_id();
-        let mut cancelled = self.lock_cancelled();
-        if cancelled.len() >= MAX_REMEMBERED_PLANS {
-            let oldest = cancelled.keys().next().cloned();
-            if let Some(key) = oldest {
-                cancelled.remove(&key);
-            }
-        }
-        cancelled.insert(operation.as_str().to_string(), request.clone());
+        self.lock_cancelled().remember(operation.as_str(), request);
         ImportAnswer::cancelled(operation)
     }
 
@@ -237,7 +250,7 @@ impl PlanBook {
         now_ms: i64,
     ) -> Result<Option<ImportAnswer>, ImportStartError> {
         let operation = request.envelope.operation_id();
-        if let Some(earlier) = self.lock_cancelled().get(operation.as_str()) {
+        if let Some(earlier) = self.lock_cancelled().requests.get(operation.as_str()) {
             return match earlier.same_import(request) {
                 true => Ok(Some(ImportAnswer::cancelled(operation))),
                 false => Err(ImportStartError::OperationReused),
@@ -299,53 +312,43 @@ impl PlanBook {
         Ok(page_of(&entry.items, cursor, limit))
     }
 
-    /// What starting the plan `plan_id` at `now_ms` means, given the `fingerprint` of its
-    /// source now.
+    /// Start the plan `plan_id` at `now_ms`, given the `fingerprint` of its source now: a
+    /// plan started before answers its job again; an open plan whose source is unchanged is
+    /// handed to `submit` (with its operation ID and request), which submits its job and
+    /// answers the job ID, and is then recorded as started. The book stays locked from the
+    /// check to the record, so two starts of one plan submit one job and a discard cannot
+    /// slip between them.
     ///
     /// # Errors
     /// [`ImportStartError::PlanNotFound`] for an unknown, expired or discarded plan;
     /// [`ImportStartError::SourceChanged`] when the source's fingerprint differs from the
-    /// plan's (the plan stays open).
-    pub fn starting(
+    /// plan's (the plan stays open); `submit`'s error, which leaves the plan open.
+    pub fn start(
         &self,
         plan_id: &str,
         fingerprint: &str,
         now_ms: i64,
-    ) -> Result<StartDecision, ImportStartError> {
-        let plans = self.lock();
-        let entry = plans.get(plan_id).ok_or(ImportStartError::PlanNotFound)?;
-        let operation = filesquid_core::OperationId::new(entry.operation_id.clone())
-            .map_err(|_| ImportStartError::Unavailable)?;
-        match &entry.status {
-            PlanStatus::Started(job) => Ok(StartDecision::Started(ImportAnswer::started(
-                &operation,
-                job.clone(),
-            ))),
-            PlanStatus::Open if !entry.is_open(now_ms) => Err(ImportStartError::PlanNotFound),
-            PlanStatus::Open if entry.fingerprint != fingerprint => {
-                Err(ImportStartError::SourceChanged)
-            }
-            PlanStatus::Open => Ok(StartDecision::Open(
-                entry.operation_id.clone(),
-                entry.request.clone(),
-            )),
-            PlanStatus::Discarded => Err(ImportStartError::PlanNotFound),
-        }
-    }
-
-    /// Record that the plan `plan_id` was started as `job_id`; answer `started`.
-    ///
-    /// # Errors
-    /// [`ImportStartError::PlanNotFound`] when the plan is unknown.
-    pub fn started(&self, plan_id: &str, job_id: &str) -> Result<ImportAnswer, ImportStartError> {
+        submit: impl FnOnce(&str, &ImportRequest) -> Result<String, ImportStartError>,
+    ) -> Result<ImportAnswer, ImportStartError> {
         let mut plans = self.lock();
         let entry = plans
             .get_mut(plan_id)
             .ok_or(ImportStartError::PlanNotFound)?;
-        entry.status = PlanStatus::Started(job_id.to_string());
         let operation = filesquid_core::OperationId::new(entry.operation_id.clone())
             .map_err(|_| ImportStartError::Unavailable)?;
-        Ok(ImportAnswer::started(&operation, job_id.to_string()))
+        let job_id = match &entry.status {
+            PlanStatus::Started(job) => return Ok(ImportAnswer::started(&operation, job.clone())),
+            PlanStatus::Discarded => return Err(ImportStartError::PlanNotFound),
+            PlanStatus::Open if !entry.is_open(now_ms) => {
+                return Err(ImportStartError::PlanNotFound)
+            }
+            PlanStatus::Open if entry.fingerprint != fingerprint => {
+                return Err(ImportStartError::SourceChanged)
+            }
+            PlanStatus::Open => submit(&entry.operation_id, &entry.request)?,
+        };
+        entry.status = PlanStatus::Started(job_id.clone());
+        Ok(ImportAnswer::started(&operation, job_id))
     }
 
     /// Discard the open plan `plan_id` at `now_ms`; nothing else changes.
@@ -379,7 +382,7 @@ impl PlanBook {
     }
 
     /// The cancelled operations, locked.
-    fn lock_cancelled(&self) -> MutexGuard<'_, HashMap<String, ImportRequest>> {
+    fn lock_cancelled(&self) -> MutexGuard<'_, Cancelled> {
         self.cancelled
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -395,6 +398,15 @@ fn forget_oldest(plans: &mut HashMap<String, Entry>) {
     if let Some(id) = oldest {
         plans.remove(&id);
     }
+}
+
+/// `page` with each planned file's name cut to its display name, so a host that hands over a
+/// path can never show it (API-S-005; [`crate::jobs::display_name`]). Pure.
+pub(crate) fn named_plan_page(mut page: PlanItemPage) -> PlanItemPage {
+    for item in &mut page.items {
+        item.name = crate::jobs::display_name(&item.name).to_string();
+    }
+    page
 }
 
 /// At most `limit` (1 to [`MAX_PLAN_ITEMS`]) of `items` after `cursor`, the position of the

@@ -12,8 +12,9 @@ mod import_fixture;
 
 use axum::http::{Method, StatusCode};
 use filesquid_api::imports::{
-    ImportRequest, PlanBook, IMPORT_DISCARD_OPERATION, IMPORT_PLAN_ITEMS_OPERATION,
-    IMPORT_PLAN_OPERATION, IMPORT_START_OPERATION, PLAN_TTL_MS,
+    ImportAnswer, ImportRequest, ImportStartError, ImportStarter, PlanBook,
+    IMPORT_DISCARD_OPERATION, IMPORT_PLAN_ITEMS_OPERATION, IMPORT_PLAN_OPERATION,
+    IMPORT_START_OPERATION, PLAN_TTL_MS,
 };
 use filesquid_api::journal::Outcome;
 use import_fixture::{body, body_of, scope, Host, PlanningStarter, PATH};
@@ -342,6 +343,140 @@ fn the_plan_book_forgets_the_oldest_plan_at_its_cap() {
     }
     assert!(!book.is_open("plan-0", 0), "the oldest was forgotten");
     assert!(book.is_open("plan-1", 1));
+}
+
+/// The sample import request under operation `op`.
+fn request_of(op: &str) -> ImportRequest {
+    serde_json::from_value(body_of(op, &scope())).expect("request")
+}
+
+#[test]
+fn the_plan_book_submits_one_job_per_plan_and_never_restarts_a_discarded_plan() {
+    let book = PlanBook::new();
+    let facts = PlanningStarter::facts();
+    book.open(
+        "plan-a",
+        &request_of("op-a"),
+        facts.clone(),
+        Vec::new(),
+        "fp",
+        0,
+    );
+    let refused = book.start("plan-a", "fp", 1, |_, _| Err(ImportStartError::Unavailable));
+    assert_eq!(refused, Err(ImportStartError::Unavailable));
+    assert!(
+        book.is_open("plan-a", 1),
+        "a failed submission leaves the plan open"
+    );
+    let submitted = std::sync::atomic::AtomicUsize::new(0);
+    let submit = |op: &str, _: &ImportRequest| {
+        submitted.fetch_add(1, Ordering::SeqCst);
+        Ok(format!("job-of-{op}"))
+    };
+    let first = book.start("plan-a", "fp", 2, submit).expect("started");
+    let again = book.start("plan-a", "fp", 3, submit).expect("the same job");
+    assert_eq!(first.job_id.as_deref(), Some("job-of-op-a"));
+    assert_eq!(again, first);
+    assert_eq!(submitted.load(Ordering::SeqCst), 1, "one job per plan");
+    book.open("plan-b", &request_of("op-b"), facts, Vec::new(), "fp", 0);
+    book.discard("plan-b", 1).expect("discarded");
+    let refused = book.start("plan-b", "fp", 2, submit);
+    assert_eq!(refused, Err(ImportStartError::PlanNotFound));
+    assert_eq!(
+        submitted.load(Ordering::SeqCst),
+        1,
+        "a discarded plan submits nothing"
+    );
+}
+
+#[test]
+fn the_plan_book_forgets_the_oldest_cancelled_operation_first() {
+    let book = PlanBook::new();
+    let cap = filesquid_api::imports::MAX_REMEMBERED_PLANS;
+    for n in 0..cap {
+        book.cancelled(&request_of(&format!("op-{n}")));
+    }
+    book.cancelled(&request_of("op-0"));
+    let replayed = book.replay(&request_of("op-1"), 0).expect("replay");
+    assert!(
+        replayed.is_some(),
+        "re-cancelling a known operation forgets no other"
+    );
+    book.cancelled(&request_of(&format!("op-{cap}")));
+    assert_eq!(
+        book.replay(&request_of("op-0"), 0),
+        Ok(None),
+        "the oldest went first"
+    );
+    for n in 1..=cap {
+        let replayed = book
+            .replay(&request_of(&format!("op-{n}")), 0)
+            .expect("replay");
+        assert!(replayed.is_some(), "op-{n} is remembered");
+    }
+}
+
+#[tokio::test]
+async fn a_second_request_of_an_operation_in_flight_is_dialog_open_and_opens_no_dialog() {
+    let host = Host::start();
+    let (release, released) = std::sync::mpsc::channel::<()>();
+    let starter = Arc::new(HeldStarter {
+        released: std::sync::Mutex::new(released),
+        dialogs: std::sync::atomic::AtomicUsize::new(0),
+    });
+    assert!(host.state.install_import_starter(starter.clone()));
+    let first = {
+        let state = host.state.clone();
+        let token = host.token.clone();
+        tokio::spawn(async move { import_fixture::post_as(state, &token, body(&scope())).await })
+    };
+    for _ in 0..200 {
+        if starter.dialogs.load(Ordering::SeqCst) == 1 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+    assert_eq!(
+        starter.dialogs.load(Ordering::SeqCst),
+        1,
+        "the first dialog is open"
+    );
+    let (status, refused) = host.post(body(&scope()), true).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{refused}");
+    release.send(()).expect("release");
+    let (status, answer) = first.await.expect("first");
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    assert_eq!(answer["import"], "cancelled");
+    assert_eq!(starter.dialogs.load(Ordering::SeqCst), 1, "one dialog only");
+    let refusals = host.journaled(IMPORT_PLAN_OPERATION);
+    assert!(refusals
+        .iter()
+        .any(|e| e.error_code.as_deref() == Some("dialog_open")));
+}
+
+/// A starter whose dialog stays open until the test releases it, then is closed.
+struct HeldStarter {
+    released: std::sync::Mutex<std::sync::mpsc::Receiver<()>>,
+    dialogs: std::sync::atomic::AtomicUsize,
+}
+
+impl ImportStarter for HeldStarter {
+    fn replay(&self, _request: &ImportRequest) -> Result<Option<ImportAnswer>, ImportStartError> {
+        Ok(None)
+    }
+
+    fn plan(
+        &self,
+        _actor: &str,
+        request: &ImportRequest,
+    ) -> Result<ImportAnswer, ImportStartError> {
+        self.dialogs.fetch_add(1, Ordering::SeqCst);
+        let released = self.released.lock().expect("released");
+        released
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .map_err(|_| ImportStartError::Unavailable)?;
+        Ok(ImportAnswer::cancelled(request.envelope.operation_id()))
+    }
 }
 
 /// Assert no answer and no journal entry carries a picked path or the volume's folder.

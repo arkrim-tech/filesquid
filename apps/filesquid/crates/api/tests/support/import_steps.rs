@@ -78,7 +78,45 @@ async fn plan(w: &mut MonitorWorld) {
     w.imports.answers.push((status, answer));
 }
 
-#[when("the same request is sent again")]
+#[given("a desktop host whose import dialog the owner closes")]
+fn closing_host(w: &mut MonitorWorld) {
+    let host = Host::start();
+    let starter = PlanningStarter::new(vec![false]);
+    assert!(host.state.install_import_starter(starter.clone()));
+    w.imports.host = Some(host);
+    w.imports.starter = Some(starter);
+}
+
+#[given("a host without an import dialog or per-file progress")]
+fn bare_host(w: &mut MonitorWorld) {
+    w.imports.host = Some(Host::start());
+    w.imports.jobs = Some(job_items_fixture::Host::without_items());
+}
+
+#[when("the owner asks to upload, reads a plan's files and reads a job's files")]
+async fn ask_bare_host(w: &mut MonitorWorld) {
+    let host = w.imports.host();
+    let planned = host.post(body(&scope()), true).await;
+    let path = format!("{PATH}/plan-1/items");
+    let items = host.send(Method::GET, &path, None, true).await;
+    let files = w
+        .imports
+        .jobs()
+        .get(&format!("/api/v1/jobs/{UPLOAD}/items"))
+        .await;
+    w.imports.answers.extend([planned, items, files]);
+}
+
+#[then("every answer should be unavailable")]
+fn all_unavailable(w: &mut MonitorWorld) {
+    assert_eq!(w.imports.answers.len(), 3);
+    for (status, answer) in &w.imports.answers {
+        assert_eq!(*status, StatusCode::SERVICE_UNAVAILABLE, "{answer}");
+        assert_eq!(answer["code"], "unavailable");
+    }
+}
+
+#[when("the same request is sent again with the same operation ID")]
 async fn plan_again(w: &mut MonitorWorld) {
     let (status, answer) = w.imports.host().post(body(&scope()), true).await;
     w.imports.answers.push((status, answer));
@@ -186,6 +224,7 @@ async fn confirm_twice(w: &mut MonitorWorld) {
 }
 
 #[when("the owner confirms the upload")]
+#[given("the owner has confirmed the upload")]
 async fn confirm(w: &mut MonitorWorld) {
     let path = format!("{PATH}/{}/start", w.imports.plan_id());
     let answer = w.imports.host().send(Method::POST, &path, None, true).await;
@@ -220,6 +259,41 @@ fn same_plan(w: &mut MonitorWorld) {
     let (status, again) = w.imports.last();
     assert_eq!(*status, StatusCode::OK, "{again}");
     assert_eq!(again, first);
+}
+
+#[then("the started job should be answered again")]
+fn same_job(w: &mut MonitorWorld) {
+    let (status, again) = w.imports.last();
+    assert_eq!(*status, StatusCode::OK, "{again}");
+    assert_eq!(again["import"], "started");
+    assert_eq!(again["job_id"], "job-1");
+    assert_eq!(again["outcome"]["operation_id"], "op-1");
+    assert_eq!(w.imports.starter().jobs.load(Ordering::SeqCst), 1);
+}
+
+#[then("the upload should be answered as cancelled again")]
+fn cancelled_again(w: &mut MonitorWorld) {
+    assert_eq!(w.imports.answers.len(), 2);
+    for (status, answer) in &w.imports.answers {
+        assert_eq!(*status, StatusCode::OK, "{answer}");
+        assert_eq!(answer["import"], "cancelled");
+        assert_eq!(answer["outcome"]["operation_id"], "op-1");
+    }
+}
+
+#[when(expr = "the owner asks for {int} planned files at once")]
+async fn read_too_many(w: &mut MonitorWorld, limit: usize) {
+    let path = format!("{PATH}/{}/items?limit={limit}", w.imports.plan_id());
+    let answer = w.imports.host().send(Method::GET, &path, None, true).await;
+    w.imports.answers.push(answer);
+}
+
+#[then("the read should be refused as an invalid request")]
+fn read_refused(w: &mut MonitorWorld) {
+    let (status, answer) = w.imports.last();
+    assert_eq!(*status, StatusCode::BAD_REQUEST, "{answer}");
+    assert_eq!(answer["code"], "invalid_request");
+    assert!(answer.get("items").is_none(), "{answer}");
 }
 
 #[then("the dialog should have been shown once")]
@@ -379,6 +453,44 @@ async fn retry_all(w: &mut MonitorWorld) {
         .post(&format!("/api/v1/jobs/{UPLOAD}/retry-failed"))
         .await;
     w.imports.answers.push(answer);
+}
+
+#[given("the copying file failed too")]
+fn second_failure(w: &mut MonitorWorld) {
+    let jobs = w.imports.jobs();
+    assert!(jobs.items.set(
+        UPLOAD,
+        "file-2",
+        JobItemState::Failed,
+        0,
+        Some("read_failed")
+    ));
+}
+
+#[then("both failed files should be queued again and the job handed to its runner")]
+fn all_requeued(w: &mut MonitorWorld) {
+    let (status, answer) = w.imports.last();
+    assert_eq!(*status, StatusCode::OK, "{answer}");
+    assert_eq!(answer["scheduled"], true);
+    let jobs = w.imports.jobs();
+    let states = jobs.states(UPLOAD);
+    assert_eq!(
+        states[0],
+        JobItemState::Copied,
+        "a copied file is left as it is"
+    );
+    assert_eq!(states[1], JobItemState::Queued);
+    assert_eq!(states[2], JobItemState::Queued);
+    assert_eq!(jobs.handed(), [UPLOAD]);
+}
+
+#[then("the retry should be journaled once for each file without its name")]
+fn each_retry_journaled(w: &mut MonitorWorld) {
+    let jobs = w.imports.jobs();
+    let entries = jobs.journaled(JOB_ITEM_RETRIED);
+    let targets: Vec<&[String]> = entries.iter().map(|e| e.target_ids.as_slice()).collect();
+    assert_eq!(targets, [[UPLOAD, "file-2"], [UPLOAD, "file-3"]]);
+    assert!(!jobs.journal_text().contains("IMG_4"));
 }
 
 #[then("the file should be queued again and the job handed to its runner")]

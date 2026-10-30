@@ -287,11 +287,11 @@ fn refuse_finished_or_cancelling(job: &Job) -> Result<(), JobError> {
 ///
 /// # Errors
 /// [`JobError::Conflict`]: `job_finished` for a finished job, `cancel_requested` for a job
-/// under a cancel request, `job_paused` for a paused job, which must not start until it is
-/// resumed.
+/// under a cancel request, `job_paused` for a job under a pause request, pending or still
+/// running to its next checkpoint, which must not take new work until it is resumed.
 pub fn retry_allowed(job: &Job) -> Result<(), JobError> {
     refuse_finished_or_cancelling(job)?;
-    match job.is_paused() {
+    match job.control == Some(JobControl::Pause) {
         true => Err(JobError::Conflict("job_paused")),
         false => Ok(()),
     }

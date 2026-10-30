@@ -224,11 +224,60 @@ test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fin
 
 The head-commit hook run (`FULL=1 bash scripts/pre-commit.sh`, `Test scope: full`) is recorded in the pull request.
 
+## Cubic review, round 1
+
+Fixed on the pull request (15 findings):
+
+- `ImportStarter::replay` has no default: every host answers a repeated operation ID itself, the one-step host included, so a retried request never opens a second dialog or submits a second job.
+- The plan route claims the request's operation ID (`InFlight`, `src/imports/flight.rs`) before it asks the replay and keeps the claim until the host answered; a second request of the same ID meanwhile is `409 dialog_open` (API-S-036 **Refusals**).
+- `PlanBook::start` replaces `starting`/`started`/`StartDecision`: the open-to-started step and the job submission run under the book's lock, so two starts of one plan submit one job and a discarded plan is never started; a failed submission leaves the plan open.
+- `PlanBook` forgets the oldest cancelled operation first (a `VecDeque` of the order), and re-cancelling a known operation forgets no other.
+- Job item names and plan item names are cut to their base name (`jobs::display_name`) before the routes answer them, whatever the host port hands over (API-S-005).
+- The job routes build every job view, with its destination read from the per-file port, on a blocking thread.
+- `retry_allowed` refuses any job under a pause request, running ones included (`job_paused`); the retry and items routes check the per-file port before the job, so a host without one answers `503` for every job, journaled as `job.refused` (`unavailable`). API-S-037 states both.
+- The feature gained scenarios for the 1,000-file page cap, the `503` of a host without the ports, the repeated operation ID answering the started job and `cancelled`, and a successful retry of all failed files.
+
+Open for the owner: Cubic asks the plan start and discard routes to take a `CommandEnvelope` (API-S-002 lists the only mutation routes without one). See the pull request.
+
+```text
+     Running tests/unit/import_review.rs (<target>/debug/deps/unit_import_review-e68ab1f14e83db26)
+test a_picked_source_answers_its_plan_before_any_byte_is_staged ... ok
+test a_changed_source_is_refused_as_source_changed_and_the_plan_stays_open ... ok
+test a_host_without_a_starter_answers_unavailable_on_every_review_route ... ok
+test a_second_request_of_an_operation_in_flight_is_dialog_open_and_opens_no_dialog ... ok
+test a_plan_expires_after_one_hour ... ok
+test the_plan_book_forgets_the_oldest_cancelled_operation_first ... ok
+test a_repeated_operation_answers_its_plan_its_job_or_cancelled_without_a_dialog ... ok
+test the_plan_book_submits_one_job_per_plan_and_never_restarts_a_discarded_plan ... ok
+test the_plan_book_forgets_the_oldest_plan_at_its_cap ... ok
+test delete_discards_the_plan_and_changes_nothing ... ok
+test start_starts_the_job_once_and_a_repeated_start_answers_the_same_job ... ok
+test the_plan_items_route_pages_the_planned_files_by_base_name ... ok
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+     Running tests/unit/job_items.rs (<target>/debug/deps/unit_job_items-666704a69762fee7)
+test a_paused_job_refuses_a_retry_with_job_paused_and_nothing_changes ... ok
+test a_name_a_host_hands_over_with_a_folder_is_cut_to_its_base_name ... ok
+test a_running_job_asked_to_pause_refuses_a_retry_with_job_paused ... ok
+test a_running_job_s_files_are_queued_without_handing_the_job_over ... ok
+test a_file_that_is_not_failed_an_unknown_item_and_a_finished_job_are_handled_as_the_rule_says ... ok
+test a_retry_of_one_failed_file_queues_it_and_hands_the_pending_job_to_its_runner ... ok
+test a_host_without_the_per_file_port_answers_unavailable ... ok
+test an_upload_job_s_view_and_listing_carry_its_destination ... ok
+test the_reference_port_pages_and_requeues_as_the_rule_says ... ok
+test the_items_route_needs_jobs_read ... ok
+test retry_failed_queues_every_failed_file_and_leaves_the_others ... ok
+test the_items_route_pages_the_files_with_their_state_and_never_a_path ... ok
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+403 scenarios (301 passed, 102 skipped)
+1456 steps (1354 passed, 102 skipped)
+```
+
 ## Sync Execution Report
 
 - `apps/filesquid/crates/api/resources/plan.md`: API-F2.16 ticked, the Status with the routes, the ports and the dependency line with DE-1.8.
 - `apps/filesquid/crates/desktop/resources/plan.md`: DE-1.8 Status with the dependency line (the desktop's one-step start until it implements the review and the per-file port).
-- `apps/filesquid/crates/desktop/resources/tasks/Task-DE-1.2-Walkthrough.md`: link to the moved import module.
+- `apps/filesquid/crates/desktop/resources/tasks/Task-DE-1.2-Walkthrough.md`: link and link label of the moved import module.
+- `apps/filesquid/crates/api/resources/srs.md`: API-S-036 (`dialog_open` for an operation ID in flight) and API-S-037 (`job_paused` for any pause request; `503` before the job state; base names only).
 - `resources/implementation-plan-checklist.md` and `resources/assets/mvp-progress.svg`: API-F2.16 ticked, progress block regenerated.
 
 ## Mocked Environment Variables

@@ -71,7 +71,8 @@ impl JobItemState {
 pub struct JobItem {
     /// The item: the file ID the host minted for it.
     pub item_id: String,
-    /// Its display name: the base name only, never a folder path.
+    /// Its display name: the base name only, never a folder path. A host's name is cut to
+    /// its base name ([`display_name`]) before the route answers it.
     pub name: String,
     /// The destination folder inside the job's collection it goes to; the collection's root
     /// when absent.
@@ -220,6 +221,21 @@ impl JobItems for MemoryJobItems {
         }
         Ok(requeue(files, item))
     }
+}
+
+/// The display name of `name`: its base name, the part after the last `/` or `\\`, so a
+/// host port that hands over a path can never show it (API-S-005). The route answers every
+/// item through it. Pure.
+pub fn display_name(name: &str) -> &str {
+    name.rsplit(['/', '\\']).next().unwrap_or(name)
+}
+
+/// `page` with each item's name cut to its display name ([`display_name`]). Pure.
+pub fn named_page(mut page: JobItemPage) -> JobItemPage {
+    for item in &mut page.items {
+        item.name = display_name(&item.name).to_string();
+    }
+    page
 }
 
 /// Put every failed file of `files` (or the one named `item`) back to queued; answer the IDs
