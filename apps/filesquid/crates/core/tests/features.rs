@@ -1500,6 +1500,17 @@ fn parse_version_message(world: &mut CoreWorld, text: String) {
     remember_message(world, text.replace("\\\"", "\""));
 }
 
+#[then(expr = "it should be read as kind {string} and written back as {string}")]
+fn read_as_kind(world: &mut CoreWorld, kind: String, written: String) {
+    let message = last_parse(world)
+        .clone()
+        .expect("readable")
+        .expect("FileSquid message");
+    assert_eq!(message.kind().as_str(), kind);
+    let token = format!("\"kind\":\"{written}\"");
+    assert!(message.format().contains(&token), "{}", message.format());
+}
+
 #[then("it should not be a FileSquid operation message")]
 fn not_a_filesquid_message(world: &mut CoreWorld) {
     assert_eq!(last_parse(world), &Ok(None));
