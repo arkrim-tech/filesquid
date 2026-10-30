@@ -690,6 +690,17 @@ fn command_samples() -> Vec<(&'static str, Vec<Value>)> {
         collection_id: crate::drive_catalog::COLLECTION.into(),
         path: "Summer/Été à Nice-1.jpg".into(),
     };
+    let collection_folder = filesquid_api::files::CollectionFolderRequest {
+        library_id: LIBRARY.into(),
+        collection_id: Some(crate::drive_catalog::COLLECTION.into()),
+        folder: "filepathX/directoryY".into(),
+    };
+    let numbered_folder = filesquid_api::files::CollectionFolderView {
+        library_id: LIBRARY.into(),
+        collection_id: crate::drive_catalog::COLLECTION.into(),
+        path: "filepathX/directoryY-1".into(),
+        pending: true,
+    };
     let copy_request = CopyRequest {
         library_id: LIBRARY.into(),
         file_id: FILE.into(),
@@ -703,7 +714,15 @@ fn command_samples() -> Vec<(&'static str, Vec<Value>)> {
         ("UploadCommitOutcome", vec![answer(to_value(upload))]),
         ("FileCopyOutcome", vec![answer(to_value(copy))]),
         ("MetadataCommitOutcome", vec![answer(to_value(metadata))]),
-        ("FolderAnswerOutcome", vec![answer(to_value(folder))]),
+        (
+            "FolderAnswerOutcome",
+            vec![answer(to_value(folder)), answer(to_value(&numbered_folder))],
+        ),
+        (
+            "CollectionFolderRequest",
+            vec![to_value(&collection_folder)],
+        ),
+        ("CollectionFolder", vec![to_value(&numbered_folder)]),
         ("FileCommandConflict", vec![to_value(conflict)]),
         (
             "UploadInput",
@@ -711,7 +730,10 @@ fn command_samples() -> Vec<(&'static str, Vec<Value>)> {
         ),
         (
             "CreateFolderCommand",
-            vec![wrap(request("CreateFolderRequest"))],
+            vec![
+                wrap(request("CreateFolderRequest")),
+                wrap(to_value(&collection_folder)),
+            ],
         ),
         (
             "MoveCommand",

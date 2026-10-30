@@ -444,7 +444,7 @@ export interface paths {
         put?: never;
         /**
          * Create a folder (pending until a file is added)
-         * @description Writes nothing: OCFL stores no empty folder, so a new folder stays pending in the client and is persisted only when a file is added beneath its prefix. A file at the path or at a parent of it is a conflict. Command (Task API-F2.13, API-S-002): the body carries a `CommandEnvelope` beside the input (schema version 1; an opaque operation_id of 1 to 128 letters, digits, `.`, `_`, `-` or `:`; scope `library:<library_id>`). The expected revision is the head version of `object_id` that the caller read (`v1`, `v2`, ...). A stale revision is answered 409 with a `conflict` outcome and changes nothing. A 200 answer is a `CommandOutcome` of the same operation_id (`committed`) whose `result` is what the command made. A repeated operation_id of the same command that changed something answers its first answer again, before the revision is checked, with no second change; the same operation_id with another route, library or input is refused (400). Creating a folder writes nothing, so it never stores a receipt: a repeated operation_id is evaluated again.
+         * @description Writes nothing: OCFL stores no empty folder, so a new folder stays pending in the client and is persisted only when a file is added beneath its prefix. A file at the path or at a parent of it is a conflict. Command (Task API-F2.13, API-S-002): the body carries a `CommandEnvelope` beside the input (schema version 1; an opaque operation_id of 1 to 128 letters, digits, `.`, `_`, `-` or `:`; scope `library:<library_id>`). The expected revision is the head version of `object_id` that the caller read (`v1`, `v2`, ...). A stale revision is answered 409 with a `conflict` outcome and changes nothing. A 200 answer is a `CommandOutcome` of the same operation_id (`committed`) whose `result` is what the command made. A repeated operation_id of the same command that changed something answers its first answer again, before the revision is checked, with no second change; the same operation_id with another route, library or input is refused (400). Creating a folder writes nothing, so it never stores a receipt: a repeated operation_id is evaluated again. Collection folder (Task API-F2.14, API-S-011): an input with `collection_id` and `folder` answers the free collection logical path for a new folder, numbered beside a taken one (`directoryY-1`, then `directoryY-2`; a recoverably deleted file's path counts as taken), and writes nothing, since a folder is only the prefix of its files' paths (ADR 041 Decision 3); the expected revision is not compared. Refusals: `destination_required` (400), `collection_not_found` (404), `invalid_path` and `name_too_long` (400), `path_suffix_exhausted` (409), each journaled once as `files.create_folder` with opaque IDs only. A success changes nothing and is not journaled.
          */
         post: operations["createFolder"];
         delete?: never;
@@ -2876,8 +2876,8 @@ export interface components {
             kind: components["schemas"]["CommandOutcomeKind"];
             /** @description Always null for these routes: a refusal is an error answer. */
             error: components["schemas"]["PortError"] | null;
-            /** @description Whether the folder exists or stays pending (nothing is written, so no receipt is stored). */
-            result: components["schemas"]["FolderAnswer"] | null;
+            /** @description Whether the in-object folder exists or stays pending, or where the collection folder is (nothing is written, so no receipt is stored). */
+            result: components["schemas"]["FolderAnswer"] | components["schemas"]["CollectionFolder"] | null;
         };
         /** @description The 409 answer of a file write command (Task API-F2.13, API-S-002): the `ApiError` fields (code `conflict`) beside a `conflict` outcome of the same operation_id, so a `CommandOutcome` reader and an `ApiError` reader both read it. A stale expected revision, a command that would change nothing, a concurrent change and an operation_id still in flight are conflicts. */
         FileCommandConflict: {
@@ -2898,7 +2898,8 @@ export interface components {
         /** @description Body of `POST /api/v1/files/folders`: the command envelope and the input (Task API-F2.13, API-S-002). */
         CreateFolderCommand: {
             envelope: components["schemas"]["CommandEnvelope"];
-            input: components["schemas"]["CreateFolderRequest"];
+            /** @description A folder inside one OCFL object (`object_id`, `path`; API-S-008), or a folder of a collection (`collection_id`, `folder`; API-S-011). */
+            input: components["schemas"]["CreateFolderRequest"] | components["schemas"]["CollectionFolderRequest"];
         };
         /** @description Body of `POST /api/v1/files/moves`: the command envelope and the input (Task API-F2.13, API-S-002). */
         MoveCommand: {
@@ -3200,6 +3201,29 @@ export interface components {
             collection_id: string;
             /** @description Its collection logical path: its name in the destination folder, or the numbered path beside a taken one (API-S-011 Same logical path). */
             path: string;
+        };
+        /** @description The collection folder of `POST /api/v1/files/folders` (Task API-F2.14, API-S-011 Same logical path): a new folder at a collection logical path, numbered beside a taken one. A folder is the prefix of the logical paths of the files inside it (ADR 041 Decision 3), so nothing is written. */
+        CollectionFolderRequest: {
+            /** @description The library. */
+            library_id: string;
+            /** @description The collection the folder is in, a collection of the library. Required: a request without it is refused 400 invalid_request (`destination_required`); an unknown collection, one of another library or one the caller may not read is refused 404 not_found (`collection_not_found`). */
+            collection_id: string;
+            /** @description The new folder's collection logical path (1 to 1,024 UTF-8 bytes in NFC, `/`-separated segments of 1 to 255 bytes without `\`, NUL or control characters, never `.` or `..`), not inside the reserved `provenance` or `.filesquid` folders; outside the rule it is refused 400 invalid_request (`invalid_path`). When a file sits at it, below it or at one of its parents (a recoverably deleted file included), its last segment takes a hyphen and the first free number (`directoryY-1`, then `directoryY-2`); after 9,999 numbers 409 conflict (`path_suffix_exhausted`), and a numbered segment over 255 bytes 400 invalid_request (`name_too_long`). */
+            folder: string;
+        };
+        /** @description Where a collection folder is: nothing is written, so it stays pending in the client until a file is uploaded, copied or moved into it (ADR 041 Decision 3). */
+        CollectionFolder: {
+            /** @description The library. */
+            library_id: string;
+            /** @description The collection. */
+            collection_id: string;
+            /** @description The folder's collection logical path: the one asked for, or the numbered path beside a taken one (`directoryY-1`). */
+            path: string;
+            /**
+             * @description Always true: the folder exists once a file is placed in it.
+             * @constant
+             */
+            pending: true;
         };
         /** @description The command outcome of a move: the in-object move's committed version, or where a collection move put the file. */
         FileMoveOutcome: {
@@ -4317,7 +4341,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Whether the folder exists or stays pending. */
+            /** @description Whether the folder exists or stays pending, or the collection folder's free path. */
             200: {
                 headers: {
                     [name: string]: unknown;
