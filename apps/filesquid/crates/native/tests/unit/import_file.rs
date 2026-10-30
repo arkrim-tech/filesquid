@@ -127,9 +127,16 @@ async fn an_import_stores_the_original_under_its_uuid_with_its_record_in_one_ver
     let (files, backend) = library(&dir.0).await;
     let build = build();
     let path = source(&dir.0, "Holiday photo.JPG", b"jpeg bytes");
-    let view = import_file(&files, &request(&path, &build))
+    let imported = import_file(&files, &request(&path, &build))
         .await
         .expect("imported");
+    assert_eq!(imported.size, 10, "the committed size");
+    assert_eq!(
+        imported.sha256,
+        filesquid_ocfl::DigestAlgorithm::Sha256.digest_hex(b"jpeg bytes"),
+        "the committed digest"
+    );
+    let view = imported.view;
     assert_eq!(view.version, "v1");
     assert_eq!(view.file_id, FILE_ID, "the identifier the plan minted");
     assert_eq!(view.object_id, format!("urn:uuid:{}", view.file_id));

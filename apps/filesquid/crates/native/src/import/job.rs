@@ -49,7 +49,7 @@ use super::placing::{logical_path, source_roots};
 use super::plans::{ImportPlan, ManifestEntry, SqliteImportPlans};
 use crate::catalog::{PendingIntent, RegisterFile, Registration, REGISTER_OPERATION};
 use crate::HostFiles;
-use filesquid_api::files::UploadView;
+use filesquid_api::files::{ImportedOriginal, UploadView};
 use filesquid_api::jobs::{Halt, JobError, JobItemState, JobSpec, JobState, Jobs, RunningJob};
 use filesquid_api::journal::{JournalEntry, Level, Outcome};
 use filesquid_api::journal_writer::JournalSender;
@@ -432,7 +432,9 @@ fn has_room(dir: &Path, size: u64) -> Result<(), &'static str> {
 /// What happened to one manifest entry.
 enum FileOutcome {
     /// Imported (or found imported by an earlier run of the job).
-    Imported(UploadView),
+    Imported(ImportedOriginal),
+    /// Skipped: the library already held the file when the import was planned.
+    Present,
     /// Quarantined with its error code.
     Quarantined(String),
     /// Not tried: the job must suspend (quit, or no room yet).
@@ -533,8 +535,15 @@ async fn run_manifest(
         };
         let outcome = import_indexed(context, &running, plan, (manifest, index), run).await;
         let done = match outcome {
-            FileOutcome::Imported(_) | FileOutcome::Quarantined(_) if index == main => main + 1,
-            FileOutcome::Imported(_) | FileOutcome::Quarantined(_) | FileOutcome::Halt => main,
+            FileOutcome::Imported(_) | FileOutcome::Quarantined(_) | FileOutcome::Present
+                if index == main =>
+            {
+                main + 1
+            }
+            FileOutcome::Imported(_)
+            | FileOutcome::Quarantined(_)
+            | FileOutcome::Present
+            | FileOutcome::Halt => main,
             FileOutcome::Lost(err) => return Err(err),
             FileOutcome::Suspend => {
                 running.checkpoint(&import_checkpoint(main), main as u64, total)?;
@@ -611,15 +620,22 @@ async fn import_indexed(
         return FileOutcome::Quarantined("not_found".into());
     };
     let job_id = running.job().id.as_str();
+    if context.items.is_skipped(job_id, index).unwrap_or(false) {
+        return FileOutcome::Present;
+    }
     let copying = context
         .items
         .set(job_id, index, JobItemState::Copying, 0, None);
     copying.unwrap_or_else(|err| item_unrecorded(running, &err));
     let outcome = import_entry(context, running, plan, entry, &mut run.retries).await;
     let recorded = match &outcome {
-        FileOutcome::Imported(view) => {
-            run.imported.push(view.clone());
-            context.items.copied(job_id, index, size_of(entry))
+        FileOutcome::Imported(imported) => {
+            run.imported.push(imported.view.clone());
+            let digest = (imported.sha256.as_str(), imported.view.file_id.as_str());
+            let kept = context
+                .items
+                .record_digest(&plan.library_id, digest.0, digest.1);
+            kept.and_then(|()| context.items.copied(job_id, index, imported.size))
         }
         FileOutcome::Quarantined(code) => {
             run.quarantined.push(code.clone());
@@ -630,15 +646,6 @@ async fn import_indexed(
     };
     recorded.unwrap_or_else(|err| item_unrecorded(running, &err));
     outcome
-}
-
-/// The size of the file of `entry` now, 0 when it has none or it cannot be read. Reads its
-/// metadata.
-fn size_of(entry: &ManifestEntry) -> u64 {
-    match entry {
-        ManifestEntry::File { path, .. } => std::fs::metadata(path).map_or(0, |meta| meta.len()),
-        ManifestEntry::Skipped { .. } => 0,
-    }
 }
 
 /// Log, with its code, a file state the items store did not take; the job goes on (the file's
@@ -828,7 +835,7 @@ fn import_with_heartbeat(
     context: &ImportContext<'_>,
     running: &RunningJob,
     request: &FileImport<'_>,
-) -> Result<UploadView, ImportFailure> {
+) -> Result<ImportedOriginal, ImportFailure> {
     let every = renewal_interval(context.jobs);
     std::thread::scope(|scope| {
         let importing = scope.spawn(|| import_on_own_runtime(context.files, request));
@@ -855,7 +862,7 @@ fn import_with_heartbeat(
 fn import_on_own_runtime(
     files: &HostFiles,
     request: &FileImport<'_>,
-) -> Result<UploadView, ImportFailure> {
+) -> Result<ImportedOriginal, ImportFailure> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .build()
         .map_err(|_| ImportFailure::Commit {
@@ -990,14 +997,18 @@ fn unregistered(running: &RunningJob) -> FileOutcome {
 }
 
 /// Journal an imported file and answer it.
-fn imported(context: &ImportContext<'_>, running: &RunningJob, view: UploadView) -> FileOutcome {
+fn imported(
+    context: &ImportContext<'_>,
+    running: &RunningJob,
+    imported: ImportedOriginal,
+) -> FileOutcome {
     let entry = JournalEntry::new(IMPORT_FILE_OPERATION, Outcome::Succeeded)
         .actor(context.actor)
-        .target(view.file_id.as_str())
+        .target(imported.view.file_id.as_str())
         .target(running.job().id.as_str())
         .operation_id(running.job().operation_id.as_str());
     context.journal.send(entry);
-    FileOutcome::Imported(view)
+    FileOutcome::Imported(imported)
 }
 
 /// Journal a quarantined entry (its error code only, never its path) and answer it.

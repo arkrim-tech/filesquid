@@ -49,6 +49,7 @@ Feature: Desktop file and folder import
     Given the owner will pick a folder of 2 files
     When the app asks to import a folder under the operation "op-first"
     And the import has finished with 2 files
+    And the owner edits both picked files
     And the app asks to import a folder under the operation "op-again"
     Then the collection should list the folders "Holidays" and "Holidays-1" in "trips"
 

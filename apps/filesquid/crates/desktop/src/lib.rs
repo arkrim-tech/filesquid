@@ -803,9 +803,9 @@ fn start_imports(
     let worker = Arc::new(ImportWorker::spawn(ImportServices {
         jobs: jobs.clone(),
         files: files.clone(),
-        index: catalog,
+        index: catalog.clone(),
         plans: plans.clone(),
-        items,
+        items: items.clone(),
         journal: host.monitor().journal(),
         build: import_build(),
         actor: Principal::Owner.actor().to_string(),
@@ -814,10 +814,14 @@ fn start_imports(
         retry_unit: filesquid_native::import::job::RETRY_UNIT,
         recover: recovered,
     })?);
+    let registry = app.state::<DesktopLocations>().0.clone();
     let starting = imports::ImportStarting {
         files,
         jobs,
         plans,
+        items,
+        index: catalog,
+        registry,
         worker: worker.clone(),
         dialog: Box::new(imports::RfdSources::new(app.clone())),
     };

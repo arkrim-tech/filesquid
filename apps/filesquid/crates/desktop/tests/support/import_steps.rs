@@ -351,3 +351,11 @@ fn only_in_hand(world: &mut DesktopWorld) {
     assert_eq!(rig.imported().len(), 1, "no further file read");
     assert_eq!(rig.file_objects(), 1);
 }
+
+#[when("the owner edits both picked files")]
+fn edit_picked(world: &mut DesktopWorld) {
+    let dir = scenario(world).dir.clone().expect("dir");
+    let folder = dir.join("Holidays");
+    std::fs::write(folder.join("Beach day.jpg"), b"jpeg, edited").expect("a");
+    std::fs::write(folder.join("Notes.txt"), b"notes, edited").expect("b");
+}

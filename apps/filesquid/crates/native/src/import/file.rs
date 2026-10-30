@@ -13,7 +13,7 @@ use super::host::{gather_host, Build};
 use super::source::{SourceFile, SOURCE_KEY};
 use super::time::now;
 use crate::HostFiles;
-use filesquid_api::files::{FileError, SourceImport, UploadView};
+use filesquid_api::files::{FileError, ImportedOriginal, SourceImport};
 use filesquid_metadata::import::ImportMethod;
 use std::path::Path;
 
@@ -114,7 +114,7 @@ pub fn commit_failure(err: FileError) -> ImportFailure {
 pub async fn import_file(
     files: &HostFiles,
     request: &FileImport<'_>,
-) -> Result<UploadView, ImportFailure> {
+) -> Result<ImportedOriginal, ImportFailure> {
     let started_at = now().ok_or(ImportFailure::Clock)?;
     let gathered =
         gather_source(request.path, request.import_root).map_err(ImportFailure::Source)?;

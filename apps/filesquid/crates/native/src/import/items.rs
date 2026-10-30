@@ -11,6 +11,10 @@
 //! failed item back to `queued` in one statement; the job then imports it alone. Entries of the
 //! manifest that could not be listed have no file and no item; they are journaled with their
 //! code.
+//!
+//! The same store keeps the SHA-256 of every file an import committed, per library, as the
+//! API answered it from the commit, so a plan can tell which picked files the library already
+//! holds (API-S-036 **Review**) and the job skips them.
 
 use filesquid_api::jobs::{
     page_of_items as page_of, JobDestination, JobError, JobItem, JobItemPage, JobItemState,
@@ -35,6 +39,12 @@ CREATE TABLE IF NOT EXISTS import_items (
     PRIMARY KEY (job_id, idx)
 ) WITHOUT ROWID;
 CREATE UNIQUE INDEX IF NOT EXISTS import_items_file ON import_items(job_id, file_id);
+CREATE TABLE IF NOT EXISTS import_digests (
+    library_id TEXT NOT NULL,
+    sha256 TEXT NOT NULL,
+    file_id TEXT NOT NULL,
+    PRIMARY KEY (library_id, sha256, file_id)
+) WITHOUT ROWID;
 ";
 
 /// Most items one job keeps (its manifest's bound).
@@ -373,4 +383,59 @@ pub fn open_import_stores(
     let plans = super::plans::SqliteImportPlans::open(path)?;
     let items = SqliteJobItems::open(path)?;
     Ok((std::sync::Arc::new(plans), std::sync::Arc::new(items)))
+}
+
+impl SqliteJobItems {
+    /// Remember that the import of `file_id` committed content of digest `sha256` into
+    /// `library_id`. Writes the store; remembering it again changes nothing.
+    ///
+    /// # Errors
+    /// A store failure.
+    pub fn record_digest(
+        &self,
+        library_id: &str,
+        sha256: &str,
+        file_id: &str,
+    ) -> Result<(), JobError> {
+        self.lock()?
+            .execute(
+                "INSERT OR IGNORE INTO import_digests (library_id, sha256, file_id)
+                 VALUES (?1, ?2, ?3)",
+                params![library_id, sha256, file_id],
+            )
+            .map(|_| ())
+            .map_err(store_error)
+    }
+
+    /// Whether an import committed content of digest `sha256` into `library_id`. Reads the
+    /// store.
+    ///
+    /// # Errors
+    /// A store failure.
+    pub fn holds_digest(&self, library_id: &str, sha256: &str) -> Result<bool, JobError> {
+        self.lock()?
+            .query_row(
+                "SELECT EXISTS (SELECT 1 FROM import_digests
+                 WHERE library_id = ?1 AND sha256 = ?2)",
+                params![library_id, sha256],
+                |row| row.get::<_, bool>(0),
+            )
+            .map_err(store_error)
+    }
+
+    /// Whether the item of manifest entry `index` of job `job_id` is `skipped` (the library
+    /// already held it when the import was planned). Reads the store.
+    ///
+    /// # Errors
+    /// A store failure.
+    pub fn is_skipped(&self, job_id: &str, index: usize) -> Result<bool, JobError> {
+        self.lock()?
+            .query_row(
+                "SELECT EXISTS (SELECT 1 FROM import_items
+                 WHERE job_id = ?1 AND idx = ?2 AND state = 'skipped')",
+                params![job_id, index as i64],
+                |row| row.get::<_, bool>(0),
+            )
+            .map_err(store_error)
+    }
 }
