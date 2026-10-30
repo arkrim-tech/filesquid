@@ -453,6 +453,68 @@ fn the_catalog_is_the_home_collections_of_uploads_and_copies() {
 }
 
 #[test]
+fn a_registered_file_is_relocated_in_one_version_and_its_own_path_never_takes_it() {
+    use filesquid_api::home::{place_entry, HomeCollections, HomeRequest, Placed};
+    let fx = Fixture::new("api-f2.14-relocate");
+    let lib = fx.create_library("Family archive");
+    let trips = fx.create_collection(&lib, "Trips");
+    let home: &dyn HomeCollections = fx.catalog.as_ref();
+    let file = new_file();
+    path_of(register(&fx, &lib, &trips, &file, "a/photo.jpg", "op-1"));
+    path_of(register(
+        &fx,
+        &lib,
+        &trips,
+        &new_file(),
+        "a/harbour.jpg",
+        "op-2",
+    ));
+    let to = |path: &str| HomeRequest {
+        file_id: file.clone(),
+        collection_id: trips.clone(),
+        path: path.into(),
+    };
+    let same = home
+        .relocate(&lib, &to("a/photo.jpg"), place_entry("op-3"))
+        .expect("same");
+    assert_eq!(
+        same,
+        Placed::AlreadyRegistered {
+            path: "a/photo.jpg".into()
+        }
+    );
+    let before = snapshot_of(&fx, &lib).version;
+    let moved = home
+        .relocate(&lib, &to("a/harbour.jpg"), place_entry("op-4"))
+        .expect("move");
+    assert_eq!(
+        moved,
+        Placed::Registered {
+            path: "a/harbour-1.jpg".into()
+        }
+    );
+    let after = snapshot_of(&fx, &lib);
+    assert_ne!(after.version, before, "one snapshot version");
+    let operation = after.operations.last().expect("operation");
+    assert!(
+        format!("{operation:?}").contains("op-4"),
+        "under the operation ID"
+    );
+    assert_eq!(
+        home.placement(&lib, &file).expect("read"),
+        Some((trips.clone(), "a/harbour-1.jpg".into()))
+    );
+    let stranger = HomeRequest {
+        file_id: new_file(),
+        ..to("b.jpg")
+    };
+    let refused = home
+        .relocate(&lib, &stranger, place_entry("op-5"))
+        .expect("refused");
+    assert_eq!(refused, Placed::Refused("not_found"));
+}
+
+#[test]
 fn a_taken_path_is_numbered_beside_it_and_a_deleted_file_s_path_counts() {
     let fx = Fixture::new("de17-numbering");
     let lib = fx.create_library("Family archive");
