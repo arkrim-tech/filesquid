@@ -39,7 +39,7 @@ Branch `feat/de-1.8-host-upload-review-facts`. Module row [DE-1.8](../plan.md) o
 
 ## TDD
 
-The items store's tests (`unit_import_items`) and the job's item-state test were written before the job's wiring and failed to compile against it first. Most of the review, rebuild and registry tests were written right after each part's implementation and passed at once; this mirrors the DE-1.7 walkthrough's note.
+The job's item-state and retry test (`each_file_s_state_is_kept_and_a_failed_file_is_retried_alone`) was written before the job's wiring. Its first run failed, together with the quit-and-resume test, on two points that drove the fixes: a retried file's size (taken when the manifest was kept) and the end state of a run with a failed file (now pending). The items store, the review, the rebuild hand-over and the persistent registry were implemented before their tests, which then passed at once. This record follows the DE-1.7 walkthrough's note.
 
 ## Test output
 
