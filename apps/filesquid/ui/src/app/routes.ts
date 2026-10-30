@@ -15,6 +15,7 @@ import type { FsNavigationView, NavigationViewOptions } from "../components/fs-n
 import type { FsSettings, SettingsOptions } from "../components/fs-settings";
 import { locationHash, parseLocationHash, type FileLocation } from "../files/model";
 import type { HistorySource } from "../files/history-source";
+import type { DownloadSource } from "../files/download-source";
 import type { MetadataSource } from "../files/metadata-source";
 import { bindFilePanel, removeFilePanel } from "./file-panel-route";
 
@@ -221,13 +222,22 @@ function createNavigationView(shell: HTMLElement, options: NavigationRouteOption
   return view;
 }
 
+/** The sources the file panel reads beyond the browser's file source (UI-F2.3, UI-F2.11). */
+export interface FilePanelSources {
+  /** Reads histories, versions and history sizes. */
+  readonly history: HistorySource;
+  /** Reads the whole file of one version, for Download this version. */
+  readonly download: DownloadSource;
+}
+
 /**
- * What the files route needs: the labels and the file source of the browser, and the history
- * source of the file panel (UI-F2.3); without it the route mounts no file panel.
+ * What the files route needs: the labels and the file source of the browser, and optionally the
+ * {@link FilePanelSources} of the file panel; without them the route mounts no file panel. The
+ * two sources are one option, so the types never allow a panel with only one of them.
  */
 export interface FilesRouteOptions extends Pick<FileBrowserOptions, "labels" | "source"> {
-  /** Reads histories, versions and history sizes for the file panel. */
-  readonly history?: HistorySource;
+  /** The history and download sources of the file panel. */
+  readonly filePanel?: FilePanelSources;
   /** Reads and writes statements for the file panel's Description tab (UI-F2.4). */
   readonly metadata?: MetadataSource;
 }
@@ -281,7 +291,7 @@ function createFileBrowser(
 ): FsFileBrowser {
   const browser = document.createElement("fs-file-browser") as FsFileBrowser;
   browser.configure({ labels: options.labels, source: options.source, href: locationHash });
-  if (options.history) bindFilePanel(shell, browser, { ...options, history: options.history });
+  if (options.filePanel) bindFilePanel(shell, browser, { ...options, ...options.filePanel });
   browser.addEventListener("fs-location-change", (event) => {
     const { location } = (event as CustomEvent<{ location: FileLocation }>).detail;
     const hash = locationHash(location);

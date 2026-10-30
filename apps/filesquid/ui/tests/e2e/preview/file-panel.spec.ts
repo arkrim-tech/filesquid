@@ -181,13 +181,14 @@ for (const scheme of SCHEMES) {
         label(labels, "filePanelFilterInfo"),
       );
       await expect(details.locator(".count")).toHaveText(
-        fill("filePanelInfoCount", { count: "8" }),
+        fill("filePanelInfoCount", { count: "9" }),
       );
       await expect(details.locator(".row dt")).toHaveText([
         label(labels, "filePanelOriginalName"),
         label(labels, "filePanelExtension"),
         label(labels, "filePanelFormat"),
         label(labels, "filePanelSize"),
+        label(labels, "filePanelHistorySize"),
         fill("filePanelDigest", { algorithm: "SHA-256" }),
         fill("filePanelDigest", { algorithm: "SHA-512" }),
         label(labels, "filePanelObject"),
@@ -198,6 +199,10 @@ for (const scheme of SCHEMES) {
         ".jpg",
         "image/jpeg",
         fill("filePanelSizeValue", { size: "6.2 MB", bytes: "6,481,920" }),
+        fill("filePanelHistorySizeValue", {
+          size: "96.3 MB",
+          versions: fill("versionsCount", { count: "4" }),
+        }),
         "9b1f4e…c07a2d",
         "5a5a5a…5a5a5a",
         "urn:uuid:7f3c9a1e-…-41d2b8",
@@ -304,7 +309,8 @@ for (const scheme of SCHEMES) {
         fill("versionsMeta", { time: "Yesterday", size: "18.1 MB" }),
       );
       await expect(noLabel).toHaveText(label(labels, "versionsNoLabel"));
-      await expect(rows.first().locator("button.more")).toHaveCount(0);
+      // UI-F2.11: the current version has a menu too (Download, Edit label); mockup 26 draws none.
+      await expect(rows.first().locator("button.more")).toHaveCount(1);
       await expect(view.locator(".note-title")).toHaveText(label(labels, "versionsKeepEvery"));
       await expect(view.locator(".note-detail")).toHaveText(label(labels, "versionsKeepDetail"));
 
@@ -312,7 +318,7 @@ for (const scheme of SCHEMES) {
       await more.click();
       await expect(more).toHaveAttribute("aria-expanded", "true");
       const menu = view.locator('[role="menu"]');
-      await expectBox(menu, { x: 1188, y: 346, width: 232 });
+      await expectBox(menu, { x: 1188, y: 346, width: 232, height: 110 });
       expect(await look(menu)).toMatchObject({
         background: rgbOf(c.overlay),
         borderWidth: "1px",
@@ -320,14 +326,20 @@ for (const scheme of SCHEMES) {
         radius: "8px",
       });
       const item = menu.locator('[role="menuitem"]');
-      await expectBox(item, { height: 34 });
+      await expectBox(item.first(), { x: 1192, y: 350, width: 224, height: 34 });
       expect(await look(item)).toMatchObject({
         size: "13px",
         colour: rgbOf(c.body),
         radius: "5px",
       });
-      await expect(item).toHaveText([label(labels, "versionsRestoreAction")]);
-      await expect(item).toBeFocused();
+      await expect(item).toHaveText([
+        label(labels, "versionsRestoreAction"),
+        label(labels, "versionsDownloadAction"),
+        label(labels, "versionsEditLabelAction"),
+      ]);
+      await expectBox(item.nth(1), { x: 1192, y: 384, width: 224, height: 34 });
+      await expectBox(item.nth(2), { x: 1192, y: 418, width: 224, height: 34 });
+      await expect(item.first()).toBeFocused();
       await page.keyboard.press("Escape");
       await expect(menu).toHaveCount(0);
       await expect(more).toBeFocused();
@@ -508,7 +520,7 @@ for (const scheme of SCHEMES) {
       await expect(clear).toHaveText(label(labels, "filePanelClearFilter"));
       await expectBox(clear, { height: 36 });
       await clear.click();
-      await expect(details.locator(".row")).toHaveCount(8);
+      await expect(details.locator(".row")).toHaveCount(9);
       await expect(details.locator("input.filter")).toBeFocused();
 
       api.failDetails(503, "unavailable");
