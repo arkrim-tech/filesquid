@@ -363,6 +363,12 @@ Feature: Desktop file and folder import
 247 steps (247 passed)
 ```
 
+## Decisions to confirm
+
+- **An import job that ends with a failed file stays pending** (the orchestrator accepted this on 2026-10-30, pending the owner's confirmation). API-S-037 refuses a retry of a finished job, so a run that tried every file with one failed gives its lease back with the job `pending` and its checkpoint at the end, not `completed`. Its failed files stay retryable through `POST /api/v1/jobs/{job}/items/{item}/retry` and `/retry-failed`, the owner can cancel it through `/cancel`, and the launch-time replay does not start it until a retry has queued a file again. DE-S-019 states the rule.
+- **What the UI must show (UI-1.2, UI-1.3).** A pending import job whose items include a `failed` one, with no `queued` or `copying` item and `done` equal to `total`, is waiting for the owner, not running. It needs a "needs attention" state with **Retry** (per failed file and for all failed files) and **Cancel**, never a spinner or a progress animation. It reads from the job view (`state`, `done`, `total`) and the job items route (`state`, `error_code`).
+- **The import commit answers the committed digest** (`ImportedOriginal`, a host type outside the contract). The API-F2.9 lane changes the same answer to `Committed<UploadView>`; whichever lands second adapts. The proposal sent to the orchestrator is `Committed<ImportedOriginal>`.
+
 ## Known limits
 
 - The review hashes every picked file once, in the request that answers the plan; a very large pick takes as long as that read.
