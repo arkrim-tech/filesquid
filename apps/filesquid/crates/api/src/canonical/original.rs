@@ -122,6 +122,28 @@ pub fn check_new_original(
     path: &str,
     bytes: &[u8],
 ) -> Result<(), CanonicalError> {
+    let digest = DigestAlgorithm::Sha256.digest_hex(bytes);
+    check_new_content(
+        file_id,
+        record,
+        previous,
+        path,
+        (&digest, bytes.len() as u64),
+    )
+}
+
+/// [`check_new_original`] for content known by its SHA-256 `digest` and `size` (a stage
+/// streamed from the source, Task DE-1.9) rather than by its bytes. Pure.
+///
+/// # Errors
+/// [`CanonicalError::Encode`] naming the first rule the record breaks.
+pub fn check_new_content(
+    file_id: &FileId,
+    record: &FileRecord,
+    previous: Option<&FileRecord>,
+    path: &str,
+    (digest, size): (&str, u64),
+) -> Result<(), CanonicalError> {
     let refuse = |reason: String| CanonicalError::Encode(reason);
     let first_new = match previous {
         Some(previous) => {
@@ -146,10 +168,9 @@ pub fn check_new_original(
     if !copied {
         return Err(refuse("an original's import entry stores its bytes".into()));
     }
-    let digest = DigestAlgorithm::Sha256.digest_hex(bytes);
-    let cites_bytes = record.imports()[first_new..].iter().all(|entry| {
-        entry.acquisition.sha256 == digest && entry.acquisition.size == bytes.len() as u64
-    });
+    let cites_bytes = record.imports()[first_new..]
+        .iter()
+        .all(|entry| entry.acquisition.sha256 == digest && entry.acquisition.size == size);
     match cites_bytes {
         true => Ok(()),
         false => Err(refuse(

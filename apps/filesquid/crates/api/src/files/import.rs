@@ -4,10 +4,12 @@
 //! with an import entry built from every fact the host's operating system provided about the
 //! source, gathered before the host read its bytes.
 //!
-//! The host supplies the facts ([`SourceImport`]), the new file's identifier and the bytes it
-//! read; this module adds what only the commit knows (the object, version, logical path,
-//! SHA-256 and verified size) and refuses a source whose reported size is not the size of the
-//! bytes read, so a file that changed while it was read is never recorded as verified.
+//! The host supplies the facts ([`SourceImport`]), the new file's identifier and a read-only
+//! storage view of the source, which is staged through the streamed
+//! `ChangeModel::stage_file` (OCFL-S-026, Task DE-1.9); this module adds what only the commit
+//! knows (the object, version, logical path, SHA-256 and verified size) and refuses a source
+//! whose reported size is not its size, or which changed while it was staged, so a file that
+//! changed while it was read is never recorded as verified.
 //!
 //! An import always creates a new file object, under the identifier the host minted when it
 //! planned the import. Repeating the import of the same job (a run that crashed between the
@@ -22,7 +24,7 @@ use super::upload::{canonical_error, parse_file_id};
 use super::view::UploadView;
 use crate::canonical::original::original_path_for;
 use crate::canonical::{
-    commit_file_original, file_object_id, file_object_root, read_file_original, OwnerReadable,
+    commit_staged_original, file_object_id, file_object_root, read_file_original, OwnerReadable,
 };
 use filesquid_core::FileId;
 use filesquid_metadata::fact::Fact;
@@ -31,9 +33,9 @@ use filesquid_metadata::import::attributes::Attributes;
 use filesquid_metadata::import::{
     Acquisition, ByteStorage, Host, ImportEntry, ImportMethod, SourceFile, SourceVolume,
 };
-use filesquid_ocfl::storage::StorageBackend;
+use filesquid_ocfl::change::{ChangeError, ChangeModel};
+use filesquid_ocfl::storage::{StorageBackend, StorageKey};
 use filesquid_ocfl::write::VersionReservations;
-use filesquid_ocfl::DigestAlgorithm;
 
 /// What a host gathered about one source file before reading it.
 #[derive(Clone, Debug)]
@@ -76,23 +78,27 @@ where
     R: VersionReservations,
     S: StorageBackend,
 {
-    /// Commit one import of `bytes`, read by the host from the source `import` describes, by
-    /// `actor`, as the new file object of `import.file_id`; when that object already holds
-    /// an import of the same job, answer it without writing.
+    /// Commit one import of the file at `key` of `source`, the host's read-only view of the
+    /// source `import` describes, by `actor`, as the new file object of `import.file_id`; when
+    /// that object already holds an import of the same job, answer it without writing. The
+    /// original is staged through [`ChangeModel::stage_file`] (OCFL-S-026): read in bounded
+    /// chunks at most twice, once to hash it and once to copy it while hashing again, so no
+    /// file is held in memory whatever its size (Task DE-1.9).
     ///
     /// # Errors
-    /// `invalid_request` with `size_mismatch` in its message when the bytes are not the
-    /// size the source reported, for a malformed file ID or for a record the metadata module
-    /// refuses; `not_found` for an unknown library; `conflict` when the object already exists
-    /// and holds no import of this job; a storage failure otherwise. Nothing is published on
-    /// any error.
-    pub async fn import_original(
+    /// `invalid_request` with `size_mismatch` in its message when the source is not the size
+    /// it reported, for a malformed file ID or key, or for a record the metadata module
+    /// refuses; `conflict` with `source_changed` in its message when the source changed
+    /// between its reads; `not_found` for an unknown library; `conflict` when the object
+    /// already exists and holds no import of this job; a storage failure otherwise. Nothing
+    /// is published on any error, and no message names the source.
+    pub async fn import_original<D: StorageBackend>(
         &self,
         import: SourceImport,
-        bytes: &[u8],
+        source: &D,
+        key: &str,
         actor: &str,
     ) -> Result<UploadView, FileError> {
-        check_size(&import.source, bytes)?;
         let meta = self.meta(actor, None)?;
         let library = self.library(&import.library_id)?;
         let _writing = library.writes.lock().await;
@@ -105,28 +111,78 @@ where
             return replayed(&import, &original.record);
         }
         let root = file_object_root(&file_id).map_err(canonical_error)?;
+        let object_id = file_object_id(&file_id);
+        let path = original_path_for(&file_id, import.source.extension.as_deref())
+            .map_err(canonical_error)?;
+        let staging = library.staging(&object_id)?;
+        let model = change_model(&library, &root, &object_id, staging);
+        let (sha256, size) = stage_source(&model, &path, &import.source, (source, key)).await?;
         let citation = Citation {
-            object_id: file_object_id(&file_id),
+            object_id,
             version: "v1".to_string(),
-            path: original_path_for(&file_id, import.source.extension.as_deref())
-                .map_err(canonical_error)?,
-            sha256: DigestAlgorithm::Sha256.digest_hex(bytes),
-            size: bytes.len() as u64,
+            path,
+            sha256,
+            size,
         };
         let library_id = import.library_id.clone();
         let entry = import_entry(import, &citation, &self.created());
         let record = import_record(entry)?;
-        let staging = library.staging(&citation.object_id)?;
-        let model = change_model(&library, &root, &citation.object_id, staging);
-        let committed =
-            commit_file_original(&model, &OwnerReadable, &file_id, &record, None, bytes, meta)
-                .await
-                .map_err(canonical_error)?;
-        let receipt = committed.ok_or_else(|| {
-            FileError::conflict("The import would change nothing, so no version was made.")
-        })?;
+        let content = (citation.sha256.as_str(), citation.size);
+        let receipt = commit_staged_original(&model, &file_id, &record, content, meta)
+            .await
+            .map_err(canonical_error)?;
         library.remember(&citation.object_id, &root);
         Ok(view_of(library_id, &file_id, receipt))
+    }
+}
+
+/// Stage the file at `key` of `source` as the logical file `path` of `model`'s object, after
+/// clearing what an earlier attempt left staged, and answer its SHA-256 and size: the size
+/// the source has before and after the stage, which must be the size it `reported`. Storage
+/// I/O.
+///
+/// # Errors
+/// `size_mismatch` or `source_changed` (see [`FileService::import_original`]); a storage
+/// failure otherwise.
+async fn stage_source<B, R, S, D>(
+    model: &ChangeModel<'_, B, R, S>,
+    path: &str,
+    reported: &SourceFile,
+    (source, key): (&D, &str),
+) -> Result<(String, u64), FileError>
+where
+    B: StorageBackend,
+    R: VersionReservations,
+    S: StorageBackend,
+    D: StorageBackend,
+{
+    let checked =
+        StorageKey::new(key).map_err(|_| FileError::invalid("The source key is not valid."))?;
+    model.reset().await?;
+    let before = source.head(&checked).await?;
+    check_size(reported, before.size)?;
+    let digest = model
+        .stage_file(path, source, key)
+        .await
+        .map_err(stage_error)?;
+    let after = source.head(&checked).await?;
+    match after == before {
+        true => Ok((digest, before.size)),
+        false => Err(source_changed()),
+    }
+}
+
+/// The refusal of a source that changed while it was staged. Pure.
+fn source_changed() -> FileError {
+    FileError::conflict("source_changed: the source changed while it was read; import it again.")
+}
+
+/// The error of a failed stage: a source that changed between its reads is
+/// [`source_changed`], anything else as the change model's error. Pure.
+fn stage_error(err: ChangeError) -> FileError {
+    match err {
+        ChangeError::SourceChanged { .. } => source_changed(),
+        other => other.into(),
     }
 }
 
@@ -166,11 +222,11 @@ fn replayed(import: &SourceImport, record: &FileRecord) -> Result<UploadView, Fi
     })
 }
 
-/// Refuse bytes whose size is not the size the source reported (MD-S-013: the import fails
-/// verification and commits nothing). Pure.
-fn check_size(source: &SourceFile, bytes: &[u8]) -> Result<(), FileError> {
+/// Refuse a source of `size` bytes when that is not the size it reported (MD-S-013: the import
+/// fails verification and commits nothing). Pure.
+fn check_size(source: &SourceFile, size: u64) -> Result<(), FileError> {
     match &source.reported_size {
-        Fact::Value(reported) if *reported != bytes.len() as u64 => Err(FileError::invalid(
+        Fact::Value(reported) if *reported != size => Err(FileError::invalid(
             "size_mismatch: the source changed size while it was read; import it again.",
         )),
         _ => Ok(()),
