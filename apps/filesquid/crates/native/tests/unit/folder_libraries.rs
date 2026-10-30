@@ -500,6 +500,7 @@ fn a_registered_file_is_relocated_in_one_version_and_its_own_path_never_takes_it
     assert_eq!(
         same,
         Placed::AlreadyRegistered {
+            collection_id: trips.clone(),
             path: "a/photo.jpg".into()
         }
     );
