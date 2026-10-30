@@ -163,6 +163,9 @@ pub trait FileOperations: Send + Sync {
         expected: String,
     ) -> FileFuture<'_, Committed<CopyView>>;
 
+    /// The display name a copy of the file `file_id` of `library_id` takes: its head's.
+    fn copy_name(&self, library_id: String, file_id: String) -> FileFuture<'_, String>;
+
     /// Remove one statement by `actor`.
     fn remove_statement(
         &self,
@@ -345,6 +348,10 @@ where
         expected: String,
     ) -> FileFuture<'_, Committed<CopyView>> {
         Box::pin(async move { FileService::copy(self, request, caller, &expected).await })
+    }
+
+    fn copy_name(&self, library_id: String, file_id: String) -> FileFuture<'_, String> {
+        Box::pin(async move { FileService::copy_name(self, &library_id, &file_id).await })
     }
 
     fn remove_statement(

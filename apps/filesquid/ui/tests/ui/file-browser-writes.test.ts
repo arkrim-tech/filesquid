@@ -10,6 +10,8 @@ import { MemoryFileSource } from "../../src/files/memory-source";
 import type { FsFileBrowser } from "../../src/index";
 import { MAX_UPLOAD_BYTES, type FileCommit, type FolderAnswer } from "../../src/files/model";
 import {
+  COLLECTION,
+  COLLECTION_LOCATION,
   FILE_ID,
   FILE_LOCATION,
   LOCATION,
@@ -64,14 +66,16 @@ describe("upload", () => {
   it("uploads each chosen file with one PUT as its own file and reports the committed version", async () => {
     const source = fixture();
     const upload = vi.spyOn(source, "upload");
-    const browser = await mount(source, { location: { ...LOCATION, prefix: "Contracts" } });
+    const where = { ...COLLECTION_LOCATION, prefix: "Contracts" };
+    const browser = await mount(source, { location: where });
     const events: unknown[] = [];
     browser.addEventListener("fs-files-change", (e) => events.push((e as CustomEvent).detail));
     await choose(browser, [new File(["abc"], "scan.pdf"), new File(["defg"], "memo.pdf")]);
     expect(upload).toHaveBeenCalledTimes(2);
-    expect(upload.mock.calls.map((c) => [c[0].library_id, c[1].name])).toEqual([
-      ["lib", "scan.pdf"],
-      ["lib", "memo.pdf"],
+    const target = { library_id: "lib", collection_id: COLLECTION, folder: "Contracts" };
+    expect(upload.mock.calls.map((c) => [c[0], c[1].name])).toEqual([
+      [target, "scan.pdf"],
+      [target, "memo.pdf"],
     ]);
     expect(upload.mock.calls.every((c) => !("path" in c[1]) && !("file_id" in c[1]))).toBe(true);
     expect(status(browser)).toBe("Uploaded 2. Version v1 committed.");
@@ -90,7 +94,7 @@ describe("upload", () => {
   it("refuses a file over 64 MiB before sending it and says which", async () => {
     const source = fixture();
     const upload = vi.spyOn(source, "upload");
-    const browser = await mount(source);
+    const browser = await mount(source, { location: COLLECTION_LOCATION });
     const big = new File(["x"], "huge.mov");
     Object.defineProperty(big, "size", { value: MAX_UPLOAD_BYTES + 1 });
     await choose(browser, [big]);
@@ -107,7 +111,7 @@ describe("upload", () => {
       version: "v1",
       created: "t",
     });
-    const browser = await mount(source);
+    const browser = await mount(source, { location: COLLECTION_LOCATION });
     const edge = new File(["x"], "edge.bin");
     Object.defineProperty(edge, "size", { value: MAX_UPLOAD_BYTES });
     await choose(browser, [edge]);
@@ -123,7 +127,7 @@ describe("upload", () => {
       if (calls === 1) throw new ApiError(409, "/api/v1/files/upload", { code: "conflict" });
       return real(...args);
     });
-    const browser = await mount(source);
+    const browser = await mount(source, { location: COLLECTION_LOCATION });
     await choose(browser, [new File(["a"], "one.txt"), new File(["b"], "two.txt")]);
     expect(alert(browser)).toContain("Not uploaded: one.txt");
     expect(alert(browser)).toContain(labels.fileConflict);
@@ -133,7 +137,7 @@ describe("upload", () => {
     expect(source.uploads.map((u) => u.name)).toEqual(["two.txt", "one.txt"]);
   });
 
-  it("tries the failed files again in the library they were meant for, after moving away", async () => {
+  it("tries the failed files again in the collection and folder they were meant for, after moving away", async () => {
     const source = fixture();
     const real = source.upload.bind(source);
     let calls = 0;
@@ -142,15 +146,17 @@ describe("upload", () => {
       if (calls === 1) throw new ApiError(409, "/api/v1/files/upload", { code: "conflict" });
       return real(...args);
     });
-    const browser = await mount(source, { location: { ...LOCATION, prefix: "Contracts" } });
+    const first = { ...COLLECTION_LOCATION, prefix: "Contracts" };
+    const browser = await mount(source, { location: first });
     await choose(browser, [new File(["a"], "one.txt")]);
     browser.location = { ...LOCATION, prefix: "Drawings" };
     await settle();
     await click(one(browser, "button.retry"));
     await idle(browser);
-    expect(upload.mock.calls.map((c) => [c[0].library_id, c[1].name])).toEqual([
-      ["lib", "one.txt"],
-      ["lib", "one.txt"],
+    const target = { library_id: "lib", collection_id: COLLECTION, folder: "Contracts" };
+    expect(upload.mock.calls.map((c) => [c[0], c[1].name])).toEqual([
+      [target, "one.txt"],
+      [target, "one.txt"],
     ]);
     // Retry resends a file under the operation id it was first sent with (API-F2.13), so an
     // upload that had committed is answered again rather than made twice.
@@ -162,7 +168,8 @@ describe("upload", () => {
   it("shows a drop target for dragged files and uploads what is dropped", async () => {
     const source = fixture();
     const upload = vi.spyOn(source, "upload");
-    const browser = await mount(source, { location: { ...LOCATION, prefix: "Drawings" } });
+    const where = { ...COLLECTION_LOCATION, prefix: "Drawings" };
+    const browser = await mount(source, { location: where });
     const listing = one(browser, ".listing");
     const drag = (type: string, files: File[]) => {
       const event = new Event(type, { bubbles: true, cancelable: true });
@@ -178,6 +185,11 @@ describe("upload", () => {
     expect(one(browser, ".drop").textContent).toBe("Drop to upload into Drawings");
     drag("drop", [new File(["z"], "dropped.txt")]);
     await idle(browser);
+    expect(upload.mock.calls[0]?.[0]).toEqual({
+      library_id: "lib",
+      collection_id: COLLECTION,
+      folder: "Drawings",
+    });
     expect(upload.mock.calls[0]?.[1].name).toBe("dropped.txt");
     expect(one(browser, ".drop").hidden).toBe(true);
   });
@@ -211,7 +223,7 @@ describe("upload", () => {
       version: "v1",
       created: "t",
     });
-    const browser = await mount(source);
+    const browser = await mount(source, { location: COLLECTION_LOCATION });
     const files = Array.from({ length: 1002 }, (_, i) => new File(["a"], `f${i}.txt`));
     await choose(browser, files);
     expect(upload).toHaveBeenCalledTimes(1000);
@@ -226,7 +238,7 @@ describe("upload", () => {
   it("refuses a name longer than 255 bytes before sending it", async () => {
     const source = fixture();
     const upload = vi.spyOn(source, "upload");
-    const browser = await mount(source);
+    const browser = await mount(source, { location: COLLECTION_LOCATION });
     await choose(browser, [new File(["a"], `${"n".repeat(256)}.txt`)]);
     expect(upload).not.toHaveBeenCalled();
     expect(alert(browser)).toContain(labels.fileNameTooLong);
@@ -235,9 +247,62 @@ describe("upload", () => {
   it("strips path separators from the name it uploads under", async () => {
     const source = fixture();
     const upload = vi.spyOn(source, "upload");
-    const browser = await mount(source);
+    const browser = await mount(source, { location: COLLECTION_LOCATION });
     await choose(browser, [new File(["a"], "a/b\\c.txt")]);
     expect(upload.mock.calls[0]?.[1].name).toBe("a_b_c.txt");
+  });
+});
+
+describe('upload destination (API-S-011, ADR 041 "Must choose")', () => {
+  it("names no folder at the root of a collection", async () => {
+    const source = fixture();
+    const upload = vi.spyOn(source, "upload");
+    const browser = await mount(source, { location: COLLECTION_LOCATION });
+    await choose(browser, [new File(["a"], "root.txt")]);
+    expect(upload).toHaveBeenCalledTimes(1);
+    const target = upload.mock.calls[0]?.[0];
+    expect(target).toEqual({ library_id: "lib", collection_id: COLLECTION });
+    expect(target).not.toHaveProperty("folder");
+  });
+
+  it("refuses the Upload button where no collection is shown, before the file dialog opens", async () => {
+    const source = fixture();
+    const upload = vi.spyOn(source, "upload");
+    const browser = await mount(source);
+    const dialog = vi.spyOn(one<HTMLInputElement>(browser, 'input[type="file"]'), "click");
+    await click(one(browser, "button.upload"));
+    await idle(browser);
+    expect(dialog).not.toHaveBeenCalled();
+    expect(upload).not.toHaveBeenCalled();
+    expect(alert(browser)).toBe(labels.fileUploadDisabledReason);
+    expect(status(browser)).toBe("");
+  });
+
+  it("opens the file dialog where a collection is shown", async () => {
+    const browser = await mount(fixture(), { location: COLLECTION_LOCATION });
+    const dialog = vi.spyOn(one<HTMLInputElement>(browser, 'input[type="file"]'), "click");
+    await click(one(browser, "button.upload"));
+    expect(dialog).toHaveBeenCalledTimes(1);
+    expect(alert(browser)).toBe("");
+  });
+
+  it("sends no request for files chosen or dropped where no collection is shown", async () => {
+    const source = fixture();
+    const upload = vi.spyOn(source, "upload");
+    const browser = await mount(source, { location: { ...LOCATION, prefix: "Contracts" } });
+    await choose(browser, [new File(["a"], "chosen.txt")]);
+    expect(upload).not.toHaveBeenCalled();
+    expect(alert(browser)).toBe(labels.fileUploadDisabledReason);
+    one(browser, ".listing").dispatchEvent(
+      Object.assign(new Event("drop", { bubbles: true, cancelable: true }), {
+        dataTransfer: { types: ["Files"], files: [new File(["z"], "dropped.txt")] },
+      }),
+    );
+    await idle(browser);
+    expect(upload).not.toHaveBeenCalled();
+    expect(source.uploads).toEqual([]);
+    expect(alert(browser)).toBe(labels.fileUploadDisabledReason);
+    expect(all(browser, "button.retry")).toHaveLength(0);
   });
 });
 

@@ -129,7 +129,8 @@ async fn an_import_stores_the_original_under_its_uuid_with_its_record_in_one_ver
     let path = source(&dir.0, "Holiday photo.JPG", b"jpeg bytes");
     let view = import_file(&files, &request(&path, &build))
         .await
-        .expect("imported");
+        .expect("imported")
+        .view;
     assert_eq!(view.version, "v1");
     assert_eq!(view.file_id, FILE_ID, "the identifier the plan minted");
     assert_eq!(view.object_id, format!("urn:uuid:{}", view.file_id));
@@ -323,4 +324,63 @@ async fn a_missing_source_is_refused_without_retry() {
     assert_eq!(failure.error_code(), "source_missing");
     assert!(!failure.retryable());
     assert!(!failure.retry_now());
+}
+
+/// The installation of the provenance tests.
+const INSTALLATION: &str = "4c2e7a10-8b3d-4f5e-9a6b-1c2d3e4f5a6b";
+
+/// Install provenance on `files`, allocating journal IDs from a memory journal.
+fn with_provenance(files: &HostFiles) {
+    let context = filesquid_api::history::ProvenanceContext {
+        installation: filesquid_core::InstallationId::parse(INSTALLATION).expect("installation"),
+        host: filesquid_api::history::HostFacts {
+            product: "filesquid".into(),
+            distribution: "filesquid".into(),
+            version: "0.1.0".into(),
+        },
+    };
+    let ids = Arc::new(MemoryJournal::new("desktop"));
+    assert!(files.install_provenance(context, ids));
+}
+
+#[tokio::test]
+async fn an_import_commit_is_linked_to_the_journal_and_carries_its_record() {
+    let dir = TempDir::new("linked");
+    let (files, backend) = library(&dir.0).await;
+    with_provenance(&files);
+    let build = build();
+    let path = source(&dir.0, "a.txt", b"alpha");
+    let committed = import_file(&files, &request(&path, &build))
+        .await
+        .expect("imported");
+    let view = &committed.view;
+    let commits: Vec<_> = committed
+        .entries
+        .iter()
+        .filter(|entry| entry.operation == "ocfl.commit")
+        .collect();
+    assert_eq!(commits.len(), 1, "{:?}", committed.entries);
+    let reference = format!("{}@v1", view.object_id);
+    assert_eq!(commits[0].object_ref.as_deref(), Some(reference.as_str()));
+    assert_eq!(commits[0].operation_id.as_deref(), Some("op-1"));
+    let object = filesquid_ocfl::read::Object::open(&backend, &format!("files/{FILE_ID}"))
+        .await
+        .expect("object");
+    let block = &object.inventory().versions[object.head()];
+    let user = block.user.clone().expect("a version user");
+    assert_eq!(user.name, "FileSquid installation");
+    assert_eq!(user.address, Some(format!("urn:uuid:{INSTALLATION}")));
+    let message = block.message.clone().unwrap_or_default();
+    assert!(message.contains("\"operation_id\":\"op-1\""), "{message}");
+    assert!(message.contains("\"kind\":\"import\""), "{message}");
+    let state = object.state(object.head()).expect("state");
+    assert!(state.get("provenance/v1.jsonld").is_some(), "the record");
+    let again = import_file(&files, &request(&path, &build))
+        .await
+        .expect("replayed");
+    assert_eq!(again.view, committed.view, "the same object");
+    assert!(
+        again.entries.is_empty(),
+        "a replay commits and journals nothing"
+    );
 }

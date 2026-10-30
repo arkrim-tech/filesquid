@@ -85,7 +85,7 @@ fn contract_is_openapi_3_1_with_the_crate_api_version() {
     let doc = contract();
     assert_eq!(doc["openapi"], "3.1.0");
     assert_eq!(doc["info"]["version"], API_VERSION);
-    assert_eq!(API_VERSION, "0.33.0");
+    assert_eq!(API_VERSION, "0.35.0");
 }
 
 #[test]

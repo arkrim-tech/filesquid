@@ -69,6 +69,7 @@ mod drive_routes;
 pub mod drive_scope;
 mod error;
 mod handle;
+mod homing;
 mod import;
 pub mod labels;
 pub mod media;
@@ -110,11 +111,12 @@ pub use service::{
 };
 pub use versions::{MAX_SIZE_CONTENTS, MAX_SIZE_OBJECTS};
 pub use view::{
+    CollectionFolderRequest, CollectionFolderView, CollectionMoveRequest, CollectionMoveView,
     CommitView, ContentQuery, EntryView, FileChangeView, FileDetailsView, FileHistorySizeView,
-    FileQuery, FolderPageView, FolderRequest, FolderView, HistoryEntryView, HistoryQuery,
-    HistoryView, LabelRequest, LibraryHistorySizeView, LibraryQuery, ListingQuery, ListingRequest,
-    MintRequest, MintView, MoveRequest, ObjectQuery, RemoveRequest, RestoreRequest, UploadQuery,
-    UploadView, UserView, VersionView, VersionsView,
+    FileQuery, FolderInput, FolderPageView, FolderRequest, FolderView, HistoryEntryView,
+    HistoryQuery, HistoryView, LabelRequest, LibraryHistorySizeView, LibraryQuery, ListingQuery,
+    ListingRequest, MintRequest, MintView, MoveInput, MoveRequest, ObjectQuery, RemoveRequest,
+    RestoreRequest, UploadQuery, UploadView, UserView, VersionView, VersionsView,
 };
 
 /// `tracing` target of this module's stdout-only diagnostics, outside `filesquid::activity`
@@ -157,7 +159,7 @@ pub const METADATA_READ_OPERATION: &str = "files.metadata.read";
 /// Journal operation of a rename (the display name only).
 pub const RENAME_OPERATION: &str = "files.rename";
 /// Journal operation of a copy (Task API-F2.2).
-pub const COPY_OPERATION: &str = "files.copy";
+pub const COPY_OPERATION: &str = "file.copy";
 /// Journal operation of a refused view (Task API-F2.2).
 pub const VIEW_OPERATION: &str = "files.view";
 /// Journal operation of a refused search (Task API-F2.3).
@@ -182,11 +184,11 @@ pub const FACTS_OPERATION: &str = "files.facts";
 /// Journal operation of a refused content read.
 pub const READ_OPERATION: &str = "files.read_content";
 /// Journal operation of an upload.
-pub const UPLOAD_OPERATION: &str = "files.upload";
+pub const UPLOAD_OPERATION: &str = "file.upload";
 /// Journal operation of a refused folder creation (a created folder writes nothing).
 pub const FOLDER_OPERATION: &str = "files.create_folder";
 /// Journal operation of a move.
-pub const MOVE_OPERATION: &str = "files.move";
+pub const MOVE_OPERATION: &str = "file.move";
 /// Journal operation of a removal.
 pub const REMOVE_OPERATION: &str = "files.remove";
 /// Journal operation of a restore.

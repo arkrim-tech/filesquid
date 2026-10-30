@@ -19,23 +19,26 @@
 
 use super::error::FileError;
 use super::media;
+use super::provenance::{Caller, Committed, Prepared, Write};
 use super::service::{change_model, FileService, Library};
 use super::upload::{canonical_error, parse_file_id};
 use super::view::UploadView;
 use crate::canonical::original::original_path_for;
 use crate::canonical::{
-    commit_staged_original, file_object_id, file_object_root, read_file_original, OwnerReadable,
+    commit_staged_original, file_object_id, file_object_root, read_file_original, BoundMeta,
+    OwnerReadable,
 };
-use filesquid_core::FileId;
+use filesquid_core::{FileId, OperationId, OperationKind};
 use filesquid_metadata::fact::Fact;
 use filesquid_metadata::file_record::FileRecord;
 use filesquid_metadata::import::attributes::Attributes;
 use filesquid_metadata::import::{
     Acquisition, ByteStorage, Host, ImportEntry, ImportMethod, SourceFile, SourceVolume,
 };
-use filesquid_ocfl::change::{ChangeError, ChangeModel, VersionMeta};
+use filesquid_ocfl::change::{ChangeError, ChangeModel};
 use filesquid_ocfl::storage::{StorageBackend, StorageError, StorageKey};
 use filesquid_ocfl::write::VersionReservations;
+use std::collections::BTreeMap;
 
 /// What a host gathered about one source file before reading it.
 #[derive(Clone, Debug)]
@@ -90,6 +93,11 @@ where
     /// write lock, which is taken for the commit only; whatever an attempt staged is cleared
     /// when it fails.
     ///
+    /// The commit is linked to the journal like every file write ([`super::Committed`]): kind
+    /// `import` under the import job's operation ID, with the commit's entries (`ocfl.commit`)
+    /// for the job to journal beside its own `import.file` entry. An import an earlier run
+    /// already committed answers no entries (API-S-036, API-S-028).
+    ///
     /// # Errors
     /// `invalid_request` with `size_mismatch` in its message when the source is not the size
     /// it reported, for a malformed file ID or key, or for a record the metadata module
@@ -104,12 +112,12 @@ where
         source: &D,
         key: &str,
         actor: &str,
-    ) -> Result<UploadView, FileError> {
-        let meta = self.meta(actor, None)?;
+    ) -> Result<Committed<UploadView>, FileError> {
+        let caller = import_caller(actor, &import);
         let library = self.library(&import.library_id)?;
         let file_id = parse_file_id(&import.file_id)?;
         if let Some(answer) = imported_before(&library, &import, &file_id).await? {
-            return Ok(answer);
+            return Ok(unjournaled(answer));
         }
         let root = file_object_root(&file_id).map_err(canonical_error)?;
         let object_id = file_object_id(&file_id);
@@ -123,8 +131,18 @@ where
             let _writing = library.writes.lock().await;
             if let Some(answer) = imported_before(&library, &import, &file_id).await? {
                 clear_staged(&model).await;
-                return Ok(answer);
+                return Ok(unjournaled(answer));
             }
+            let prepared = self.prepare(&Write {
+                caller: &caller,
+                kind: OperationKind::Import,
+                label: None,
+                operation: None,
+                library_id: &import.library_id,
+                object_id: &object_id,
+                metadata: false,
+                moves: BTreeMap::new(),
+            })?;
             let citation = Citation {
                 object_id: object_id.clone(),
                 version: "v1".to_string(),
@@ -132,7 +150,8 @@ where
                 sha256: staged.0,
                 size: staged.1,
             };
-            let committed = commit_import(&model, import, &file_id, &citation, (&created, meta));
+            let committed =
+                commit_import(&model, import, &file_id, &citation, (&created, prepared));
             let answer = committed.await?;
             library.remember(&object_id, &root);
             Ok(answer)
@@ -142,6 +161,28 @@ where
             clear_staged(&model).await;
         }
         imported
+    }
+}
+
+/// The caller of an import by `actor`: the import job's operation ID when it is a usable
+/// one, else none, so the commit gets a new operation ID. Pure.
+fn import_caller(actor: &str, import: &SourceImport) -> Caller {
+    let operation = import
+        .operation_id
+        .as_deref()
+        .and_then(|id| OperationId::new(id).ok());
+    match operation {
+        Some(id) => Caller::new(actor).with_operation(id),
+        None => Caller::new(actor),
+    }
+}
+
+/// The answer of an import an earlier run already committed: nothing new is committed, so
+/// there is nothing to journal for the commit. Pure.
+fn unjournaled(view: UploadView) -> Committed<UploadView> {
+    Committed {
+        view,
+        entries: Vec::new(),
     }
 }
 
@@ -179,8 +220,8 @@ async fn commit_import<B, R, S>(
     import: SourceImport,
     file_id: &FileId,
     citation: &Citation,
-    (created, meta): (&str, VersionMeta),
-) -> Result<UploadView, FileError>
+    (created, prepared): (&str, Prepared),
+) -> Result<Committed<UploadView>, FileError>
 where
     B: StorageBackend,
     R: VersionReservations,
@@ -189,10 +230,15 @@ where
     let library_id = import.library_id.clone();
     let record = import_record(import_entry(import, citation, created))?;
     let content = (citation.sha256.as_str(), citation.size);
+    let meta = BoundMeta {
+        meta: prepared.meta(),
+        bound: prepared.bound(),
+    };
     let receipt = commit_staged_original(model, file_id, &record, content, meta)
         .await
         .map_err(canonical_error)?;
-    Ok(view_of(library_id, file_id, receipt))
+    let view = view_of(library_id, file_id, receipt.clone());
+    Ok(prepared.finish(view, &receipt))
 }
 
 /// Clear what a failed import left in its object's staging area, so a quarantined import
@@ -294,6 +340,8 @@ fn view_of(
         object_id: receipt.object_id,
         version: receipt.version.to_string(),
         created: receipt.created,
+        collection_id: None,
+        path: None,
     }
 }
 
@@ -315,6 +363,8 @@ fn replayed(import: &SourceImport, record: &FileRecord) -> Result<UploadView, Fi
         object_id: entry.acquisition.object_id.clone(),
         version: entry.acquisition.object_version.clone(),
         created: entry.acquisition.recorded_at.clone(),
+        collection_id: None,
+        path: None,
     })
 }
 

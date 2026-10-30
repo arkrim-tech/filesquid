@@ -13,7 +13,7 @@ Feature: View operation, copy and storage use per collection
     When the owner copies "beta.jpg"
     Then the copy should have a new file identifier and be shown as "beta.jpg"
     And the copy's record should name the source as dcterms:source
-    And the copy should be journaled as "files.copy" with opaque IDs only
+    And the copy should be journaled as "file.copy" with opaque IDs only
 
   Scenario: A collection view sorts by size in both directions and pages stably
     When the owner pages through "Holidays" by "size" "ascending" one row at a time

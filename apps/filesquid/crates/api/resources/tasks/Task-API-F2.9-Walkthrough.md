@@ -1,6 +1,6 @@
 # Task API-F2.9 Walkthrough: PROV-O records, history routes and backfill
 
-Module task API-F2.9 of the `filesquid-api` [plan](../plan.md). Branch `feat/api-f2.9-history`, built on `feat/prov-o-history` (the `filesquid-prov` crate of PV-0.1 and PV-0.2). It follows ADR 040 Decisions 3 to 9 (`resources/architecture/040-prov-o-history.md`, added by the requirements branch) and the owner decisions on PROV-O: no `prov:Person`; the installation UUID is the agent `urn:uuid:<installation-uuid>` and the OCFL `user` address; a commit's journal entries go in the same OCFL commit at `provenance/<version>.journal.jsonl`.
+Module task API-F2.9 of the `filesquid-api` [plan](../plan.md). Branches `feat/api-f2.9-history` (first part) and `feat/api-f2.9-prov-records-history-routes` (second part, below), built on `feat/prov-o-history` (the `filesquid-prov` crate of PV-0.1 and PV-0.2). It follows ADR 040 Decisions 3 to 9 (`resources/architecture/040-prov-o-history.md`, added by the requirements branch) and the owner decisions on PROV-O: no `prov:Person`; the installation UUID is the agent `urn:uuid:<installation-uuid>` and the OCFL `user` address; a commit's journal entries go in the same OCFL commit at `provenance/<version>.journal.jsonl`.
 
 ## API-S-028: PROV-O record per commit and journal linkage
 
@@ -418,12 +418,329 @@ cd ui && npm run contract:types && npx vitest run tests/unit/contract.test.ts
 
 The BDD run writes JUnit to `crates/api/tests/allure-results/cucumber-junit.xml` ([ADR 017](../../../../../../resources/architecture/017-test-runners-and-reporting.md)).
 
+## Second part: import commits and the F-067 scenarios
+
+Branch `feat/api-f2.9-prov-records-history-routes`. After the first part, API-F2.8 linked the file and metadata route commits ([walkthrough](./Task-API-F2.8-Walkthrough.md)), and API-F2.16 merged the import rework, whose route (API-S-036 Import route) "leaves the PROV-O record to API-S-029".
+
+### What changed
+
+- **Import commits** ([`src/files/import.rs`](../../src/files/import.rs), [`crates/native/src/import/`](../../../native/src/import/job.rs)):
+  - `FileService::import_original` prepares its commit through `files::provenance`, like every other file write. The kind is `import` and the operation ID is the import job's. With provenance installed, the version `user` is the installation and the version carries its PROV-O record and journal entries.
+  - It answers `Committed<UploadView>`. An import that an earlier run already committed answers no entries.
+  - `canonical::commit_staged_original` takes a `BoundMeta`, and its bound files pass the same journal-file checks as the other commits.
+  - The import write has no route entry of its own (`Write::operation` is now optional), because the job journals `import.file`.
+  - The native job journals the commit's entries (`ocfl.commit`) right after the commit and before the file is registered, so a registration retried later, which replays the import with no entries, never loses them. That covers the retry only. A crash between the OCFL publication and the journal write still leaves the operational journal without those entries, because the replay answers none. With provenance installed, the version holds them in `provenance/<version>.journal.jsonl`, from which the journal rebuild (CL-1.9) restores them with the same IDs. Writing them back at library open, as the catalog reconcile does for snapshot commits (ADR 040 Decision 6, DE-S-011), is not done for import commits yet. Its `import.file` entry now names the file's object version (`object_ref`).
+- **API-S-031 for file-route commits (API-F2.12):** `integration_engine_warnings` shows that an OCFL engine warning raised during a move (a lease takeover) is journaled with the move's operation ID. The test fails when the commit's activity span is removed. It runs in its own binary, because `tracing` caches callsite interest for the whole process. See the [API-F2.12 walkthrough](./Task-API-F2.12-Walkthrough.md).
+- **`prov_o_history_F-067.feature` bound** ([`tests/support/prov_steps.rs`](../../tests/support/prov_steps.rs)) for what the router can drive:
+  - one record in the version of each upload, copy, rename, move, delete, metadata edit, reinstate, revert and label commit, with exactly one activity of its kind naming the operation ID, the object version and the commit's journal entry IDs;
+  - the entities and relations of a metadata edit;
+  - the journal join without timestamps;
+  - no version or record for a no-op save, a refused call or a single-file download;
+  - an ordinary copy of the storage root read with `serde_json` alone.
+- **Also bound:** the F-061 scenario "A committed operation carries its journal entries in the same OCFL commit".
+
+### Not delivered, and why
+
+- **The history object.** Exports, scrubbed exports, ZIP downloads and share or publication outputs have no route yet; the ZIP download is part of API-F2.2, which is open. No document fixes the history object's OCFL identifier or its path in the storage root. This is an owner decision to take before the first producer lands.
+- **Scenarios left unbound in F-067:**
+  - Operations only the desktop catalog commits (import through the catalog, hide, unhide, purge, restore from the recently deleted, catalog organisation) and the restart scenario; the desktop harness runs these.
+  - The repair follow-up, the rebase and the backfill, which `prov_o_history_records_routes_and_backfill_API-S-029.feature` and the unit tests cover.
+  - The crash reconciliation at library open (DE-S-011).
+  - Sharing with a preview, which has no route.
+- **Per-file read permission on the history routes** (API-S-029) still arrives with server accounts. The desktop owner reads every file.
+- **Import entries after a crash.** An import commit's journal entries lost to a crash between publication and the journal write come back through the journal rebuild (CL-1.9), not at library open: the open-time reconcile of ADR 040 Decision 6 covers the catalog's snapshot commits only.
+
+### TDD
+
+The import test failed to compile before the change:
+
+```text
+1 error: could not compile `filesquid-native` (test "unit_import_file") due to 6 previous errors
+      3 error[E0609]: no field `entries` on type `UploadView`
+      3 error[E0609]: no field `view` on type `UploadView`
+```
+
+The engine-warning test with the commit's activity span removed (`cargo test -p filesquid-api --test integration_engine_warnings`):
+
+```text
+thread 'an_engine_warning_during_a_file_route_commit_carries_its_operation_id' (25961) panicked at crates/api/tests/integration/engine_warnings.rs:54:5:
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+```
+
+The F-067 steps were bound after the code they cover existed (API-F2.8 and this task's first part). They pass, as the output below shows.
+
+### Test output
+
+`cargo test -p filesquid-native --features desktop --locked --test unit_import_file --test unit_import_job`:
+
+```text
+Running tests/unit/import_file.rs (<target>/debug/deps/unit_import_file-ac65c56891808d8f)
+test a_size_mismatch_and_a_changed_source_are_retried_within_the_job ... ok
+test a_missing_source_is_refused_without_retry ... ok
+test a_size_that_is_not_the_size_read_is_refused_and_nothing_is_published ... ok
+test a_source_that_cannot_be_read_while_staged_is_refused_as_source_unreadable ... ok
+test a_source_that_changes_between_its_two_reads_is_refused_as_source_changed ... ok
+test the_source_entity_tag_changes_when_the_file_is_rewritten ... ok
+test an_import_stores_the_original_under_its_uuid_with_its_record_in_one_version ... ok
+test an_import_commit_is_linked_to_the_journal_and_carries_its_record ... ok
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+     Running tests/unit/import_job.rs (<target>/debug/deps/unit_import_job-8c310ba23c2c1a45)
+test a_deleted_file_s_path_counts_as_taken ... ok
+test a_file_committed_before_a_crash_is_answered_not_imported_twice ... ok
+test a_crash_between_a_file_s_object_and_its_registration_resumes_and_registers_once ... ok
+test a_file_that_keeps_failing_is_quarantined_after_five_attempts_and_the_rest_go_on ... ok
+test a_folder_is_imported_as_one_job_with_a_checkpoint_per_file ... ok
+test a_folder_is_listed_in_one_stable_order_with_its_subfolders ... ok
+test a_folder_imported_again_is_numbered_beside_the_first ... ok
+test a_plan_and_its_manifest_survive_a_restart_and_one_operation_has_one_job ... ok
+test a_file_the_index_keeps_refusing_to_register_suspends_the_job_and_keeps_its_intent ... ok
+test a_plan_without_a_destination_fails_its_job_as_destination_required ... ok
+test a_numbered_name_over_255_bytes_is_quarantined_as_name_too_long ... ok
+test a_source_whose_numbers_are_all_taken_is_quarantined_as_path_suffix_exhausted ... ok
+test checkpoints_backoff_and_reserve_follow_their_rules ... ok
+test a_queued_job_without_a_plan_is_failed_not_left_pending ... ok
+test picked_files_are_imported_each_with_itself_as_its_root ... ok
+test a_quit_suspends_between_files_and_the_resume_imports_only_the_rest ... ok
+test what_cannot_be_listed_is_kept_with_its_code ... ok
+test two_picked_folders_of_one_name_land_beside_each_other ... ok
+test a_file_that_streams_longer_than_the_lease_keeps_the_job_s_lease_alive ... ok
+test the_worker_runs_every_unfinished_job_beyond_one_queue_full ... ok
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 10.71s
+```
+
+`cargo test -p filesquid-api --locked --test integration_engine_warnings`:
+
+```text
+Running tests/integration/engine_warnings.rs (<target>/debug/deps/integration_engine_warnings-40656c2a64560c56)
+test an_engine_warning_during_a_file_route_commit_carries_its_operation_id ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+```
+
+`cargo test -p filesquid-api --locked --test features` (the F-067 feature and the run summary):
+
+```text
+Feature: PROV-O history of every version and change
+  Scenario Outline: Each file-changing operation commits exactly one PROV-O record in its own version
+   ✔> Given a desktop library with no c2pa module
+   ✔> And the installation UUID of this FileSquid installation is known
+   ✔  Given a file in the library
+   ?  When I import it
+      Step skipped: tests/features/prov_o_history_F-067.feature:19:5
+  Scenario Outline: Each file-changing operation commits exactly one PROV-O record in its own version
+   ✔> Given a desktop library with no c2pa module
+   ✔> And the installation UUID of this FileSquid installation is known
+   ✔  Given a file in the library
+   ✔  When I upload it
+   ✔  Then exactly one new OCFL version should be committed
+   ✔  And that version should contain its PROV-O record named after the new version under "provenance/"
+   ✔  And the record should hold exactly one prov:Activity of kind "upload" with the operation ID and the object@version
+   ✔  And the record should name the journal entry IDs of that commit
+  Scenario Outline: Each file-changing operation commits exactly one PROV-O record in its own version
+   ✔> Given a desktop library with no c2pa module
+   ✔> And the installation UUID of this FileSquid installation is known
+   ✔  Given a file in the library
+   ✔  When I copy it
+   ✔  Then exactly one new OCFL version should be committed
+   ✔  And that version should contain its PROV-O record named after the new version under "provenance/"
+   ✔  And the record should hold exactly one prov:Activity of kind "copy" with the operation ID and the object@version
+   ✔  And the record should name the journal entry IDs of that commit
+  Scenario Outline: Each file-changing operation commits exactly one PROV-O record in its own version
+   ✔> Given a desktop library with no c2pa module
+   ✔> And the installation UUID of this FileSquid installation is known
+   ✔  Given a file in the library
+   ?  When I unhide it
+      Step skipped: tests/features/prov_o_history_F-067.feature:19:5
+  Scenario Outline: Each file-changing operation commits exactly one PROV-O record in its own version
+   ✔> Given a desktop library with no c2pa module
+   ✔> And the installation UUID of this FileSquid installation is known
+   ✔  Given a file in the library
+   ✔  When I reinstate it
+   ✔  Then exactly one new OCFL version should be committed
+   ✔  And that version should contain its PROV-O record named after the new version under "provenance/"
+   ✔  And the record should hold exactly one prov:Activity of kind "reinstate" with the operation ID and the object@version
+   ✔  And the record should name the journal entry IDs of that commit
+  Scenario Outline: Each file-changing operation commits exactly one PROV-O record in its own version
+   ✔> Given a desktop library with no c2pa module
+   ✔> And the installation UUID of this FileSquid installation is known
+   ✔  Given a file in the library
+   ✔  When I label it
+   ✔  Then exactly one new OCFL version should be committed
+   ✔  And that version should contain its PROV-O record named after the new version under "provenance/"
+   ✔  And the record should hold exactly one prov:Activity of kind "label" with the operation ID and the object@version
+   ✔  And the record should name the journal entry IDs of that commit
+  Scenario Outline: Each file-changing operation commits exactly one PROV-O record in its own version
+   ✔> Given a desktop library with no c2pa module
+   ✔> And the installation UUID of this FileSquid installation is known
+   ✔  Given a file in the library
+   ?  When I add to a collection it
+      Step skipped: tests/features/prov_o_history_F-067.feature:19:5
+  Scenario Outline: Each file-changing operation commits exactly one PROV-O record in its own version
+   ✔> Given a desktop library with no c2pa module
+   ✔> And the installation UUID of this FileSquid installation is known
+   ✔  Given a file in the library
+   ✔  When I rename it
+   ✔  Then exactly one new OCFL version should be committed
+   ✔  And that version should contain its PROV-O record named after the new version under "provenance/"
+   ✔  And the record should hold exactly one prov:Activity of kind "rename" with the operation ID and the object@version
+   ✔  And the record should name the journal entry IDs of that commit
+  Scenario Outline: Each file-changing operation commits exactly one PROV-O record in its own version
+   ✔> Given a desktop library with no c2pa module
+   ✔> And the installation UUID of this FileSquid installation is known
+   ✔  Given a file in the library
+   ✔  When I move it
+   ✔  Then exactly one new OCFL version should be committed
+   ✔  And that version should contain its PROV-O record named after the new version under "provenance/"
+   ✔  And the record should hold exactly one prov:Activity of kind "move" with the operation ID and the object@version
+   ✔  And the record should name the journal entry IDs of that commit
+  Scenario Outline: Each file-changing operation commits exactly one PROV-O record in its own version
+   ✔> Given a desktop library with no c2pa module
+   ✔> And the installation UUID of this FileSquid installation is known
+   ✔  Given a file in the library
+   ?  When I hide it
+      Step skipped: tests/features/prov_o_history_F-067.feature:19:5
+  Scenario Outline: Each file-changing operation commits exactly one PROV-O record in its own version
+   ✔> Given a desktop library with no c2pa module
+   ✔> And the installation UUID of this FileSquid installation is known
+   ✔  Given a file in the library
+   ✔  When I delete it
+   ✔  Then exactly one new OCFL version should be committed
+   ✔  And that version should contain its PROV-O record named after the new version under "provenance/"
+   ✔  And the record should hold exactly one prov:Activity of kind "delete" with the operation ID and the object@version
+   ✔  And the record should name the journal entry IDs of that commit
+  Scenario Outline: Each file-changing operation commits exactly one PROV-O record in its own version
+   ✔> Given a desktop library with no c2pa module
+   ✔> And the installation UUID of this FileSquid installation is known
+   ✔  Given a file in the library
+   ?  When I restore it
+      Step skipped: tests/features/prov_o_history_F-067.feature:19:5
+  Scenario Outline: Each file-changing operation commits exactly one PROV-O record in its own version
+   ✔> Given a desktop library with no c2pa module
+   ✔> And the installation UUID of this FileSquid installation is known
+   ✔  Given a file in the library
+   ?  When I purge it
+      Step skipped: tests/features/prov_o_history_F-067.feature:19:5
+  Scenario Outline: Each file-changing operation commits exactly one PROV-O record in its own version
+   ✔> Given a desktop library with no c2pa module
+   ✔> And the installation UUID of this FileSquid installation is known
+   ✔  Given a file in the library
+   ✔  When I edit the metadata it
+   ✔  Then exactly one new OCFL version should be committed
+   ✔  And that version should contain its PROV-O record named after the new version under "provenance/"
+   ✔  And the record should hold exactly one prov:Activity of kind "metadata.edit" with the operation ID and the object@version
+   ✔  And the record should name the journal entry IDs of that commit
+  Scenario Outline: Each file-changing operation commits exactly one PROV-O record in its own version
+   ✔> Given a desktop library with no c2pa module
+   ✔> And the installation UUID of this FileSquid installation is known
+   ✔  Given a file in the library
+   ✔  When I revert it
+   ✔  Then exactly one new OCFL version should be committed
+   ✔  And that version should contain its PROV-O record named after the new version under "provenance/"
+   ✔  And the record should hold exactly one prov:Activity of kind "revert" with the operation ID and the object@version
+   ✔  And the record should name the journal entry IDs of that commit
+  Scenario: Entities and relations describe the change
+   ✔> Given a desktop library with no c2pa module
+   ✔> And the installation UUID of this FileSquid installation is known
+   ✔  Given a file whose metadata record has one earlier version
+   ✔  When I edit its metadata
+   ✔  Then the new metadata state should be a prov:Entity with object ID, version, logical path and SHA-256
+   ✔  And it should be prov:wasGeneratedBy the activity and prov:wasDerivedFrom the previous metadata state
+  Scenario: A purge invalidates the removed state
+   ✔> Given a desktop library with no c2pa module
+   ✔> And the installation UUID of this FileSquid installation is known
+   ?  Given a deleted file
+      Step skipped: tests/features/prov_o_history_F-067.feature:50:5
+  Scenario: The owner is the installation agent, not a person
+   ✔> Given a desktop library with no c2pa module
+   ✔> And the installation UUID of this FileSquid installation is known
+   ?  When I import a file
+      Step skipped: tests/features/prov_o_history_F-067.feature:55:5
+  Scenario: The installation UUID is the same across restarts
+   ✔> Given a desktop library with no c2pa module
+   ✔> And the installation UUID of this FileSquid installation is known
+   ?  Given I imported a file
+      Step skipped: tests/features/prov_o_history_F-067.feature:62:5
+  Scenario: Journal and PROV-O join without timestamps
+   ✔> Given a desktop library with no c2pa module
+   ✔> And the installation UUID of this FileSquid installation is known
+   ✔  When I rename a file
+   ✔  Then the journal should hold one "ocfl.commit" entry with the operation ID and object reference of the file object and the new version
+   ✔  And the PROV-O activity should list that entry's ID
+  Scenario: A no-op save produces no version and no record
+   ✔> Given a desktop library with no c2pa module
+   ✔> And the installation UUID of this FileSquid installation is known
+   ✔  Given a file whose metadata is unchanged
+   ✔  When I save its metadata without changes
+   ✔  Then no OCFL version should be committed
+   ✔  And no PROV-O record should be written
+  Scenario: A refused attempt stays in the journal only
+   ✔> Given a desktop library with no c2pa module
+   ✔> And the installation UUID of this FileSquid installation is known
+   ✔  When a caller without the per-launch token tries to rename a file
+   ✔  Then the journal should record the refusal
+   ✔  And no PROV-O record should be written
+  Scenario Outline: Exports, scrubbed outputs and publications are recorded in the library's history object
+   ✔> Given a desktop library with no c2pa module
+   ✔> And the installation UUID of this FileSquid installation is known
+   ?  When I export a folder as a ZIP download
+      Step skipped: tests/features/prov_o_history_F-067.feature:84:5
+  Scenario Outline: Exports, scrubbed outputs and publications are recorded in the library's history object
+   ✔> Given a desktop library with no c2pa module
+   ✔> And the installation UUID of this FileSquid installation is known
+   ?  When I export a file with metadata scrubbing
+      Step skipped: tests/features/prov_o_history_F-067.feature:84:5
+  Scenario Outline: Exports, scrubbed outputs and publications are recorded in the library's history object
+   ✔> Given a desktop library with no c2pa module
+   ✔> And the installation UUID of this FileSquid installation is known
+   ?  When I publish a public file to my AT Protocol account
+      Step skipped: tests/features/prov_o_history_F-067.feature:84:5
+  Scenario: A single-file download is journaled only
+   ✔> Given a desktop library with no c2pa module
+   ✔> And the installation UUID of this FileSquid installation is known
+   ✔  When I download one file
+   ✔  Then the journal should record a "file.download" entry with the file ID and version
+   ✔  And no PROV-O record should be written
+   ✔  And no OCFL version should be committed
+  Scenario: A repair is followed by a provenance-only version
+   ✔> Given a desktop library with no c2pa module
+   ✔> And the installation UUID of this FileSquid installation is known
+   ?  Given an object whose head has no version inventory
+      Step skipped: tests/features/prov_o_history_F-067.feature:101:5
+  Scenario: A rebased commit regenerates its record
+   ✔> Given a desktop library with no c2pa module
+   ✔> And the installation UUID of this FileSquid installation is known
+   ?  Given another writer committed to the same object after my commit was staged
+      Step skipped: tests/features/prov_o_history_F-067.feature:106:5
+  Scenario: Versions committed before the history existed are reconstructed once
+   ✔> Given a desktop library with no c2pa module
+   ✔> And the installation UUID of this FileSquid installation is known
+   ?  Given an object with three versions and no PROV-O records
+      Step skipped: tests/features/prov_o_history_F-067.feature:111:5
+  Scenario: A crash between publication and the journal write leaves no dangling link
+   ✔> Given a desktop library with no c2pa module
+   ✔> And the installation UUID of this FileSquid installation is known
+   ?  Given a commit whose OCFL version is published
+      Step skipped: tests/features/prov_o_history_F-067.feature:121:5
+  Scenario: The history survives an ordinary copy
+   ✔> Given a desktop library with no c2pa module
+   ✔> And the installation UUID of this FileSquid installation is known
+   ✔  Given a library with recorded history
+   ✔  When I close FileSquid and copy the storage root with ordinary file tools
+   ✔  Then a JSON parser alone should read every activity, entity and agent from the copy
+  Scenario: Shared PROV-O is redacted
+   ✔> Given a desktop library with no c2pa module
+   ✔> And the installation UUID of this FileSquid installation is known
+   ?  Given a file with recorded history that includes its original file name
+      Step skipped: tests/features/prov_o_history_F-067.feature:132:5
+424 scenarios (338 passed, 86 skipped)
+1709 steps (1623 passed, 86 skipped)
+```
+
 ## Gaps
 
 - **Wired: desktop catalog provenance.** The desktop catalog's snapshot commits already record their PROV-O history: the desktop host builds `SqliteCatalog::with_provenance` (Task DE-0.10), which uses `CommitRecorder` for every snapshot version it publishes.
-- **Not wired: import and the file routes.** Import and upload (API-F1.3) and the file operations (API-F1.4) are not built yet, so their commits do not use `CommitRecorder` yet.
+- **Wired: import and the file routes.** The file and metadata routes since API-F2.8, and the import commit since the second part above.
 - **Wired: the history source, the repair follow-up and the backfill** ([host wiring walkthrough](../../../desktop/resources/tasks/Task-FS-2.8-host-wiring-Walkthrough.md)). The desktop host installs `OcflRootsHistory` over the storage roots of every library its catalog serves, so the history routes answer from a real desktop library. It builds `LocalLibraryService::with_provenance` through `local_library_service`, injecting the installation UUID (DE-S-012) and the journal store. It runs `Backfill` over each library at every launch, as a registered, journaled job that app exit cancels. Still open: the owner-chosen roots that DE-1.1 opens are not listed by the history source yet, and DE-1.1 supplies the persistent repair ledger when it wires the repair route.
-- **No backfill route.** The admin route `POST /api/v1/admin/history/backfill` named in API-S-029 is not built. The desktop runs the job at launch instead (`SqliteCatalog::backfill_history`), and the route can call the same function.
+- **Backfill route.** `POST /api/v1/admin/history/backfill` was added with DE-1.1 (see the plan's API-F2.9 row).
 - **Backfill heartbeat granularity.** The run sends a heartbeat after each object and between staging and committing it. Staging the records of one object is a single `filesquid-prov` call (`stage_reconstructed`), so there is no heartbeat for each staged record. The per-run cap (`DEFAULT_MAX_VERSIONS`, 1000) keeps that call short.
 - **The index is rebuilt on every request.** `OcflHistory` reads every record of the storage root each time (bounded). A cached index that is invalidated by commit events is left for later.
 - **Read permission is per host, not per file.** The routes authorise `history.read` on the host. Per-file read permission arrives with server accounts (API-F1.9).

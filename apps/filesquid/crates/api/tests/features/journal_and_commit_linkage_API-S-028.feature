@@ -20,10 +20,10 @@ Feature: Journal and commit linkage of the file and metadata routes
 
     Examples:
       | operation                                  | entry              | kind          |
-      | uploads a new version of the uploaded file | files.upload       | upload        |
-      | copies the uploaded file                   | files.copy         | copy          |
+      | uploads a new version of the uploaded file | file.upload        | upload        |
+      | copies the uploaded file                   | file.copy          | copy          |
       | renames the uploaded file                  | files.rename       | rename        |
-      | moves the edited file                      | files.move         | move          |
+      | moves the edited file                      | file.move          | move          |
       | removes the edited file                    | files.remove       | delete        |
       | restores the edited file's first version   | files.restore      | reinstate     |
       | sets a statement on the uploaded file      | files.metadata.set | metadata.edit |

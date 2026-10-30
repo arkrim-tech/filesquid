@@ -7,9 +7,18 @@
 import { describe, expect, it } from "vitest";
 import { ApiError } from "../../src/api/client";
 import { MemoryFileSource } from "../../src/files/memory-source";
-import { MAX_UPLOAD_BYTES, type FileLocation, type FileRef } from "../../src/files/model";
+import {
+  MAX_UPLOAD_BYTES,
+  type FileLocation,
+  type FileRef,
+  type UploadTarget,
+} from "../../src/files/model";
 
 const LOCATION: FileLocation = { library_id: "lib", object_id: "obj", prefix: "" };
+/** A collection of the library. */
+const COLLECTION = "9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d";
+/** Where uploads go: the root of that collection. */
+const TARGET: UploadTarget = { library_id: "lib", collection_id: COLLECTION };
 
 /** A source holding a small tree at v1. */
 function source(): MemoryFileSource {
@@ -114,11 +123,40 @@ describe("MemoryFileSource files", () => {
   });
 });
 
+describe("MemoryFileSource upload destination", () => {
+  const facts = { name: "new.txt", name_normalization: "nfc" } as const;
+
+  it("refuses an upload without a collection as the API does, and keeps nothing", async () => {
+    const s = source();
+    const none = { library_id: "lib" } as unknown as UploadTarget;
+    await expect(s.upload(none, facts, new Blob(["x"]))).rejects.toMatchObject({
+      status: 400,
+      code: "invalid_request",
+    });
+    const blank = { library_id: "lib", collection_id: "" };
+    await expect(s.upload(blank, facts, new Blob(["x"]))).rejects.toMatchObject({ status: 400 });
+    expect(s.uploads).toEqual([]);
+  });
+
+  it("answers the collection and the path the file got, <folder>/<name>", async () => {
+    const s = source();
+    const root = await s.upload(TARGET, facts, new Blob(["a"]));
+    expect(root).toMatchObject({ collection_id: COLLECTION, path: "new.txt" });
+    const target = { ...TARGET, folder: "Summer/Beach" };
+    const nested = await s.upload(target, { ...facts, name: "b.txt" }, new Blob(["b"]));
+    expect(nested).toMatchObject({ collection_id: COLLECTION, path: "Summer/Beach/b.txt" });
+    expect(s.uploads.map((u) => [u.collection_id, u.path])).toEqual([
+      [COLLECTION, "new.txt"],
+      [COLLECTION, "Summer/Beach/b.txt"],
+    ]);
+  });
+});
+
 describe("MemoryFileSource writes", () => {
   it("an upload creates the file's own object at v1 and leaves the object shown as it was", async () => {
     const s = source();
     const facts = { name: "new.txt", name_normalization: "nfc", media_type: "text/plain" } as const;
-    const commit = await s.upload(LOCATION, facts, new Blob(["hello"]));
+    const commit = await s.upload(TARGET, facts, new Blob(["hello"]));
     expect(commit.file_id).toMatch(
       /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
     );
@@ -143,15 +181,15 @@ describe("MemoryFileSource writes", () => {
 
   it("an upload naming a file_id is a new version of that file; unchanged bytes are a conflict", async () => {
     const s = source();
-    const first = await s.upload(LOCATION, { name: "a.txt" }, new Blob(["one"]));
+    const first = await s.upload(TARGET, { name: "a.txt" }, new Blob(["one"]));
     const again = { name: "a.txt", file_id: first.file_id };
-    const second = await s.upload(LOCATION, again, new Blob(["two"]), { revision: "v1" });
+    const second = await s.upload(TARGET, again, new Blob(["two"]), { revision: "v1" });
     expect(second).toMatchObject({ file_id: first.file_id, version: "v2" });
     await expect(
-      s.upload(LOCATION, again, new Blob(["two"]), { revision: "v2" }),
+      s.upload(TARGET, again, new Blob(["two"]), { revision: "v2" }),
     ).rejects.toMatchObject({ code: "conflict" });
     const unknown = { name: "a.txt", file_id: "0b7e2c1a-3d4f-4a5b-8c6d-7e8f9a0b1c2d" };
-    await expect(s.upload(LOCATION, unknown, new Blob(["x"]))).rejects.toMatchObject({
+    await expect(s.upload(TARGET, unknown, new Blob(["x"]))).rejects.toMatchObject({
       code: "not_found",
     });
   });
@@ -176,7 +214,7 @@ describe("MemoryFileSource writes", () => {
     ["a file_id that is not a UUID v4", { name: "a.txt", file_id: "not-a-uuid" }],
   ])("refuses %s as invalid_request without a version", async (_case, facts) => {
     const s = source();
-    await expect(s.upload(LOCATION, facts, new Blob(["x"]))).rejects.toMatchObject({
+    await expect(s.upload(TARGET, facts, new Blob(["x"]))).rejects.toMatchObject({
       code: "invalid_request",
     });
     expect(s.uploads).toEqual([]);
@@ -186,7 +224,7 @@ describe("MemoryFileSource writes", () => {
     const s = source();
     const times = ["2024-02-29T00:00:00Z", "0004-02-29T12:00:00Z", "2016-12-31T23:59:60.5Z"];
     for (const [i, last_modified] of times.entries()) {
-      await s.upload(LOCATION, { name: `t${i}.txt`, last_modified }, new Blob(["x"]));
+      await s.upload(TARGET, { name: `t${i}.txt`, last_modified }, new Blob(["x"]));
     }
     expect(s.uploads.map((u) => u.last_modified)).toEqual(times);
   });
@@ -195,7 +233,7 @@ describe("MemoryFileSource writes", () => {
     const s = source();
     const body = new Blob(["x"]);
     Object.defineProperty(body, "size", { value: MAX_UPLOAD_BYTES + 1 });
-    await expect(s.upload(LOCATION, { name: "big.bin" }, body)).rejects.toMatchObject({
+    await expect(s.upload(TARGET, { name: "big.bin" }, body)).rejects.toMatchObject({
       code: "invalid_request",
     });
     expect(s.uploads).toEqual([]);
@@ -203,10 +241,10 @@ describe("MemoryFileSource writes", () => {
 
   it("gives every upload a later created time, a new version of a file included", async () => {
     const s = source();
-    const first = await s.upload(LOCATION, { name: "a.txt" }, new Blob(["one"]));
+    const first = await s.upload(TARGET, { name: "a.txt" }, new Blob(["one"]));
     const again = { name: "a.txt", file_id: first.file_id };
-    const second = await s.upload(LOCATION, again, new Blob(["two"]), { revision: "v1" });
-    const third = await s.upload(LOCATION, again, new Blob(["three"]), { revision: "v2" });
+    const second = await s.upload(TARGET, again, new Blob(["two"]), { revision: "v1" });
+    const third = await s.upload(TARGET, again, new Blob(["three"]), { revision: "v2" });
     expect(Date.parse(second.created)).toBeGreaterThan(Date.parse(first.created));
     expect(Date.parse(third.created)).toBeGreaterThan(Date.parse(second.created));
   });
@@ -249,7 +287,7 @@ describe("MemoryFileSource writes", () => {
       status: 409,
     });
     await expect(s.createFolder(LOCATION, "New", stale)).rejects.toMatchObject({ status: 409 });
-    const upload = s.upload(LOCATION, { name: "n.txt" }, new Blob(["n"]), { revision: "v1" });
+    const upload = s.upload(TARGET, { name: "n.txt" }, new Blob(["n"]), { revision: "v1" });
     await expect(upload).rejects.toMatchObject({ status: 409 });
     expect(s.head).toBe("v1");
   });

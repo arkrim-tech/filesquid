@@ -109,7 +109,26 @@ library_input!(
     super::view::LabelRequest,
     super::statements::RenameRequest,
     super::copy::CopyRequest,
+    super::view::CollectionMoveRequest,
 );
+
+impl CommandInput for super::view::FolderInput {
+    fn library_id(&self) -> &str {
+        match self {
+            Self::InObject(request) => &request.library_id,
+            Self::Collection(request) => &request.library_id,
+        }
+    }
+}
+
+impl CommandInput for super::view::MoveInput {
+    fn library_id(&self) -> &str {
+        match self {
+            Self::InObject(request) => &request.library_id,
+            Self::Collection(request) => &request.library_id,
+        }
+    }
+}
 
 /// A command whose envelope was checked.
 #[derive(Clone, Debug)]

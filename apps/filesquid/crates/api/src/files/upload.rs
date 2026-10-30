@@ -66,13 +66,21 @@ where
         let library = self.library(&query.library_id)?;
         let _writing = library.writes.lock().await;
         let backend = library.files.backend.as_ref();
-        let target = upload_target(backend, query.file_id.as_deref()).await?;
+        let target = match resumable_target(backend, &query).await? {
+            Ok(target) => target,
+            Err(view) => {
+                return Ok(Committed {
+                    view,
+                    entries: Vec::new(),
+                })
+            }
+        };
         check_target_revision(&target, expected)?;
         let prepared = self.prepare(&Write {
             caller: &caller,
             kind: OperationKind::Upload,
             label,
-            operation: UPLOAD_OPERATION,
+            operation: Some(UPLOAD_OPERATION),
             library_id: &query.library_id,
             object_id: &target.object_id,
             metadata: false,
@@ -107,6 +115,8 @@ where
             object_id: receipt.object_id.clone(),
             version: receipt.version.to_string(),
             created: receipt.created.clone(),
+            collection_id: None,
+            path: None,
         };
         Ok(prepared.finish(view, &receipt))
     }
@@ -141,6 +151,74 @@ where
     }
 }
 
+/// The file an upload writes, or, as `Err`, the answer of the new file an earlier, unfinished
+/// run of the same operation already committed. Storage I/O.
+///
+/// # Errors
+/// As [`reserved_new_file`], [`committed_before`] and [`upload_target`].
+async fn resumable_target<B: StorageBackend>(
+    backend: &B,
+    query: &UploadQuery,
+) -> Result<Result<Target, UploadView>, FileError> {
+    let reserved = reserved_new_file(query)?;
+    if let Some(view) = committed_before(backend, &query.library_id, reserved.as_ref()).await? {
+        return Ok(Err(view));
+    }
+    let target = upload_target(backend, query.file_id.as_deref(), reserved).await?;
+    Ok(Ok(target))
+}
+
+/// The file ID the upload's operation reserved for a new file, if any; an upload of new
+/// content for an existing file reserves none. Pure.
+///
+/// # Errors
+/// `invalid_request` for a reserved ID that is not a UUID v4.
+fn reserved_new_file(query: &UploadQuery) -> Result<Option<FileId>, FileError> {
+    match (&query.file_id, &query.reserved_file_id) {
+        (None, Some(id)) => parse_file_id(id).map(Some),
+        _ => Ok(None),
+    }
+}
+
+/// The answer of a new file an earlier, unfinished run of the same operation already
+/// committed under its reserved ID (a crash between the object and its registration), so the
+/// retry completes it once instead of writing it again; `None` when nothing is committed under
+/// that ID yet. Storage I/O.
+///
+/// # Errors
+/// A storage failure reading the object; `internal` for an object that does not decode as a
+/// file object or has no version.
+pub(super) async fn committed_before<B: StorageBackend>(
+    backend: &B,
+    library_id: &str,
+    reserved: Option<&FileId>,
+) -> Result<Option<UploadView>, FileError> {
+    let Some(file_id) = reserved else {
+        return Ok(None);
+    };
+    let root = file_object_root(file_id).map_err(canonical_error)?;
+    let existing = read_file_original(backend, &OwnerReadable, file_id)
+        .await
+        .map_err(canonical_error)?;
+    if existing.is_none() {
+        return Ok(None);
+    }
+    let object = Object::open(backend, &root).await?;
+    let head = filesquid_ocfl::read::version_history(object.inventory())
+        .into_iter()
+        .last()
+        .ok_or_else(|| FileError::internal("a committed object has no version"))?;
+    Ok(Some(UploadView {
+        library_id: library_id.to_string(),
+        file_id: file_id.as_str().to_string(),
+        object_id: file_object_id(file_id),
+        version: head.version.to_string(),
+        created: head.created,
+        collection_id: None,
+        path: None,
+    }))
+}
+
 /// The normalisation form of the uploaded name: the one the client stated, or NFC for an
 /// ASCII name.
 fn name_form(query: &UploadQuery) -> Result<NameForm, FileError> {
@@ -155,10 +233,12 @@ fn name_form(query: &UploadQuery) -> Result<NameForm, FileError> {
 async fn upload_target<B: StorageBackend>(
     backend: &B,
     file_id: Option<&str>,
+    reserved: Option<FileId>,
 ) -> Result<Target, FileError> {
-    let (file_id, existing) = match file_id {
-        Some(id) => (parse_file_id(id)?, true),
-        None => (mint_file_id()?, false),
+    let (file_id, existing) = match (file_id, reserved) {
+        (Some(id), _) => (parse_file_id(id)?, true),
+        (None, Some(reserved)) => (reserved, false),
+        (None, None) => (mint_file_id()?, false),
     };
     let root = file_object_root(&file_id).map_err(canonical_error)?;
     let object_id = file_object_id(&file_id);

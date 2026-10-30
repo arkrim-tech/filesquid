@@ -156,6 +156,10 @@ name = "integration_file_commands"
 path = "tests/integration/file_commands.rs"
 
 [[test]]
+name = "integration_home_collections"
+path = "tests/integration/home_collections.rs"
+
+[[test]]
 name = "integration_library_facts"
 path = "tests/integration/library_facts.rs"
 
@@ -178,6 +182,10 @@ path = "tests/integration/metadata.rs"
 [[test]]
 name = "integration_commit_linkage"
 path = "tests/integration/commit_linkage.rs"
+
+[[test]]
+name = "integration_engine_warnings"
+path = "tests/integration/engine_warnings.rs"
 
 [[test]]
 name = "integration_names"

@@ -8,7 +8,7 @@ import { describe, expect, it, vi } from "vitest";
 import { ApiError, FileSquidClient } from "../../src/api/client";
 import type { CommandEnvelope } from "../../src/api/commands";
 import { ClientFileSource } from "../../src/files/source";
-import type { FileLocation, FileRef } from "../../src/files/model";
+import type { FileLocation, FileRef, UploadTarget } from "../../src/files/model";
 
 const TOKEN = "t".repeat(48);
 const HANDLE = "H".repeat(43);
@@ -69,6 +69,9 @@ function clientWith(
 }
 
 const LOCATION: FileLocation = { library_id: "lib-1", object_id: "urn:uuid:o1", prefix: "A b" };
+/** A collection of the library: the root of it is where uploads go. */
+const COLLECTION = "9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d";
+const TARGET: UploadTarget = { library_id: "lib-1", collection_id: COLLECTION };
 const REF: FileRef = {
   library_id: "lib-1",
   object_id: "urn:uuid:o1",
@@ -230,13 +233,14 @@ describe("ClientFileSource", () => {
       media_type: "text/plain",
       last_modified: "2026-10-20T08:00:00.000Z",
     } as const;
-    expect(await new ClientFileSource(client).upload(LOCATION, facts, body)).toEqual(UPLOAD);
+    expect(await new ClientFileSource(client).upload(TARGET, facts, body)).toEqual(UPLOAD);
     const [call] = seen as [Seen];
     expect(new URL(call.url).pathname).toBe("/api/v1/files/upload");
     expect(new URL(call.url).search).toBe("");
     expect(call.init.method).toBe("PUT");
     expect(await sentPart(call, "input")).toEqual({
       library_id: "lib-1",
+      collection_id: COLLECTION,
       name: "Café 2023.txt",
       size: 3,
       media_type: "text/plain",
@@ -255,18 +259,46 @@ describe("ClientFileSource", () => {
   it("always uploads into the library it is given, whatever the facts hold", async () => {
     const { client, seen } = clientWith((call) => committed(call, UPLOAD));
     const facts = { name: "a.txt", library_id: "other" } as unknown as { name: string };
-    await new ClientFileSource(client).upload(LOCATION, facts, new Blob(["x"]));
+    await new ClientFileSource(client).upload(TARGET, facts, new Blob(["x"]));
     expect(await sentPart(seen[0] as Seen, "input")).toMatchObject({ library_id: "lib-1" });
+  });
+
+  it("sends the folder when the upload goes inside one, and none at the collection's root", async () => {
+    const { client, seen } = clientWith((call) => committed(call, UPLOAD));
+    const inside = { ...TARGET, folder: "Summer/Beach" };
+    await new ClientFileSource(client).upload(inside, { name: "a.txt" }, new Blob(["x"]));
+    await new ClientFileSource(client).upload(TARGET, { name: "b.txt" }, new Blob(["x"]));
+    const [first, second] = (await Promise.all(seen.map((c) => sentPart(c, "input")))) as [
+      Record<string, unknown>,
+      Record<string, unknown>,
+    ];
+    expect(first).toMatchObject({ collection_id: COLLECTION, folder: "Summer/Beach" });
+    expect(second).toMatchObject({ collection_id: COLLECTION });
+    expect(second).not.toHaveProperty("folder");
+  });
+
+  it("always uploads into the collection and folder it is given, whatever the facts hold", async () => {
+    const { client, seen } = clientWith((call) => committed(call, UPLOAD));
+    const facts = { name: "a.txt", collection_id: "other", folder: "Elsewhere" } as unknown as {
+      name: string;
+    };
+    const target = { ...TARGET, folder: "Mine" };
+    await new ClientFileSource(client).upload(target, facts, new Blob(["x"]));
+    expect(await sentPart(seen[0] as Seen, "input")).toMatchObject({
+      collection_id: COLLECTION,
+      folder: "Mine",
+    });
   });
 
   it("names the file an upload replaces with file_id and expects that file's head", async () => {
     const { client, seen } = clientWith((call) => committed(call, { ...UPLOAD, version: "v2" }));
     const facts = { name: "a.txt", name_normalization: "nfc", file_id: UPLOAD.file_id } as const;
     const options = { revision: "v1" };
-    await new ClientFileSource(client).upload(LOCATION, facts, new Blob(["new"]), options);
+    await new ClientFileSource(client).upload(TARGET, facts, new Blob(["new"]), options);
     const input = (await sentPart(seen[0] as Seen, "input")) as Record<string, unknown>;
     expect(input.file_id).toBe(UPLOAD.file_id);
     expect(Object.keys(input).sort()).toEqual([
+      "collection_id",
       "file_id",
       "library_id",
       "name",
@@ -308,9 +340,10 @@ describe("ClientFileSource", () => {
       status: 409,
       code: "conflict",
     });
-    await expect(source.upload(LOCATION, { name: "a.txt" }, new Blob(["x"]))).rejects.toMatchObject(
-      { status: 409, code: "conflict" },
-    );
+    await expect(source.upload(TARGET, { name: "a.txt" }, new Blob(["x"]))).rejects.toMatchObject({
+      status: 409,
+      code: "conflict",
+    });
   });
 
   it("refuses an answer that is not committed or carries no result", async () => {

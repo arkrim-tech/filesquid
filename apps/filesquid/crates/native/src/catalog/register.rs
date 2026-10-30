@@ -22,7 +22,7 @@ use filesquid_core::{CollectionId, File, FileId, LibraryId};
 use rusqlite::{Connection, Transaction};
 
 /// Journal operation of registering imported files in their home collection.
-pub const REGISTER_OPERATION: &str = "library.files.register";
+pub const REGISTER_OPERATION: &str = filesquid_api::home::REGISTER_OPERATION;
 
 /// One file to register.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -85,7 +85,7 @@ impl SqliteCatalog {
 
     /// Store the `failed` entry of a refused registration of `library_id` in its outbox and
     /// forward it. Database and journal I/O.
-    fn journal_refused(
+    pub(super) fn journal_refused(
         &self,
         library_id: &LibraryId,
         entry: JournalEntry,
@@ -189,7 +189,7 @@ impl SqliteCatalog {
 
 /// The `failed` entry of a registration journaled as `journal` that was refused with `code`.
 /// Pure.
-fn refused_entry(journal: JournalEntry, code: &str) -> JournalEntry {
+pub(super) fn refused_entry(journal: JournalEntry, code: &str) -> JournalEntry {
     let mut entry = journal.level(Level::Warn).error_code(code);
     entry.outcome = Outcome::Failed;
     entry

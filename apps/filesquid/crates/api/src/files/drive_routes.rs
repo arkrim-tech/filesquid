@@ -16,14 +16,16 @@ use super::drive::{
 use super::drive_facts::{CollectionHistorySizeView, CollectionSizeQuery};
 use super::drive_scope::{collection_files, my_times, view_scope, ViewScope};
 use super::error::FileError;
+use super::homing;
 use super::provenance::Caller;
-use super::routes::{body, files, query, read_answer, recorded};
+use super::routes::{body, files, query, read_answer, recorded, resumed_entry};
 use super::search::{parse_zone, search_files, search_page, Examined, SearchPage, SearchRequest};
 use super::search_match::Searcher;
 use super::search_query::parse;
 use super::search_scope::{search_scope, SearchScope};
 use super::{COLLECTION_HISTORY_SIZE_OPERATION, COPY_OPERATION, SEARCH_OPERATION, VIEW_OPERATION};
 use crate::auth::{Action, Principal};
+use crate::home::Destination;
 use crate::navigation::{NavigationService, NodeRef};
 use crate::routes::Route;
 use crate::ApiState;
@@ -64,15 +66,38 @@ async fn copy(
     request: Result<Json<FileCommand<CopyRequest>>, JsonRejection>,
 ) -> Response {
     let command = body(request).and_then(|c| command::check(c.envelope, c.input));
-    let principal = &principal;
+    let (state, principal) = (&state, &principal);
     command::run(
-        &state,
+        state,
         principal,
         COPY_OPERATION,
         command,
         |files, c, actor| async move {
+            let operation_id = c.operation_id.as_str().to_string();
+            let fingerprint = homing::fingerprint_of(&c.input)?;
+            let mut input = c.input;
+            let destination = Destination {
+                collection_id: input.collection_id.clone(),
+                folder: input.folder.clone(),
+            };
+            let name = files
+                .copy_name(input.library_id.clone(), input.file_id.clone())
+                .await?;
+            let place = (input.library_id.as_str(), &destination);
+            let ids = (operation_id.as_str(), Some(fingerprint.as_str()));
+            let prepared = homing::prepare_home(state, principal, place, &name, ids).await?;
+            input.reserved_file_id = prepared.reserved.as_ref().map(|id| id.as_str().to_string());
             let caller = Caller::new(actor).with_operation(c.operation_id);
-            Ok(recorded(files.copy(c.input, caller, c.expected).await?))
+            let attempt = files.copy(input, caller, c.expected).await;
+            if attempt.is_err() {
+                homing::release_reservation(&prepared, &operation_id).await;
+            }
+            let mut copied = attempt?;
+            let (collection, path) =
+                homing::settle_home(state, prepared, &operation_id, &copied.view.file_id).await?;
+            copied.view.collection_id = Some(collection);
+            copied.view.path = Some(path);
+            Ok(recorded(resumed_entry(COPY_OPERATION, principal, copied)))
         },
     )
     .await
