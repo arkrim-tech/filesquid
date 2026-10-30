@@ -184,20 +184,22 @@ Second part, `cargo test -p filesquid-api --locked --test integration_commit_lin
 
 ```text
 Running tests/integration/commit_linkage.rs (<target>/debug/deps/integration_commit_linkage-db6b620d207da61c)
+test a_lease_takeover_is_bound_into_the_version_with_its_commit ... ok
 test a_refused_commit_is_journaled_as_before_and_never_reaches_the_history ... ok
-test a_refused_metadata_edit_is_journaled_as_before_without_a_commit ... ok
-test a_metadata_edit_entry_is_redacted ... ok
-test an_upload_is_committed_by_the_installation_and_journaled_once_as_ocfl_commit ... ok
 test a_move_and_a_remove_are_each_one_linked_commit ... ok
+test a_metadata_edit_entry_is_redacted ... ok
+test a_refused_metadata_edit_is_journaled_as_before_without_a_commit ... ok
 test a_copy_and_a_rename_are_each_one_linked_commit ... ok
-test the_callers_message_is_the_version_label ... ok
-test without_provenance_every_commit_still_journals_one_ocfl_commit ... ok
+test an_upload_is_committed_by_the_installation_and_journaled_once_as_ocfl_commit ... ok
 test a_restore_and_a_label_carry_the_envelope_operation_id ... ok
+test a_stale_empty_staging_index_never_gives_a_move_an_older_base ... ok
+test without_provenance_every_commit_still_journals_one_ocfl_commit ... ok
+test the_callers_message_is_the_version_label ... ok
 test metadata_edits_carry_the_structured_message_the_user_and_a_metadata_edit_entry ... ok
-test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.12s
 ```
 
-`cargo test -p filesquid-api --locked --test features` (the linkage feature and the run summary):
+`cargo test -p filesquid-api --locked --test features` (the linkage feature and the run summary, before Cubic round 1 added the route-entry step; the run after it: `408 scenarios (306 passed, 102 skipped)`):
 
 ```text
 Feature: Journal and commit linkage of the file and metadata routes
