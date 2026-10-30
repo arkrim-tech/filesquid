@@ -118,7 +118,7 @@ const STYLE = `
   .column { display: flex; flex-direction: column; flex: 1 1 auto; min-width: 0; min-height: 0; }
   header { display: flex; flex-wrap: wrap; align-items: center; gap: var(--fs-space-3); box-sizing: border-box; min-block-size: 3.75rem; padding: var(--fs-space-2) var(--fs-space-4); border-block-end: 1px solid var(--fs-outline); }
   .search { flex: 0 1 32.5rem; min-width: 0; }
-  .search-slot { flex: 0 1 32.5rem; display: flex; min-width: 0; }
+  .search-slot { flex: 0 1 auto; display: flex; min-width: 0; }
   .spacer { flex: 1 1 auto; }
   fs-host-indicator { flex: 0 0 auto; }
   .monitor { min-inline-size: 6rem; }
