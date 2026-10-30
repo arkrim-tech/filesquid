@@ -6,7 +6,8 @@
 # DE-S-018: Library routes over owner-chosen folders: the folder listing and the objects of a navigation scope answered from the index
 # DE-S-006: The webview receives opaque handles and API responses, never raw filesystem paths or SQL
 # DE-S-020: Desktop job routes: the import runner and controls, honoured after the file in hand
-# API-S-037: Job routes and job events: pause, resume and cancel, each journaled once
+# API-S-037: Job routes and job events: pause, resume and cancel, each journaled once; per-file progress and retries
+# API-S-036 Review: the plan before any byte is staged, started only when confirmed, discarded on request
 Feature: Desktop file and folder import
   As the owner using the FileSquid desktop app
   I want to import files and folders I pick in my system's own dialog
@@ -97,3 +98,28 @@ Feature: Desktop file and folder import
     Then the import job should be cancelled with 1 of 2 files done
     And the job control "job.cancel_requested" should be journaled once
     And only the file in hand should be imported
+
+  # Review and per-file progress (Task DE-1.8)
+  Scenario: An import is reviewed before any byte is copied and starts only when confirmed
+    Given the owner will pick a folder of 2 files
+    When the app asks to review a folder import under the operation "op-review"
+    Then the plan should count 2 new files and 9 bytes to copy with nothing staged
+    When the owner confirms the plan
+    Then 2 files should be imported, each as its own object
+
+  Scenario: A discarded plan imports nothing
+    Given the owner will pick a folder of 2 files
+    When the app asks to review a folder import under the operation "op-dropped"
+    And the owner discards the plan
+    Then confirming the plan should be refused as not found
+    And no file should be imported
+
+  Scenario: A file that failed keeps its code and is retried on its own
+    Given the owner will pick a folder of 2 files
+    And the import worker will be held on its first file
+    When the app asks to review a folder import under the operation "op-failing"
+    And the owner confirms the plan
+    And the second picked file disappears while the first is in hand
+    Then the second file should have failed as "source_missing" with the job waiting for a retry
+    When the second picked file comes back and the owner retries it
+    Then the import job should be completed with 2 of 2 files done
