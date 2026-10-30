@@ -206,9 +206,10 @@ where
     Fut: Future<Output = Result<Done<V>, LocalLibraryError>>,
 {
     let actor = principal.actor().to_string();
+    let read_id = command.as_ref().ok().map(|c| c.operation_id.clone());
     let (operations, command) = match command.and_then(|c| ready(state, Some(c))) {
         Ok(ready) => ready,
-        Err(err) => return refuse(state, operation, &actor, None, err).await,
+        Err(err) => return refuse(state, operation, &actor, read_id.as_ref(), err).await,
     };
     let operation_id = command.operation_id.clone();
     let target = command.input.scope();
@@ -350,10 +351,18 @@ async fn rebuild(
     Extension(principal): Extension<Principal>,
     request: Result<Json<Command<LibraryRequest>>, JsonRejection>,
 ) -> Response {
-    let command = checked(request).and_then(|c| {
-        state.jobs().ok_or_else(no_jobs)?;
-        Ok(c)
-    });
+    let command = checked(request);
+    if let (Ok(c), None) = (&command, state.jobs()) {
+        let actor = principal.actor();
+        return refuse(
+            &state,
+            REBUILD_OPERATION,
+            actor,
+            Some(&c.operation_id),
+            no_jobs(),
+        )
+        .await;
+    }
     let jobs_state = state.clone();
     run(
         &state,
