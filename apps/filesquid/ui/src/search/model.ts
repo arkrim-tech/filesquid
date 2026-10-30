@@ -144,6 +144,17 @@ export function isTypeClass(value: string): value is TypeClass {
   return (TYPE_CLASSES as readonly string[]).includes(value);
 }
 
+/**
+ * A name or filter as search compares it: Unicode NFC, then lower case, then NFC again, so a
+ * decomposed name matches a composed query (API-S-012). Pure.
+ *
+ * @param text The text.
+ * @returns The folded text.
+ */
+export function foldName(text: string): string {
+  return text.normalize("NFC").toLowerCase().normalize("NFC");
+}
+
 /** The text of `value` cut to `limit` bytes of UTF-8 at a character boundary. */
 function cutToBytes(value: string, limit: number): string {
   const encoder = new TextEncoder();

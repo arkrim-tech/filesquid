@@ -221,6 +221,17 @@ describe("MemorySearchSource", () => {
     expect(await at("Z", "before:2026-10-16 type:document")).toEqual(["harbour-2025-report.pdf"]);
   });
 
+  it("refuses a zone the contract does not name, rather than reading it as UTC", async () => {
+    for (const zone of ["PST", "+25:00", "+14:01", "+1:00", "-08:60"]) {
+      await expect(
+        source().search({ ...QUERY, q: "after:2026-01-01", zone }),
+      ).rejects.toMatchObject({ status: 400 });
+    }
+    await expect(
+      source().search({ ...QUERY, q: "after:2026-01-01", zone: "-14:00" }),
+    ).resolves.toBeDefined();
+  });
+
   it("refuses an empty query and a page size that is not a whole number from 1 to 1,000", async () => {
     await expect(names("   ")).rejects.toMatchObject({ status: 400 });
     for (const limit of [0, 1.5, 1001, Number.NaN]) {

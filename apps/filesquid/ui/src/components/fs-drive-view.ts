@@ -48,7 +48,7 @@ import {
 } from "../drive/model";
 import { Selection } from "../drive/selection";
 import type { ViewSource } from "../drive/source";
-import { nextSearchSort, refusalOf, zoneOf, type SearchRefusal } from "../search/model";
+import { foldName, nextSearchSort, refusalOf, zoneOf, type SearchRefusal } from "../search/model";
 import type { SearchQuery, SearchSort, SearchSource } from "../search/source";
 import { formatSize } from "../files/model";
 import type { NavigationSource } from "../navigation/model";
@@ -195,6 +195,8 @@ export class FsDriveView extends HTMLElement {
   private searchSort: { sort: SearchSort; direction: SortDirection } = RELEVANCE;
   /** Whether the rows shown are an answer, so the count chip may say how many there are. */
   private counted = false;
+  /** True after {@link showPending} until the next read, when the view holds nothing to show. */
+  private stale = false;
   private readonly onPreferences = () => this.preferencesChanged();
 
   constructor() {
@@ -255,7 +257,8 @@ export class FsDriveView extends HTMLElement {
       request?.q === this.request?.q &&
       request?.node === this.request?.node &&
       request?.scope === this.request?.scope;
-    if (same) return;
+    // After showPending() the view shows nothing, so even the same request must read again.
+    if (same && !this.stale) return;
     this.searchSort = RELEVANCE;
     if (this.request && !request) this.target = { ...this.target, node: "" };
     this.request = request;
@@ -345,6 +348,7 @@ export class FsDriveView extends HTMLElement {
     this.abort = abort;
     const generation = ++this.generation;
     this.applied = this.appliedKey();
+    this.stale = false;
     this.showLoading();
     try {
       const page = await this.readPage(null, abort.signal);
@@ -368,20 +372,34 @@ export class FsDriveView extends HTMLElement {
     const options = this.options as DriveViewOptions;
     if (!this.request) return options.source.view(this.query(), cursor, VIEW_PAGE_SIZE, { signal });
     if (!options.search) return Promise.reject(new TypeError("This view has no search source"));
-    const search = options.search.search(this.searchQuery(this.request), cursor, VIEW_PAGE_SIZE, {
-      signal,
-    });
-    return search.then((page) => this.narrowed(page));
+    return this.readSearchPage(this.request, options.search, cursor, signal);
   }
 
   /**
-   * The sidebar filter in search results: the search operation has no name filter, so the rows
-   * read are narrowed here (UI-S-007: the filter narrows only the view it is in).
+   * One page of search results, narrowed by the sidebar filter (the search operation has no name
+   * filter, so the rows read are narrowed here; UI-S-007: the filter narrows only the view it is
+   * in). A page with no match is not the end while a cursor remains, so reading goes on, at most
+   * {@link MAX_VIEW_PAGES} pages, until a page has a match or the results end. Network I/O.
    */
-  private narrowed(page: DrivePage): DrivePage {
-    const text = this.target.filter.toLowerCase();
+  private async readSearchPage(
+    request: SearchRequest,
+    source: SearchSource,
+    start: string | null,
+    signal?: AbortSignal,
+  ): Promise<DrivePage> {
+    const text = foldName(this.target.filter);
+    let cursor = start;
+    let page = await source.search(this.searchQuery(request), cursor, VIEW_PAGE_SIZE, { signal });
+    for (let read = 1; text !== "" && read < MAX_VIEW_PAGES; read += 1) {
+      const rows = page.rows.filter((row) => foldName(row.name).includes(text));
+      if (rows.length > 0 || page.nextCursor === null) return { ...page, rows };
+      cursor = page.nextCursor;
+      page = await source.search(this.searchQuery(request), cursor, VIEW_PAGE_SIZE, { signal });
+    }
     if (text === "") return page;
-    return { ...page, rows: page.rows.filter((row) => row.name.toLowerCase().includes(text)) };
+    // The page cap was reached with no match: say the results were cut short.
+    const rows = page.rows.filter((row) => foldName(row.name).includes(text));
+    return { ...page, rows, complete: false };
   }
 
   /** The query of a search: its scope, the order of this search and the caller's zone. */
@@ -1136,6 +1154,7 @@ export class FsDriveView extends HTMLElement {
     if (!this.options) return;
     this.abort?.abort();
     this.generation += 1;
+    this.stale = true;
     this.rows = [];
     this.cursor = null;
     this.chosen.clear();

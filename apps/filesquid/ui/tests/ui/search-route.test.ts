@@ -198,6 +198,35 @@ describe("the search route", () => {
     expect(view.shadowRoot?.querySelectorAll(".row").length).toBe(1);
   });
 
+  it("is not left loading when the address goes to a search and straight back", async () => {
+    const { shell } = await mountRoute("#/files");
+    const view = shell.querySelector("fs-drive-view") as HTMLElement;
+    expect(view.dataset.state).toBe("ready");
+    window.location.hash = searchHash("harbour");
+    window.dispatchEvent(new HashChangeEvent("hashchange"));
+    window.location.hash = "#/files";
+    window.dispatchEvent(new HashChangeEvent("hashchange"));
+    await settle();
+    await settle();
+    await settle();
+    expect(view.dataset.state).toBe("ready");
+    expect(view.shadowRoot?.querySelectorAll(".row").length).toBeGreaterThan(0);
+  });
+
+  it("is not left loading when a search address is left and returned to during the lookup", async () => {
+    const { shell } = await mountRoute(searchHash("harbour"));
+    const view = shell.querySelector("fs-drive-view") as HTMLElement;
+    window.location.hash = searchHash("facade");
+    window.dispatchEvent(new HashChangeEvent("hashchange"));
+    window.location.hash = searchHash("harbour");
+    window.dispatchEvent(new HashChangeEvent("hashchange"));
+    await settle();
+    await settle();
+    await settle();
+    expect(view.dataset.state).toBe("ready");
+    expect(view.shadowRoot?.querySelectorAll(".row").length).toBe(3);
+  });
+
   it("says the node is gone when the host lists no library", async () => {
     window.location.hash = searchHash("harbour");
     const shell = document.createElement("fs-app-shell") as FsAppShell;

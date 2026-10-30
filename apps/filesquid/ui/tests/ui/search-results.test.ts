@@ -196,6 +196,43 @@ describe("search results", () => {
     expect(names(element)).toHaveLength(3);
   });
 
+  it("keeps reading while a filter has no match on a page but the results go on", async () => {
+    const many = [
+      ...Array.from({ length: 450 }, (_, index) => ({
+        ...FILES[0],
+        key: "m" + index,
+        fileId: "m" + index,
+        name: "harbour-" + String(index).padStart(3, "0") + ".pdf",
+      })),
+      { ...FILES[0], key: "z", fileId: "z", name: "harbour-zzz-final.pdf" },
+    ];
+    const search = searchSource(many as never);
+    const { element } = await mountSearch("harbour", search);
+    element.filter = "zzz";
+    await settle();
+    await settle();
+    expect(names(element)).toEqual(["harbour-zzz-final.pdf"]);
+    expect(search.calls.filter((call) => call.cursor !== null)).toHaveLength(2);
+  });
+
+  it("matches the filter as search matches names, across Unicode normalisation", async () => {
+    const decomposed = { ...FILES[0], key: "c", fileId: "c", name: "harbour-cafe\u0301.pdf" };
+    const { element } = await mountSearch("harbour", searchSource([decomposed] as never));
+    element.filter = "CAF\u00c9";
+    await settle();
+    expect(names(element)).toEqual(["harbour-cafe\u0301.pdf"]);
+  });
+
+  it("reads again when the same search is shown after the view was cleared", async () => {
+    const search = searchSource();
+    const { element } = await mountSearch("harbour", search);
+    element.showPending();
+    expect(names(element)).toHaveLength(0);
+    element.search = { q: "harbour", node: SCOPE.node, scope: SCOPE.name };
+    await settle();
+    expect(names(element)).toHaveLength(3);
+  });
+
   it("starts a new scope in relevance order even for the same query", async () => {
     const search = searchSource();
     const { element } = await mountSearch("harbour", search);

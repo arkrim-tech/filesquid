@@ -15,7 +15,7 @@
 import { ApiError } from "../api/client";
 import { VIEW_PAGE_SIZE, type DrivePage, type DriveRow } from "../drive/model";
 import type { ViewCall } from "../drive/source";
-import { MAX_QUERY_BYTES, isTypeClass, tokenizeQuery, typeClassOf } from "./model";
+import { MAX_QUERY_BYTES, foldName, isTypeClass, tokenizeQuery, typeClassOf } from "./model";
 import type { QueryToken } from "./model";
 import type { SearchQuery, SearchSource } from "./source";
 
@@ -47,10 +47,7 @@ function refuse(status: 400 | 503): ApiError {
   return new ApiError(status, PATH, { code });
 }
 
-/** Text as search compares it: NFC, lower case, NFC again. */
-function fold(text: string): string {
-  return text.normalize("NFC").toLowerCase().normalize("NFC");
-}
+const fold = foldName;
 
 /** The bytes a `size>` value names: an integer and an optional B, KB, MB or GB. */
 function bytesOf(value: string): number {
@@ -76,12 +73,16 @@ function typeClause(value: string): Clause {
   return (row) => row.kind === "file" && typeClassOf(row.mediaType ?? "") === value;
 }
 
-/** The offset of a zone (`Z` or `+HH:MM`) in milliseconds; UTC for anything else. */
+/**
+ * The offset of a zone in milliseconds: absent or `Z` is UTC; a fixed offset runs from -14:00 to
+ * +14:00. Anything else is refused as the API refuses it (400 `invalid_request`).
+ */
 function zoneMs(zone: string | undefined): number {
-  const match = /^([+-])(\d{2}):(\d{2})$/.exec(zone ?? "");
-  if (!match) return 0;
-  const minutes = Number(match[2]) * 60 + Number(match[3]);
-  return (match[1] === "-" ? -minutes : minutes) * 60_000;
+  if (zone === undefined || zone === "Z") return 0;
+  const match = /^([+-])(\d{2}):([0-5]\d)$/.exec(zone);
+  const minutes = match ? Number(match[2]) * 60 + Number(match[3]) : Number.NaN;
+  if (!Number.isFinite(minutes) || minutes > 14 * 60) throw refuse(400);
+  return (match?.[1] === "-" ? -minutes : minutes) * 60_000;
 }
 
 /** The calendar date of an instant in the caller's zone, as `YYYY-MM-DD`. */
@@ -146,6 +147,7 @@ interface Parsed {
 /** Parse a query the way the operation does, or refuse it. */
 function parseQuery(q: string, deleted: ReadonlySet<string>, zone: string | undefined): Parsed {
   if (q.trim() === "") throw refuse(400);
+  zoneMs(zone);
   const quotes = [...q].filter((c) => c === '"').length;
   if (new TextEncoder().encode(q).length > MAX_QUERY_BYTES || quotes % 2 === 1) throw refuse(400);
   const clauses: Parsed["clauses"] = [];

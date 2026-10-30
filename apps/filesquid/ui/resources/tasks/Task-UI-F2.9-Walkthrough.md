@@ -68,14 +68,14 @@ Vitest (unit and DOM tests in jsdom), the new files and the total:
 
 ```
  ✓ tests/ui/search-bar.test.ts (35 tests)
- ✓ tests/ui/search-results.test.ts (24 tests)
+ ✓ tests/ui/search-results.test.ts (27 tests)
  ✓ tests/unit/search-model.test.ts (47 tests)
- ✓ tests/unit/search-source.test.ts (17 tests)
- ✓ tests/ui/search-route.test.ts (11 tests)
+ ✓ tests/unit/search-source.test.ts (18 tests)
+ ✓ tests/ui/search-route.test.ts (13 tests)
  ✓ tests/unit/library-scope.test.ts (8 tests)
 
  Test Files  83 passed (83)
-      Tests  1985 passed | 1 skipped (1986)
+      Tests  1991 passed | 1 skipped (1992)
 ```
 
 Playwright against `vite build` plus `vite preview` (`FILESQUID_E2E=1`, 1440 x 900, light and dark), the new spec:
@@ -102,7 +102,7 @@ Playwright against `vite build` plus `vite preview` (`FILESQUID_E2E=1`, 1440 x 9
   18 passed
 ```
 
-The whole preview suite after Cubic round 1:
+The whole preview suite after Cubic round 2:
 
 ```
   162 passed (1.0m)
