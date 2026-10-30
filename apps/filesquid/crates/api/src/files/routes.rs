@@ -313,17 +313,24 @@ async fn upload(
         command,
         |files, c, actor| async move {
             let operation_id = c.operation_id.as_str().to_string();
+            let fingerprint = match c.input.facts.file_id {
+                None => Some(homing::fingerprint_of(&c.input)?),
+                Some(_) => None,
+            };
             let mut facts = c.input.facts;
             let destination = Destination {
                 collection_id: facts.collection_id.clone(),
                 folder: facts.folder.clone(),
             };
-            let new_file = facts.file_id.is_none();
             let place = (facts.library_id.as_str(), &destination);
-            let ids = (operation_id.as_str(), new_file);
+            let ids = (operation_id.as_str(), fingerprint.as_deref());
             let prepared = homing::prepare_home(state, principal, place, &facts.name, ids).await?;
             facts.reserved_file_id = prepared.reserved.as_ref().map(|id| id.as_str().to_string());
-            let mut upload = files.upload(facts, bytes, actor, c.expected).await?;
+            let uploaded = files.upload(facts, bytes, actor, c.expected).await;
+            if uploaded.is_err() {
+                homing::release_reservation(&prepared, &operation_id).await;
+            }
+            let mut upload = uploaded?;
             let (collection, path) =
                 homing::settle_home(state, prepared, &operation_id, &upload.file_id).await?;
             upload.collection_id = Some(collection);

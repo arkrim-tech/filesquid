@@ -14,12 +14,12 @@ mod files_fixture;
 
 use axum::http::StatusCode;
 use files_fixture::{
-    command_body, library, operation_id, upload_input, Answer, FilesRig, HOME_COLLECTION, LIBRARY,
+    command_body, operation_id, upload_input, Answer, FilesRig, HOME_COLLECTION, LIBRARY,
 };
 use filesquid_api::canonical::collection_path::MAX_SUFFIX;
 use filesquid_api::events::topic;
 use filesquid_api::files::NEW_FILE_REVISION;
-use filesquid_api::home::{HomeCollections, REGISTER_OPERATION};
+use filesquid_api::home::REGISTER_OPERATION;
 use filesquid_api::journal::Outcome;
 use filesquid_core::{CollectionId, FileId};
 use serde_json::{json, Value};
@@ -142,7 +142,7 @@ async fn an_upload_is_registered_at_its_folder_and_name_and_answered_with_it() {
     assert_eq!(upload["path"], "Trips/2026/Harbour.jpg");
     let file = FileId::new(upload["file_id"].as_str().expect("file")).expect("id");
     assert_eq!(
-        rig.home.placement(&file),
+        rig.home.placed(&file),
         Some((home(), "Trips/2026/Harbour.jpg".into()))
     );
     let registered = rig.home.journal();
@@ -216,40 +216,80 @@ async fn after_9999_numbers_the_upload_is_path_suffix_exhausted_with_no_change()
 #[tokio::test]
 async fn a_retry_after_a_crash_between_the_object_and_its_registration_completes_once() {
     let rig = FilesRig::new().await;
-    let operation = operation_id();
-    let minted = placed_id(77);
-    let reserved = rig
-        .home
-        .reserve(&library(), &operation, &minted)
-        .expect("reserved");
     let input = into("crash.txt", b"abc", None);
-    let mut query: filesquid_api::files::UploadQuery =
-        serde_json::from_value(input.clone()).expect("facts");
-    query.reserved_file_id = Some(reserved.as_str().to_string());
-    let first = rig
-        .service
-        .upload(query, b"abc", "owner", NEW_FILE_REVISION)
-        .await;
-    assert_eq!(
-        first.expect("the first run committed").file_id,
-        reserved.as_str()
-    );
-    assert_eq!(
-        rig.home.placement(&reserved),
-        None,
-        "the crash left it unregistered"
-    );
+    let operation = operation_id();
     let envelope = command_body(&input, &operation, NEW_FILE_REVISION)["envelope"].clone();
+    rig.home.fail_next_registration();
+    let crashed = rig.send_upload(&envelope, &input, b"abc").await;
+    assert_eq!(
+        crashed.status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "{:?}",
+        crashed.json()
+    );
+    assert_eq!(rig.home.reserved(), 1, "the reservation survives the crash");
     let retried = rig.send_upload(&envelope, &input, b"abc").await;
     assert_eq!(retried.status, StatusCode::OK, "{:?}", retried.json());
     let result = retried.result();
-    assert_eq!(result["file_id"], reserved.as_str(), "the same file");
     assert_eq!(result["version"], "v1", "no second version");
-    assert_eq!(
-        rig.home.placement(&reserved),
-        Some((home(), "crash.txt".into()))
-    );
+    let file = FileId::new(result["file_id"].as_str().expect("file")).expect("id");
+    assert_eq!(rig.home.placed(&file), Some((home(), "crash.txt".into())));
+    assert_eq!(rig.home.journal().len(), 1, "registered once");
     assert_eq!(rig.home.reserved(), 0);
+    let succeeded = rig
+        .journaled("file.upload")
+        .into_iter()
+        .filter(|e| e.outcome == Outcome::Succeeded)
+        .count();
+    assert_eq!(succeeded, 1, "journaled once as a success");
+}
+
+#[tokio::test]
+async fn the_same_operation_id_with_other_bytes_after_a_crash_is_refused() {
+    let rig = FilesRig::new().await;
+    let input = into("crash.txt", b"abc", None);
+    let operation = operation_id();
+    let envelope = command_body(&input, &operation, NEW_FILE_REVISION)["envelope"].clone();
+    rig.home.fail_next_registration();
+    let crashed = rig.send_upload(&envelope, &input, b"abc").await;
+    assert_eq!(crashed.status, StatusCode::SERVICE_UNAVAILABLE);
+    let other = rig.send_upload(&envelope, &input, b"xyz").await;
+    assert_eq!(other.status, StatusCode::BAD_REQUEST, "{:?}", other.json());
+    assert_eq!(rig.home.journal().len(), 0, "nothing registered");
+}
+
+#[tokio::test]
+async fn a_failed_upload_releases_its_reservation() {
+    let rig = FilesRig::new().await;
+    let input = upload_input("short.txt", 9, json!({}));
+    let answer = rig.upload(input, b"abc").await;
+    assert_eq!(
+        answer.status,
+        StatusCode::BAD_REQUEST,
+        "{:?}",
+        answer.json()
+    );
+    assert_eq!(rig.home.reserved(), 0, "released");
+}
+
+#[tokio::test]
+async fn new_content_of_a_file_answers_its_own_home() {
+    let rig = FilesRig::new().await;
+    let first = uploaded(&rig, "notes.txt", b"one", Some("Work")).await;
+    let file = first["file_id"].as_str().expect("file").to_string();
+    let input = upload_input(
+        "notes.txt",
+        3,
+        json!({ "file_id": file, "folder": "Elsewhere" }),
+    );
+    let answer = rig.upload(input, b"two").await;
+    assert_eq!(answer.status, StatusCode::OK, "{:?}", answer.json());
+    assert_eq!(answer.result()["collection_id"], HOME_COLLECTION);
+    assert_eq!(
+        answer.result()["path"],
+        "Work/notes.txt",
+        "it keeps its home"
+    );
 }
 
 #[tokio::test]
@@ -267,7 +307,7 @@ async fn a_copy_is_registered_in_its_destination_beside_its_source() {
     assert_eq!(copy["path"], "Summer/beach-1.jpg");
     let file = FileId::new(copy["file_id"].as_str().expect("copy")).expect("id");
     assert_eq!(
-        rig.home.placement(&file),
+        rig.home.placed(&file),
         Some((home(), "Summer/beach-1.jpg".into()))
     );
     assert_eq!(rig.journaled("file.copy").len(), 1);

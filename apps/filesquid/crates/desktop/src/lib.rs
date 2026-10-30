@@ -911,7 +911,8 @@ pub fn install_backfill_route(
 }
 
 /// Start the OCFL validation, give the file service its PROV-O provenance and its scope
-/// objects, install the preference store, install the library routes and their native folder
+/// objects, install the catalog as the home collections of uploads and copies (API-F2.14),
+/// install the preference store, install the library routes and their native folder
 /// choice over the folders the owner registers, serving each library they bind
 /// (Task DE-1.1); keep the validation and the folder registry in Tauri's managed state.
 /// Performs filesystem and database I/O.

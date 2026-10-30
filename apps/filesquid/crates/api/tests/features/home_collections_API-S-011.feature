@@ -52,8 +52,9 @@ Feature: Home collections for uploads and copies
   Scenario: A retry after a crash completes the same file once
     Given an upload of "crash.txt" committed its file but crashed before its registration
     When the owner retries the upload with the same operation ID
-    Then the retry should answer the same file at its first version
+    Then the retry should answer the file at its first version
     And the file should be registered at "crash.txt" in "Holidays"
+    And the file should be registered once and the upload journaled once as a success
 
   # Error cases
   Scenario: An upload without a collection is refused before anything is staged

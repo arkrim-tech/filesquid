@@ -39,6 +39,17 @@ pub struct HomeRequest {
     pub path: String,
 }
 
+/// What a reservation answered.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Reserved {
+    /// The file ID of the operation's new file: an earlier, unfinished run's, or the one just
+    /// minted.
+    File(FileId),
+    /// The operation ID already reserved a file for another command (its input's fingerprint
+    /// differs); nothing was reserved.
+    Reused,
+}
+
 /// What became of a registration.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Placed {
@@ -47,8 +58,11 @@ pub enum Placed {
         /// The collection logical path it got.
         path: String,
     },
-    /// The file was registered before (a resumed operation); nothing changed.
+    /// The file was registered before (a resumed operation, or new content of a file that
+    /// has its home); nothing changed.
     AlreadyRegistered {
+        /// Its home collection.
+        collection_id: CollectionId,
         /// Its collection logical path.
         path: String,
     },
@@ -85,10 +99,12 @@ pub trait HomeCollections: Send + Sync {
         kind: ItemKind,
     ) -> Result<Result<String, PathError>, CatalogError>;
 
-    /// The file ID of the new file the operation `operation_id` makes in `library_id`: the
-    /// one an earlier, unfinished run of the same operation reserved, else `minted`, which is
-    /// reserved until the file is registered. A retry after a crash between the file's object
-    /// and its registration so completes the same file once.
+    /// The file ID of the new file the operation `operation_id` makes in `library_id`, for the
+    /// command whose input has `fingerprint`: the one an earlier, unfinished run of the same
+    /// command reserved, else `minted`, which is reserved until the file is registered or the
+    /// reservation released. A retry after a crash between the file's object and its
+    /// registration so completes the same file once; the same operation ID with another input
+    /// is [`Reserved::Reused`].
     ///
     /// # Errors
     /// A store failure.
@@ -96,8 +112,16 @@ pub trait HomeCollections: Send + Sync {
         &self,
         library_id: &LibraryId,
         operation_id: &str,
+        fingerprint: &str,
         minted: &FileId,
-    ) -> Result<FileId, CatalogError>;
+    ) -> Result<Reserved, CatalogError>;
+
+    /// Release the reservation of `operation_id` in `library_id`, after its command failed
+    /// before writing anything. A missing reservation is not an error.
+    ///
+    /// # Errors
+    /// A store failure.
+    fn release(&self, library_id: &LibraryId, operation_id: &str) -> Result<(), CatalogError>;
 
     /// Register `request`'s file in `library_id` and release the reservation of
     /// `operation_id`, publishing the file's entity in the collection snapshot under that

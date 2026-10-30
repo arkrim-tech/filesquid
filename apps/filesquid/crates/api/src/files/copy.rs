@@ -132,12 +132,12 @@ where
         let registry = self.registry(&request.library_id).await?;
         let _writing = library.writes.lock().await;
         let backend = library.files.backend.as_ref();
-        let source = read_source(backend, source_id, expected).await?;
-        let reference = source_reference(&source.file_id, &source.version);
         let file_id = match copy_target(backend, &request).await? {
             CopyTarget::New(file_id) => file_id,
-            CopyTarget::Committed(done) => return Ok(resumed_copy(done, reference)),
+            CopyTarget::Committed(done) => return Ok(done),
         };
+        let source = read_source(backend, source_id, expected).await?;
+        let reference = source_reference(&source.file_id, &source.version);
         let started = self.created();
         let input = CopyInput {
             source: &source.record,
@@ -234,9 +234,26 @@ fn copy_error(err: CanonicalError) -> FileError {
 }
 
 /// The answer of a copy an earlier, unfinished run of the same operation already committed:
-/// its object's head, citing `source`. Pure.
-fn resumed_copy(done: UploadView, source: String) -> CopyView {
-    CopyView {
+/// its object's head, citing the source its record names (`dcterms:source`). Storage I/O.
+///
+/// # Errors
+/// `internal` for a committed copy whose record names no source; a storage failure.
+async fn resumed_copy<B: StorageBackend>(
+    backend: &B,
+    done: UploadView,
+) -> Result<CopyView, FileError> {
+    let file_id = parse_file_id(&done.file_id)?;
+    let original = read_file_original(backend, &OwnerReadable, &file_id)
+        .await
+        .map_err(copy_error)?
+        .ok_or_else(|| FileError::internal("a committed copy has no record"))?;
+    let source = original
+        .record
+        .statements()
+        .get(&format!("dcterms:{SOURCE_TERM}"))
+        .map(|statement| statement.value.clone())
+        .ok_or_else(|| FileError::internal("a committed copy names no source"))?;
+    Ok(CopyView {
         library_id: done.library_id,
         file_id: done.file_id,
         object_id: done.object_id,
@@ -245,15 +262,17 @@ fn resumed_copy(done: UploadView, source: String) -> CopyView {
         source,
         collection_id: None,
         path: None,
-    }
+    })
 }
 
 /// The file a copy writes.
 enum CopyTarget {
     /// A file not committed yet: its reserved ID, or a freshly minted one.
     New(FileId),
-    /// The file an earlier, unfinished run of the same operation already committed.
-    Committed(UploadView),
+    /// The copy an earlier, unfinished run of the same operation already committed, answered
+    /// as it was made (its source is the one its record names), so a retry completes it even
+    /// when the source changed since.
+    Committed(CopyView),
 }
 
 /// The file `request` writes: what its operation's reserved ID already committed, else that
@@ -272,7 +291,7 @@ async fn copy_target<B: StorageBackend>(
         .transpose()?;
     let committed = committed_before(backend, &request.library_id, reserved.as_ref()).await?;
     match (committed, reserved) {
-        (Some(done), _) => Ok(CopyTarget::Committed(done)),
+        (Some(done), _) => resumed_copy(backend, done).await.map(CopyTarget::Committed),
         (None, Some(id)) => Ok(CopyTarget::New(id)),
         (None, None) => mint_file_id().map(CopyTarget::New),
     }

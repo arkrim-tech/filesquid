@@ -148,7 +148,8 @@ fn reserved_new_file(query: &UploadQuery) -> Result<Option<FileId>, FileError> {
 /// that ID yet. Storage I/O.
 ///
 /// # Errors
-/// A storage failure reading the object.
+/// A storage failure reading the object; `internal` for an object that does not decode as a
+/// file object or has no version.
 pub(super) async fn committed_before<B: StorageBackend>(
     backend: &B,
     library_id: &str,

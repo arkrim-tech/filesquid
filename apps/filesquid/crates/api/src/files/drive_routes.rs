@@ -74,6 +74,7 @@ async fn copy(
         command,
         |files, c, actor| async move {
             let operation_id = c.operation_id.as_str().to_string();
+            let fingerprint = homing::fingerprint_of(&c.input)?;
             let mut input = c.input;
             let destination = Destination {
                 collection_id: input.collection_id.clone(),
@@ -83,10 +84,14 @@ async fn copy(
                 .copy_name(input.library_id.clone(), input.file_id.clone())
                 .await?;
             let place = (input.library_id.as_str(), &destination);
-            let ids = (operation_id.as_str(), true);
+            let ids = (operation_id.as_str(), Some(fingerprint.as_str()));
             let prepared = homing::prepare_home(state, principal, place, &name, ids).await?;
             input.reserved_file_id = prepared.reserved.as_ref().map(|id| id.as_str().to_string());
-            let mut copied = files.copy(input, actor, c.expected).await?;
+            let attempt = files.copy(input, actor, c.expected).await;
+            if attempt.is_err() {
+                homing::release_reservation(&prepared, &operation_id).await;
+            }
+            let mut copied = attempt?;
             let (collection, path) =
                 homing::settle_home(state, prepared, &operation_id, &copied.file_id).await?;
             copied.collection_id = Some(collection);

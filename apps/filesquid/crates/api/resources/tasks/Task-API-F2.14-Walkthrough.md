@@ -27,8 +27,9 @@ Branch `feat/api-f2.14-home-collections`, modules `filesquid-api`, `filesquid-na
 ## Decisions to confirm
 
 - The upload and copy schemas mark `collection_id` optional until the default UI's callers send it (the UI lane pushes that commit onto this branch); the route refuses a request without it either way. It becomes required with that commit.
-- The journal names the registration with opaque IDs only; "journal the path it used" (API-S-011) is met by the snapshot version the registration publishes and by the answer, since API-S-005 keeps names and paths out of the journal.
-- An upload of new content for an existing file (`file_id`) keeps its home: it names a destination like every upload, and the registration answers the file's existing place.
+- **Spec conflict, owner to decide:** API-S-011 says the route "MUST answer and journal the path it used", while the journal rule for these routes (API-S-011 itself: "journaled once ... with opaque IDs only"; API-S-036: no file or folder name in a journal entry) keeps names out of the journal, and a collection logical path is made of names. This part journals opaque IDs only (the file, the collection, the operation) and puts the path in the answer and in the snapshot version the registration publishes under the same operation ID, so the path used can be recovered from the journal entry's operation. If the owner wants the path itself in the journal, the redaction tests change with it.
+- An upload of new content for an existing file (`file_id`) keeps its home: it names a destination like every upload, and the answer names the file's own collection and path, not the destination it named.
+- A reservation is bound to its command's input (the SHA-256 of the input's JSON, the upload's bytes included): a retry of the same command resumes its file even when a copy's source changed since; the same operation ID with another input is refused (`invalid_request`), and a command that fails before writing releases its reservation.
 
 ## Test output
 

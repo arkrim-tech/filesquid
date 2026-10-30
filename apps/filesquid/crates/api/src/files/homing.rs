@@ -10,7 +10,7 @@ use crate::auth::Principal;
 use crate::canonical::collection_path::{join, safe_segment, ItemKind, PathError};
 use crate::error::ErrorCode;
 use crate::home::destination::{self, Checked, Destination};
-use crate::home::{register_entry, HomeCollections, HomeRequest, Placed};
+use crate::home::{register_entry, HomeCollections, HomeRequest, Placed, Reserved};
 use crate::library::CatalogError;
 use crate::navigation::{FolderScope, NavigationPublisher, NodeRef};
 use crate::ApiState;
@@ -90,27 +90,64 @@ pub(super) async fn read_free_path(
     found.map_err(catalog_error)?.map_err(path_error)
 }
 
-/// Reserve the file ID of the new file `operation_id` makes in `library`: an earlier,
-/// unfinished run's, else a freshly minted one. Writes the reservation on a blocking thread.
+/// Reserve the file ID of the new file `operation_id` makes in `library` for the command
+/// whose input has `fingerprint`: an earlier, unfinished run's, else a freshly minted one.
+/// Writes the reservation on a blocking thread.
 ///
 /// # Errors
-/// `unavailable` when no ID can be minted, or a store failure.
+/// `invalid_request` when the operation ID already reserved a file for another command;
+/// `unavailable` when no ID can be minted; a store failure.
 pub(super) async fn reserve_file_id(
     home: Arc<dyn HomeCollections>,
     library: &LibraryId,
-    operation_id: &str,
+    (operation_id, fingerprint): (&str, &str),
 ) -> Result<FileId, FileError> {
     let minted = super::upload::mint_file_id()?;
     let (library, operation) = (library.clone(), operation_id.to_string());
-    tokio::task::spawn_blocking(move || home.reserve(&library, &operation, &minted))
-        .await
-        .map_err(|_| FileError::internal("the home-collection task failed"))?
-        .map_err(catalog_error)
+    let fingerprint = fingerprint.to_string();
+    let reserved = tokio::task::spawn_blocking(move || {
+        home.reserve(&library, &operation, &fingerprint, &minted)
+    })
+    .await
+    .map_err(|_| FileError::internal("the home-collection task failed"))?
+    .map_err(catalog_error)?;
+    match reserved {
+        Reserved::File(file_id) => Ok(file_id),
+        Reserved::Reused => Err(FileError::invalid(
+            "That operation_id already names another command; send a new one.",
+        )),
+    }
+}
+
+/// Release the reservation of `operation_id` after its command failed before writing
+/// anything; a failure to release is logged, since the command's own refusal is what the
+/// caller is answered.
+pub(super) async fn release_reservation(prepared: &Prepared, operation_id: &str) {
+    if prepared.reserved.is_none() {
+        return;
+    }
+    let (home, library) = (prepared.home.clone(), prepared.homing.library_id.clone());
+    let operation = operation_id.to_string();
+    let released = tokio::task::spawn_blocking(move || home.release(&library, &operation)).await;
+    if !matches!(released, Ok(Ok(()))) {
+        tracing::warn!(target: super::LOG_TARGET, "a reservation could not be released");
+    }
+}
+
+/// The fingerprint of a command's input: the SHA-256 of its JSON, lowercase hex. Pure.
+///
+/// # Errors
+/// `internal` when the input does not encode.
+pub(super) fn fingerprint_of<T: serde::Serialize>(input: &T) -> Result<String, FileError> {
+    let bytes = serde_json::to_vec(input)
+        .map_err(|_| FileError::internal("a command input did not encode"))?;
+    Ok(filesquid_ocfl::DigestAlgorithm::Sha256.digest_hex(&bytes))
 }
 
 /// Register the committed file `file_id` of `homing` in its home collection under
-/// `operation_id`, publishing one snapshot version; answer the path it got. Writes the
-/// host's catalog on a blocking thread.
+/// `operation_id`, publishing one snapshot version; answer the home collection and the path
+/// it got (a file that already has a home keeps it). Writes the host's catalog on a blocking
+/// thread.
 ///
 /// # Errors
 /// The registration's refusal (`collection_not_found`, `path_suffix_exhausted`,
@@ -120,7 +157,7 @@ pub(super) async fn register_file(
     homing: &Homing,
     operation_id: &str,
     file_id: FileId,
-) -> Result<String, FileError> {
+) -> Result<(CollectionId, String), FileError> {
     let request = HomeRequest {
         file_id,
         collection_id: homing.destination.collection_id.clone(),
@@ -134,7 +171,11 @@ pub(super) async fn register_file(
     .map_err(|_| FileError::internal("the home-collection task failed"))?
     .map_err(catalog_error)?;
     match placed {
-        Placed::Registered { path } | Placed::AlreadyRegistered { path } => Ok(path),
+        Placed::Registered { path } => Ok((homing.destination.collection_id.clone(), path)),
+        Placed::AlreadyRegistered {
+            collection_id,
+            path,
+        } => Ok((collection_id, path)),
         Placed::Refused(code) => Err(refused(code)),
     }
 }
@@ -162,8 +203,9 @@ pub(super) struct Prepared {
 }
 
 /// Prepare the home of a file named `name` that `operation_id` writes in `library`: check
-/// the destination, then, for a new file, refuse a path the numbering rule cannot place and
-/// reserve its file ID. Reads the catalog and writes the reservation.
+/// the destination, then, for a new file (whose command's input has the fingerprint given),
+/// refuse a path the numbering rule cannot place and reserve its file ID. Reads the catalog
+/// and writes the reservation.
 ///
 /// # Errors
 /// As [`check_destination`], [`installed`], [`read_free_path`] and [`reserve_file_id`].
@@ -172,16 +214,17 @@ pub(super) async fn prepare_home(
     principal: &Principal,
     (library, destination): (&str, &Destination),
     name: &str,
-    (operation_id, new_file): (&str, bool),
+    (operation_id, fingerprint): (&str, Option<&str>),
 ) -> Result<Prepared, FileError> {
     let homing = check_destination(state, principal, library, destination, name).await?;
     let home = installed(state)?;
-    let reserved = match new_file {
-        true => {
+    let reserved = match fingerprint {
+        Some(fingerprint) => {
             read_free_path(home.clone(), &homing).await?;
-            Some(reserve_file_id(home.clone(), &homing.library_id, operation_id).await?)
+            let ids = (operation_id, fingerprint);
+            Some(reserve_file_id(home.clone(), &homing.library_id, ids).await?)
         }
-        false => None,
+        None => None,
     };
     Ok(Prepared {
         homing,
@@ -203,8 +246,8 @@ pub(super) async fn settle_home(
 ) -> Result<(String, String), FileError> {
     let file_id =
         FileId::new(file_id).map_err(|_| FileError::internal("a committed file ID was refused"))?;
-    let path = register_file(prepared.home, &prepared.homing, operation_id, file_id).await?;
-    let collection = prepared.homing.destination.collection_id;
+    let (collection, path) =
+        register_file(prepared.home, &prepared.homing, operation_id, file_id).await?;
     publish_change(state, &collection, &path);
     Ok((collection.as_str().to_string(), path))
 }
@@ -220,8 +263,7 @@ fn refused(code: &'static str) -> FileError {
         "path_suffix_exhausted" => FileError::coded(
             ErrorCode::Conflict,
             code,
-            "Every name from -1 to -9999 beside that one is taken (path_suffix_exhausted); \
-             nothing was changed.",
+            "Every name from -1 to -9999 beside that one is taken (path_suffix_exhausted).",
         ),
         "collection_not_found" => FileError::coded(
             ErrorCode::NotFound,

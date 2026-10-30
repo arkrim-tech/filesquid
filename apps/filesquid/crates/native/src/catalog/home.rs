@@ -5,17 +5,18 @@
 //! path-taken rule, and a reservation table that keeps each unfinished operation's file ID.
 
 use super::rows::sql;
-use super::{RegisterFile, Registration, SqliteCatalog};
+use super::{placement, RegisterFile, Registration, SqliteCatalog};
 use filesquid_api::canonical::collection_path::{free_path, ItemKind, PathError};
-use filesquid_api::home::{HomeCollections, HomeRequest, Placed};
+use filesquid_api::home::{HomeCollections, HomeRequest, Placed, Reserved};
 use filesquid_api::journal::JournalEntry;
 use filesquid_api::library::{CatalogError, LibraryCatalog};
 use filesquid_core::{CollectionId, FileId, LibraryId};
 use rusqlite::{params, Connection, OptionalExtension};
 
 impl SqliteCatalog {
-    /// The file ID `operation_id` reserved in `library_id`, reserving `minted` when it has
-    /// none. Database I/O.
+    /// The file ID `operation_id` reserved in `library_id` for the input `fingerprint`,
+    /// reserving `minted` when it has none; [`Reserved::Reused`] when the reservation belongs
+    /// to another input. Database I/O.
     ///
     /// # Errors
     /// [`CatalogError::Failed`] for an unknown library or a database failure.
@@ -23,15 +24,61 @@ impl SqliteCatalog {
         &self,
         library_id: &LibraryId,
         operation_id: &str,
-        minted: &FileId,
-    ) -> Result<FileId, CatalogError> {
+        (fingerprint, minted): (&str, &FileId),
+    ) -> Result<Reserved, CatalogError> {
         let libraries = self.lock()?;
         let library = libraries
             .get(library_id.as_str())
             .ok_or_else(|| super::failed("unknown library"))?;
-        insert_reservation(&library.conn, operation_id, minted)?;
-        let held = read_reservation(&library.conn, operation_id)?;
-        FileId::new(held).map_err(|_| super::failed("a reserved file ID is not one"))
+        insert_reservation(&library.conn, operation_id, fingerprint, minted)?;
+        let (held_fingerprint, held) = read_reservation(&library.conn, operation_id)?;
+        if held_fingerprint != fingerprint {
+            return Ok(Reserved::Reused);
+        }
+        let file = FileId::new(held).map_err(|_| super::failed("a reserved file ID is not one"))?;
+        Ok(Reserved::File(file))
+    }
+
+    /// The first free path for `path` in `collection_id` of `library_id`, read from that
+    /// library's own catalog. Database I/O.
+    ///
+    /// # Errors
+    /// [`CatalogError::Failed`] for an unknown library or a database failure.
+    fn free_in(
+        &self,
+        library_id: &LibraryId,
+        (collection_id, path, kind): (&CollectionId, &str, ItemKind),
+    ) -> Result<Result<String, PathError>, CatalogError> {
+        let libraries = self.lock()?;
+        let library = libraries
+            .get(library_id.as_str())
+            .ok_or_else(|| super::failed("unknown library"))?;
+        let mut taken = |candidate: &str| placement::taken(&library.conn, collection_id, candidate);
+        free_path(path, kind, &mut taken)
+    }
+
+    /// The home collection of the registered file `file_id` of `library_id`. Database I/O.
+    ///
+    /// # Errors
+    /// [`CatalogError::Failed`] for an unknown library, an unknown file or a database failure.
+    fn home_collection(
+        &self,
+        library_id: &LibraryId,
+        file_id: &FileId,
+    ) -> Result<CollectionId, CatalogError> {
+        let libraries = self.lock()?;
+        let library = libraries
+            .get(library_id.as_str())
+            .ok_or_else(|| super::failed("unknown library"))?;
+        let home: String = library
+            .conn
+            .query_row(
+                "SELECT home_collection_id FROM files WHERE id = ?1",
+                params![file_id.as_str()],
+                |r| r.get(0),
+            )
+            .map_err(sql)?;
+        CollectionId::new(home).map_err(|_| super::failed("a stored collection ID"))
     }
 
     /// Remove the reservation of `operation_id` in `library_id`. Database I/O.
@@ -54,39 +101,36 @@ impl SqliteCatalog {
     }
 }
 
-/// Store `file_id` as the reservation of `operation_id` unless it has one. Database I/O.
+/// Store `file_id` for the input `fingerprint` as the reservation of `operation_id` unless
+/// it has one. Database I/O.
 fn insert_reservation(
     conn: &Connection,
     operation_id: &str,
+    fingerprint: &str,
     file_id: &FileId,
 ) -> Result<(), CatalogError> {
     conn.execute(
-        "INSERT OR IGNORE INTO reserved_files (operation_id, file_id) VALUES (?1, ?2)",
-        params![operation_id, file_id.as_str()],
+        "INSERT OR IGNORE INTO reserved_files (operation_id, fingerprint, file_id)
+         VALUES (?1, ?2, ?3)",
+        params![operation_id, fingerprint, file_id.as_str()],
     )
     .map_err(sql)?;
     Ok(())
 }
 
-/// The file ID reserved by `operation_id`. Database I/O.
-fn read_reservation(conn: &Connection, operation_id: &str) -> Result<String, CatalogError> {
+/// The input fingerprint and file ID reserved by `operation_id`. Database I/O.
+fn read_reservation(
+    conn: &Connection,
+    operation_id: &str,
+) -> Result<(String, String), CatalogError> {
     conn.query_row(
-        "SELECT file_id FROM reserved_files WHERE operation_id = ?1",
+        "SELECT fingerprint, file_id FROM reserved_files WHERE operation_id = ?1",
         params![operation_id],
-        |r| r.get(0),
+        |r| Ok((r.get(0)?, r.get(1)?)),
     )
     .optional()
     .map_err(sql)?
     .ok_or_else(|| super::failed("a reservation was not stored"))
-}
-
-/// The port's answer for a registration. Pure.
-fn placed(registration: Registration) -> Placed {
-    match registration {
-        Registration::Registered { path } => Placed::Registered { path },
-        Registration::AlreadyRegistered { path } => Placed::AlreadyRegistered { path },
-        Registration::Refused(code) => Placed::Refused(code),
-    }
 }
 
 impl HomeCollections for SqliteCatalog {
@@ -100,22 +144,26 @@ impl HomeCollections for SqliteCatalog {
 
     fn free_path(
         &self,
-        _library_id: &LibraryId,
+        library_id: &LibraryId,
         collection_id: &CollectionId,
         path: &str,
         kind: ItemKind,
     ) -> Result<Result<String, PathError>, CatalogError> {
-        let mut taken = |candidate: &str| self.path_taken(collection_id, candidate);
-        free_path(path, kind, &mut taken)
+        self.free_in(library_id, (collection_id, path, kind))
     }
 
     fn reserve(
         &self,
         library_id: &LibraryId,
         operation_id: &str,
+        fingerprint: &str,
         minted: &FileId,
-    ) -> Result<FileId, CatalogError> {
-        self.reserve_file(library_id, operation_id, minted)
+    ) -> Result<Reserved, CatalogError> {
+        self.reserve_file(library_id, operation_id, (fingerprint, minted))
+    }
+
+    fn release(&self, library_id: &LibraryId, operation_id: &str) -> Result<(), CatalogError> {
+        self.release_file(library_id, operation_id)
     }
 
     fn register(
@@ -130,10 +178,15 @@ impl HomeCollections for SqliteCatalog {
             collection_id: request.collection_id.clone(),
             path: request.path.clone(),
         };
-        let answer = placed(self.register_file(library_id, &register, journal)?);
-        if !matches!(answer, Placed::Refused(_)) {
-            self.release_file(library_id, operation_id)?;
-        }
+        let answer = match self.register_file(library_id, &register, journal)? {
+            Registration::Registered { path } => Placed::Registered { path },
+            Registration::AlreadyRegistered { path } => Placed::AlreadyRegistered {
+                collection_id: self.home_collection(library_id, &request.file_id)?,
+                path,
+            },
+            Registration::Refused(code) => return Ok(Placed::Refused(code)),
+        };
+        self.release_file(library_id, operation_id)?;
         Ok(answer)
     }
 }

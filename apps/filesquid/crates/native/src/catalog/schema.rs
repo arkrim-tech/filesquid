@@ -129,12 +129,15 @@ CREATE INDEX files_dir ON files(home_collection_id, dir_key, name, id)
 ";
 
 /// Version 4 (Task API-F2.14): the file ID each unfinished upload or copy reserved, by its
-/// operation ID, so a retry after a crash between the file's object and its registration
-/// completes the same file once. A registration removes its reservation; a rebuild keeps them,
-/// since they are not derived from the snapshot.
+/// operation ID, with the fingerprint of its command's input, so a retry of the same command
+/// after a crash between the file's object and its registration completes the same file once,
+/// and the same operation ID with another input reserves nothing. A registration, or a command
+/// that failed before writing, removes its reservation; a rebuild keeps them, since they are
+/// not derived from the snapshot.
 const SCHEMA_V4: &str = "
 CREATE TABLE IF NOT EXISTS reserved_files (
     operation_id TEXT PRIMARY KEY,
+    fingerprint TEXT NOT NULL,
     file_id TEXT NOT NULL
 );
 ";

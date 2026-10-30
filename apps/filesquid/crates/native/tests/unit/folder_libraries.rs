@@ -148,7 +148,7 @@ fn a_retired_in_app_root_is_neither_opened_nor_served() {
 }
 
 #[test]
-fn a_version_2_catalog_is_migrated_to_version_3_and_rebuilt_from_its_folder() {
+fn a_version_2_catalog_is_migrated_to_the_current_version_and_rebuilt_from_its_folder() {
     let fx = Fixture::new("de17-v2");
     let lib = fx.create_library("Family archive");
     let trips = fx.create_collection(&lib, "Trips");
@@ -396,7 +396,7 @@ fn a_registered_file_names_its_path_and_object_in_the_snapshot_and_the_index() {
 #[test]
 fn the_catalog_is_the_home_collections_of_uploads_and_copies() {
     use filesquid_api::canonical::collection_path::ItemKind;
-    use filesquid_api::home::{register_entry, HomeCollections, HomeRequest, Placed};
+    use filesquid_api::home::{register_entry, HomeCollections, HomeRequest, Placed, Reserved};
     let fx = Fixture::new("api-f2.14-home");
     let lib = fx.create_library("Family archive");
     let trips = fx.create_collection(&lib, "Trips");
@@ -406,12 +406,26 @@ fn the_catalog_is_the_home_collections_of_uploads_and_copies() {
         Some(lib.clone())
     );
     let minted = new_file();
-    let reserved = home.reserve(&lib, "op-up-1", &minted).expect("reserve");
-    assert_eq!(reserved, minted);
+    let reserved = home
+        .reserve(&lib, "op-up-1", "fp-1", &minted)
+        .expect("reserve");
+    assert_eq!(reserved, Reserved::File(minted.clone()));
     let again = home
-        .reserve(&lib, "op-up-1", &new_file())
+        .reserve(&lib, "op-up-1", "fp-1", &new_file())
         .expect("reserve again");
-    assert_eq!(again, minted, "a retry gets the same file ID");
+    assert_eq!(
+        again,
+        Reserved::File(minted.clone()),
+        "a retry gets the same file ID"
+    );
+    let other = home
+        .reserve(&lib, "op-up-1", "fp-2", &new_file())
+        .expect("reserve another input");
+    assert_eq!(
+        other,
+        Reserved::Reused,
+        "another command under the same operation ID"
+    );
     path_of(register(
         &fx,
         &lib,
@@ -438,15 +452,21 @@ fn the_catalog_is_the_home_collections_of_uploads_and_copies() {
     );
     let fresh = new_file();
     let after = home
-        .reserve(&lib, "op-up-1", &fresh)
+        .reserve(&lib, "op-up-1", "fp-3", &fresh)
         .expect("reserve after");
-    assert_eq!(after, fresh, "the registration released the reservation");
+    assert_eq!(
+        after,
+        Reserved::File(fresh),
+        "the registration released the reservation"
+    );
+    home.release(&lib, "op-up-1").expect("release");
     let replay = home
         .register(&lib, "op-up-1", &request, register_entry("op-up-1"))
         .expect("register again");
     assert_eq!(
         replay,
         Placed::AlreadyRegistered {
+            collection_id: trips.clone(),
             path: "Summer/beach-1.jpg".into()
         }
     );
