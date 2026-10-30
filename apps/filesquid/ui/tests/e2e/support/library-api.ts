@@ -46,6 +46,12 @@ export interface LibraryApi {
   repairRefusal?: { status: number; code: string; reason?: string };
   /** Objects still needing repair. */
   needing: string[];
+  /**
+   * The libraries the host knows, by ID: the revision of an open one, `null` for one it
+   * remembers but has not open now. A library the fake creates or opens is added at `1`;
+   * the facts of any other ID are 404 `not_found`.
+   */
+  libraries: Map<string, string | null>;
   /** Requests of one path, in order. */
   to(path: string): Seen[];
 }
@@ -169,6 +175,7 @@ export async function serveLibraries(page: Page): Promise<LibraryApi> {
     seen: [],
     chooser: "chosen",
     needing: [...OBJECTS],
+    libraries: new Map([[LIB, "1"]]),
     to: (path) => api.seen.filter((request) => request.path === path),
   };
   await serveShell(page);
@@ -178,7 +185,7 @@ export async function serveLibraries(page: Page): Promise<LibraryApi> {
     const body = request.method() === "GET" ? url.search : (request.postDataJSON() as unknown);
     api.seen.push({ path: url.pathname, method: request.method(), body });
     const answer =
-      factsAnswer(request.method(), url) ??
+      factsAnswer(api, request.method(), url) ??
       refusedShape(request.method(), url, body) ??
       answerFor(api, url.pathname, body);
     await route.fulfill({ status: answer.status, json: answer.json });
@@ -190,24 +197,33 @@ export async function serveLibraries(page: Page): Promise<LibraryApi> {
 const FACTS_PATH = /^\/api\/v1\/libraries\/([^/]+)\/facts$/;
 
 /**
- * The facts of a library the page reads for its current revision: the library open at
- * revision `1`, with no free-space reading. Another method is 405, a query 400.
+ * The facts of a library the page reads for its current revision, as the contract answers
+ * them: a library the host knows with its revision (`null` when it is not open now) and no
+ * free-space reading; any other library 404 `not_found`. Another method is 405, a query 400.
  *
+ * @param api - The fake's state, holding the libraries the host knows.
  * @param method - The request method.
  * @param url - The request URL.
  * @returns The answer, or undefined when the request is not for the facts route.
  */
-function factsAnswer(method: string, url: URL): { status: number; json: unknown } | undefined {
+function factsAnswer(
+  api: LibraryApi,
+  method: string,
+  url: URL,
+): { status: number; json: unknown } | undefined {
   const match = FACTS_PATH.exec(url.pathname);
   if (!match) return undefined;
   if (method !== "GET") return { status: 405, json: error("method_not_allowed") };
   if (url.search !== "") return { status: 400, json: error("invalid_request") };
+  const id = decodeURIComponent(match[1] ?? "");
+  const revision = api.libraries.get(id);
+  if (revision === undefined) return { status: 404, json: error("not_found") };
   const facts = {
-    library_id: decodeURIComponent(match[1] ?? ""),
+    library_id: id,
     name: "Untitled library",
     free_bytes: null,
     free_bytes_reason: "volume_unreadable",
-    revision: "1",
+    revision,
   };
   return { status: 200, json: facts };
 }
@@ -292,8 +308,10 @@ function answerFor(
       invalid_objects: [{ object_id: OBJECTS[1], error_codes: ["E023"] }],
     });
   }
+  const libraryId = typeof input.library_id === "string" ? input.library_id : LIB;
+  api.libraries.set(libraryId, "1");
   return outcome(operation, "committed", {
-    library_id: typeof input.library_id === "string" ? input.library_id : LIB,
+    library_id: libraryId,
     spec_version: "1.1",
     objects: 2,
     revision: "1",

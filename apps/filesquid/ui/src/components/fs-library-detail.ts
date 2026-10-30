@@ -287,9 +287,9 @@ export class FsLibraryDetail extends HTMLElement {
     const destination = this.destination;
     if (generation !== this.generation || destination === undefined) return;
     feedback.note(labels.libraryWorking);
-    const report = await step("copy", async () =>
-      source.copy(id, destination, await this.expectedRevision(id)),
-    );
+    const revision = await step("copy", () => this.expectedRevision(id));
+    if (generation !== this.generation) return;
+    const report = await step("copy", () => source.copy(id, destination, revision));
     if (generation !== this.generation) return;
     feedback.clear();
     this.showResult("copy", copyReport(report, labels));
@@ -324,7 +324,9 @@ export class FsLibraryDetail extends HTMLElement {
     const id = this.library as string;
     this.showResult("rebuild", []);
     feedback.note(labels.libraryWorking);
-    await step("rebuild", async () => source.rebuild(id, await this.expectedRevision(id)));
+    const revision = await step("rebuild", () => this.expectedRevision(id));
+    if (generation !== this.generation) return;
+    await step("rebuild", () => source.rebuild(id, revision));
     if (generation !== this.generation) return;
     await this.loadCandidates();
   }
@@ -333,7 +335,8 @@ export class FsLibraryDetail extends HTMLElement {
    * The revision a copy or rebuild of `id` expects: the one the registry kept when this page
    * created or opened the library, else its current revision read from its facts, so a page
    * reached by its address never sends a revision a rename has left behind. Network I/O when
-   * the registry has none.
+   * the registry has none; the caller checks the page's generation after it, before sending
+   * the command.
    */
   private async expectedRevision(id: string): Promise<string> {
     const { source, registry } = this.options as LibraryPageOptions;

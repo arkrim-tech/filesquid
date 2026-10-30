@@ -259,6 +259,23 @@ describe("<fs-library-detail>", () => {
     expect(text(page, '[data-for="actions"] .status')).toBe(labels.libraryWorking);
   });
 
+  it.each(["copy", "rebuild"] as const)(
+    "%s sends nothing for a library the page left while its revision was being read",
+    async (name) => {
+      const source = new FakeLibrarySource();
+      let release: (revision: string) => void = () => undefined;
+      source.current = () => new Promise<string>((resolve) => (release = resolve));
+      const { page } = await mount(source, new LibraryRegistry());
+      action(page, name).click();
+      await settle();
+      page.libraryId = "lib-2";
+      await settle();
+      release("1");
+      await settle();
+      expect(source.calls.filter((call) => call.startsWith(`${name}:`))).toEqual([]);
+    },
+  );
+
   it("copy and rebuild of a library this page did not open expect its current revision from its facts", async () => {
     const registry = new LibraryRegistry();
     const source = new FakeLibrarySource();

@@ -240,6 +240,12 @@ Nine findings on 5d7b75ff:
 - **Docs.** The receipts, desktop and revision bullets and the test counts above follow the code.
 - **Not changed, reason on the thread.** An open of an already-open library still refreshes its recency (`last_opened_ms`) and stores no receipt: recency is host bookkeeping outside the library's revision, and every open moves the library to the top of the recent list.
 
+## Cubic review of the follow-up PR #154 (2026-10-30)
+
+- **Leaving the page.** The library page checks its generation after reading the revision from the facts and before sending the copy or rebuild, so a page the owner left sends nothing for the old library (`copy sends nothing for a library the page left while its revision was being read`, and the same for rebuild).
+- **Facts fake.** The Playwright fake answers the facts route as the contract does: the libraries the host knows with their revision, `null` for one that is not open now, and 404 `not_found` for any other ID. Two new preview tests cover a library that is not open (the copy carries the initial revision for the API to refuse) and an unknown one (no copy is sent, and the page says the library was not found); the library spec passes 14 of 14.
+- **Docs.** `INITIAL_LIBRARY_REVISION` is documented as the fallback for a library that is not open, and the UI README says so.
+
 ## Sync Execution Report
 
 - [`crates/api/resources/srs.md`](../srs.md): API-S-025 gains the **Command envelopes** rules of the library routes (scope, revision, conflict, receipts, the pending rebuild); API-S-038's facts answer gains `revision`.
