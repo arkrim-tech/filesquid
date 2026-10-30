@@ -282,6 +282,21 @@ fn refuse_finished_or_cancelling(job: &Job) -> Result<(), JobError> {
     }
 }
 
+/// Whether a retry of one of `job`'s files may proceed (API-S-037 **Per-file progress**).
+/// Pure.
+///
+/// # Errors
+/// [`JobError::Conflict`]: `job_finished` for a finished job, `cancel_requested` for a job
+/// under a cancel request, `job_paused` for a paused job, which must not start until it is
+/// resumed.
+pub fn retry_allowed(job: &Job) -> Result<(), JobError> {
+    refuse_finished_or_cancelling(job)?;
+    match job.is_paused() {
+        true => Err(JobError::Conflict("job_paused")),
+        false => Ok(()),
+    }
+}
+
 /// Whether `job` runs under a lease that has not ended at `now_ms`: what holds one of its
 /// class's slots. Pure.
 pub fn holds_slot(job: &Job, now_ms: i64) -> bool {

@@ -3,6 +3,7 @@
 //! journal queue with the job ID, the operation ID (absent only for an unknown job ID) and
 //! an error code only; a running job is a process in the registry.
 
+use super::items::{JobItemPage, JobItems};
 use super::model::{Job, JobControl, JobError, JobSpec, JobState, Lease};
 use super::rules::SOURCE_CHANGED;
 use super::slots::{JobClass, JobLimits, Slots};
@@ -10,8 +11,8 @@ use super::store::{JobFilter, JobList, JobStore};
 use super::view::JobView;
 use super::{rules, JOB_LEASE_TTL_MS, MAX_RECOVERED_JOBS};
 use super::{
-    JOB_CANCELLED, JOB_CANCEL_REQUESTED, JOB_COMPLETED, JOB_CREATED, JOB_FAILED, JOB_PAUSED,
-    JOB_RECOVERED, JOB_REFUSED, JOB_RESUMED, JOB_STARTED, JOB_SUSPENDED,
+    JOB_CANCELLED, JOB_CANCEL_REQUESTED, JOB_COMPLETED, JOB_CREATED, JOB_FAILED, JOB_ITEM_RETRIED,
+    JOB_PAUSED, JOB_RECOVERED, JOB_REFUSED, JOB_RESUMED, JOB_STARTED, JOB_SUSPENDED,
 };
 use crate::events::{topic, ApiEvent, EventBus};
 use crate::journal::{now_ms, JournalEntry, Level, Outcome};
@@ -39,6 +40,7 @@ pub struct Jobs {
     ttl_ms: i64,
     events: Option<EventBus>,
     slots: Slots,
+    items: Option<Arc<dyn JobItems>>,
 }
 
 impl std::fmt::Debug for Jobs {
@@ -67,6 +69,7 @@ impl Jobs {
             ttl_ms: JOB_LEASE_TTL_MS,
             events: None,
             slots: Slots::default(),
+            items: None,
         }
     }
 
@@ -76,6 +79,19 @@ impl Jobs {
     pub fn with_events(mut self, events: EventBus) -> Self {
         self.events = Some(events);
         self
+    }
+
+    /// Answer each upload job's destination and files through `items` (API-S-037 **Per-file
+    /// progress**): the job views carry the destination and the retries reach the files.
+    #[must_use]
+    pub fn with_items(mut self, items: Arc<dyn JobItems>) -> Self {
+        self.items = Some(items);
+        self
+    }
+
+    /// The installed per-file progress port, if any.
+    pub fn items(&self) -> Option<Arc<dyn JobItems>> {
+        self.items.clone()
     }
 
     /// Hold jobs of `kind` to the cap of `class` ([`Self::with_limits`]).
@@ -133,6 +149,80 @@ impl Jobs {
     /// [`JobError::NotFound`] or a store failure.
     pub fn job(&self, id: &str) -> Result<Job, JobError> {
         self.store.get(id)?.ok_or(JobError::NotFound)
+    }
+
+    /// The view of `job` with its destination, read from the per-file progress port when
+    /// the host has one; a destination that cannot be read is left out and logged.
+    pub fn view(&self, job: &Job) -> JobView {
+        JobView::of(job).with_destination(self.destination_of(&job.id))
+    }
+
+    /// The summary view of `job` (no result) with its destination, as the listing and the
+    /// `job.update` event carry it.
+    pub fn summary(&self, job: &Job) -> JobView {
+        JobView::summary(job).with_destination(self.destination_of(&job.id))
+    }
+
+    /// The destination of job `id` from the per-file progress port, if any (store I/O).
+    fn destination_of(&self, id: &str) -> Option<super::items::JobDestination> {
+        let items = self.items.as_ref()?;
+        items
+            .destination(id)
+            .inspect_err(
+                |err| tracing::warn!(error = %err, "a job's destination could not be read"),
+            )
+            .ok()
+            .flatten()
+    }
+
+    /// At most `limit` files of job `id` after `cursor` (store I/O).
+    ///
+    /// # Errors
+    /// [`JobError::NotFound`] for an unknown job (journaled as `job.refused`),
+    /// [`JobError::Unavailable`] on a host that keeps no per-file progress, or a store
+    /// failure.
+    pub fn item_page(
+        &self,
+        id: &str,
+        cursor: Option<&str>,
+        limit: usize,
+    ) -> Result<JobItemPage, JobError> {
+        let job = self
+            .job(id)
+            .inspect_err(|err| self.journal_refusal(id, None, err))?;
+        let items = self.items.as_ref().ok_or_else(no_items)?;
+        items.page(&job.id, cursor, limit)
+    }
+
+    /// Put the failed file `item` of job `id` (every failed file when `None`) back to queued
+    /// and answer the job and the IDs put back; each is journaled once as `job.item_retried`
+    /// under the job's operation ID, and the job is published when any was (store I/O).
+    /// Handing a pending job to its runner is the caller's.
+    ///
+    /// # Errors
+    /// [`JobError::NotFound`] for an unknown job or item, [`JobError::Conflict`]
+    /// (`job_finished`, `cancel_requested`, `job_paused`), [`JobError::Unavailable`] on a
+    /// host that keeps no per-file progress, or a store failure; each refusal is journaled.
+    pub fn retry(&self, id: &str, item: Option<&str>) -> Result<(Job, Vec<String>), JobError> {
+        let job = self
+            .job(id)
+            .inspect_err(|err| self.journal_refusal(id, None, err))?;
+        let operation = Some(job.operation_id.as_str());
+        rules::retry_allowed(&job).inspect_err(|err| self.journal_refusal(id, operation, err))?;
+        let items = self.items.as_ref().ok_or_else(no_items)?;
+        let put_back = items
+            .retry(&job.id, item)
+            .inspect_err(|err| self.journal_refusal(id, operation, err))?;
+        for retried in &put_back {
+            let entry = self
+                .entry(&job, JOB_ITEM_RETRIED, Outcome::Info)
+                .target(retried);
+            self.journal.send(entry);
+        }
+        if !put_back.is_empty() {
+            self.publish(&job);
+        }
+        Ok((job, put_back))
     }
 
     /// The jobs `filter` accepts, newest first, at most its limit (store I/O).
@@ -221,7 +311,7 @@ impl Jobs {
         let Some(events) = &self.events else {
             return;
         };
-        match serde_json::to_value(JobView::summary(job)) {
+        match serde_json::to_value(self.summary(job)) {
             Ok(data) => {
                 events.publish(ApiEvent::new(topic::JOB_UPDATE, data));
             }
@@ -377,6 +467,11 @@ impl Jobs {
             None => entry,
         });
     }
+}
+
+/// The refusal of a per-file call on a host without the port. Pure.
+fn no_items() -> JobError {
+    JobError::Unavailable("this host keeps no per-file progress".into())
 }
 
 /// A new pending job `id` for `spec`, submitted at `now`. Pure.

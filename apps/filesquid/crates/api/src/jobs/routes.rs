@@ -6,13 +6,18 @@
 //! - `GET /api/v1/jobs/{job}` (`jobs.read`): one job.
 //! - `POST /api/v1/jobs/{job}/pause`, `/resume`, `/cancel` (`jobs.manage`): one control each;
 //!   a resumed pending job is handed to the host's [`super::JobRunner`] for its kind.
+//! - `GET /api/v1/jobs/{job}/items` (`jobs.read`): an upload job's files, paged (API-S-037
+//!   **Per-file progress**).
+//! - `POST /api/v1/jobs/{job}/items/{item}/retry` and `POST /api/v1/jobs/{job}/retry-failed`
+//!   (`jobs.manage`): failed files back to queued, and a pending job handed to its runner.
 //!
 //! The service journals each control and each refusal it makes; a handler journals only what
 //! it refuses itself (a query it cannot read).
 
+use super::items::MAX_LISTED_ITEMS;
 use super::model::{Job, JobError, JobState};
 use super::store::JobFilter;
-use super::view::{JobControlAnswer, JobPage, JobView};
+use super::view::{JobControlAnswer, JobPage};
 use super::{Jobs, JOB_REFUSED, MAX_LISTED_JOBS};
 use crate::auth::Action;
 use crate::error::{ApiError, ErrorCode};
@@ -35,6 +40,17 @@ pub(crate) fn routes() -> Vec<Route> {
         ("/jobs/{job}/pause", post(pause), Action::ManageJobs),
         ("/jobs/{job}/resume", post(resume), Action::ManageJobs),
         ("/jobs/{job}/cancel", post(cancel), Action::ManageJobs),
+        ("/jobs/{job}/items", get(items), Action::ReadJobs),
+        (
+            "/jobs/{job}/items/{item}/retry",
+            post(retry_item),
+            Action::ManageJobs,
+        ),
+        (
+            "/jobs/{job}/retry-failed",
+            post(retry_failed),
+            Action::ManageJobs,
+        ),
     ]
 }
 
@@ -61,17 +77,86 @@ async fn list(
     };
     let filter = match query.map_err(|_| ()).and_then(|Query(q)| filter_of(q)) {
         Ok(filter) => filter,
-        Err(()) => return invalid(&jobs).into_response(),
+        Err(()) => return invalid(&jobs, FILTER_MESSAGE).into_response(),
     };
-    let listed = blocking(move || jobs.list(&filter)).await;
+    let listing = jobs.clone();
+    let listed = blocking(move || listing.list(&filter)).await;
     match listed {
         Ok(list) => Json(JobPage {
-            jobs: list.jobs.iter().map(JobView::summary).collect(),
+            jobs: list.jobs.iter().map(|job| jobs.summary(job)).collect(),
             truncated: list.truncated,
         })
         .into_response(),
         Err(err) => api_error(&err).into_response(),
     }
+}
+
+/// The query of `GET /api/v1/jobs/{job}/items`.
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ItemsQuery {
+    /// The cursor of the page to answer, from the previous page.
+    cursor: Option<String>,
+    /// At most this many files (1 to 1000, default 1000).
+    limit: Option<usize>,
+}
+
+/// `GET /api/v1/jobs/{job}/items`: an upload job's files, paged.
+async fn items(
+    State(state): State<ApiState>,
+    Path(id): Path<String>,
+    query: Result<Query<ItemsQuery>, QueryRejection>,
+) -> Response {
+    let jobs = match installed(&state) {
+        Ok(jobs) => jobs,
+        Err(err) => return err.into_response(),
+    };
+    let Ok(Query(query)) = query else {
+        return invalid(&jobs, ITEMS_MESSAGE).into_response();
+    };
+    let limit = query.limit.unwrap_or(MAX_LISTED_ITEMS);
+    if !(1..=MAX_LISTED_ITEMS).contains(&limit) {
+        return invalid(&jobs, ITEMS_MESSAGE).into_response();
+    }
+    let paged = blocking(move || jobs.item_page(&id, query.cursor.as_deref(), limit)).await;
+    match paged {
+        Ok(page) => Json(page).into_response(),
+        Err(err) => api_error(&err).into_response(),
+    }
+}
+
+/// `POST /api/v1/jobs/{job}/items/{item}/retry`: one failed file back to queued.
+async fn retry_item(
+    State(state): State<ApiState>,
+    Path((id, item)): Path<(String, String)>,
+) -> Response {
+    retried(&state, id, Some(item)).await
+}
+
+/// `POST /api/v1/jobs/{job}/retry-failed`: every failed file back to queued.
+async fn retry_failed(State(state): State<ApiState>, Path(id): Path<String>) -> Response {
+    retried(&state, id, None).await
+}
+
+/// Retry `item` (every failed file when `None`) of job `id`, then hand a pending job whose
+/// files were put back to its runner; answer the job view. A retry that put nothing back
+/// hands nothing to the runner.
+async fn retried(state: &ApiState, id: String, item: Option<String>) -> Response {
+    let jobs = match installed(state) {
+        Ok(jobs) => jobs,
+        Err(err) => return err.into_response(),
+    };
+    let retrying = jobs.clone();
+    let (job, put_back) = match blocking(move || retrying.retry(&id, item.as_deref())).await {
+        Ok(retried) => retried,
+        Err(err) => return api_error(&err).into_response(),
+    };
+    let scheduled = !put_back.is_empty() && schedule(state, &job);
+    Json(JobControlAnswer {
+        job: jobs.view(&job),
+        scheduled,
+    })
+    .into_response()
 }
 
 /// `GET /api/v1/jobs/{job}`: one job.
@@ -80,8 +165,9 @@ async fn one(State(state): State<ApiState>, Path(id): Path<String>) -> Response 
         Ok(jobs) => jobs,
         Err(err) => return err.into_response(),
     };
-    match blocking(move || jobs.job(&id)).await {
-        Ok(job) => Json(JobView::of(&job)).into_response(),
+    let reading = jobs.clone();
+    match blocking(move || reading.job(&id)).await {
+        Ok(job) => Json(jobs.view(&job)).into_response(),
         Err(err) => api_error(&err).into_response(),
     }
 }
@@ -102,13 +188,14 @@ async fn resume(State(state): State<ApiState>, Path(id): Path<String>) -> Respon
         Ok(jobs) => jobs,
         Err(err) => return err.into_response(),
     };
-    let job = match blocking(move || jobs.resume(&id)).await {
+    let resuming = jobs.clone();
+    let job = match blocking(move || resuming.resume(&id)).await {
         Ok(job) => job,
         Err(err) => return api_error(&err).into_response(),
     };
     let scheduled = schedule(&state, &job);
     Json(JobControlAnswer {
-        job: JobView::of(&job),
+        job: jobs.view(&job),
         scheduled,
     })
     .into_response()
@@ -140,9 +227,10 @@ async fn controlled(
         Ok(jobs) => jobs,
         Err(err) => return err.into_response(),
     };
-    match blocking(move || act(&jobs)).await {
+    let acting = jobs.clone();
+    match blocking(move || act(&acting)).await {
         Ok(job) => Json(JobControlAnswer {
-            job: JobView::of(&job),
+            job: jobs.view(&job),
             scheduled: false,
         })
         .into_response(),
@@ -187,20 +275,25 @@ fn filter_of(query: JobsQuery) -> Result<JobFilter, ()> {
     }
 }
 
-/// Journal a query the list route cannot read, once, and answer its refusal.
-fn invalid(jobs: &Jobs) -> ApiError {
+/// The refusal message of a malformed job filter.
+const FILTER_MESSAGE: &str = "The job filter names an unknown field, state or limit.";
+
+/// The refusal message of a malformed items query.
+const ITEMS_MESSAGE: &str = "The items query names an unknown field or a limit outside 1 to 1000.";
+
+/// Journal a query a route cannot read, once, and answer its refusal with `message`.
+fn invalid(jobs: &Jobs, message: &'static str) -> ApiError {
     let entry = JournalEntry::new(JOB_REFUSED, Outcome::Failed)
         .level(Level::Warn)
         .error_code("invalid_request");
     jobs.journal_entry(entry);
-    let message = "The job filter names an unknown field, state or limit.";
     ApiError::new(ErrorCode::InvalidRequest, message)
 }
 
 /// The typed error of a job refusal or failure. Pure.
 fn api_error(err: &JobError) -> ApiError {
     let (code, message) = match err {
-        JobError::NotFound => (ErrorCode::NotFound, "No job has this ID."),
+        JobError::NotFound => (ErrorCode::NotFound, "No job or item has this ID."),
         JobError::Conflict(rule) => (ErrorCode::Conflict, conflict_message(rule)),
         JobError::Unavailable(_) => (
             ErrorCode::Unavailable,
@@ -224,6 +317,7 @@ fn conflict_message(rule: &str) -> &'static str {
         "job_finished" => "The job has finished; it can no longer be paused, resumed or cancelled.",
         "cancel_requested" => "The job is being cancelled; it can no longer be paused or resumed.",
         "job_running" => "The job is running and was not paused; there is nothing to resume.",
+        "job_paused" => "The job is paused; resume it before retrying its files.",
         _ => "The job cannot take this control now.",
     }
 }
