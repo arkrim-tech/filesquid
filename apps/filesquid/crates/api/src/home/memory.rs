@@ -194,6 +194,77 @@ impl HomeCollections for MemoryHomeCollections {
         }
         Ok(placed)
     }
+
+    fn placement(
+        &self,
+        library_id: &LibraryId,
+        file_id: &FileId,
+    ) -> Result<Option<(CollectionId, String)>, CatalogError> {
+        let state = self.lock();
+        Ok(match state.files.get(file_id) {
+            Some((library, collection, path)) if library == library_id => {
+                Some((collection.clone(), path.clone()))
+            }
+            _ => None,
+        })
+    }
+
+    fn relocate(
+        &self,
+        library_id: &LibraryId,
+        request: &HomeRequest,
+        journal: JournalEntry,
+    ) -> Result<Placed, CatalogError> {
+        let mut state = self.lock();
+        let placed = relocate_in(&mut state, library_id, request);
+        if let Placed::Registered { .. } = placed {
+            let entry = journal
+                .target(request.file_id.as_str())
+                .target(request.collection_id.as_str());
+            state.journal.push(entry);
+        }
+        Ok(placed)
+    }
+}
+
+/// Relocate `request`'s registered file of `library_id` in `state` as
+/// [`HomeCollections::relocate`] says: its own path never takes it.
+fn relocate_in(state: &mut State, library_id: &LibraryId, request: &HomeRequest) -> Placed {
+    let current = match state.files.get(&request.file_id) {
+        Some(place) if &place.0 == library_id => place.clone(),
+        _ => return Placed::Refused("not_found"),
+    };
+    if (&current.1, &current.2) == (&request.collection_id, &request.path) {
+        return Placed::AlreadyRegistered {
+            collection_id: current.1,
+            path: current.2,
+        };
+    }
+    let key = (library_id.clone(), request.collection_id.clone());
+    if !state.collections.contains(&key) {
+        return Placed::Refused("collection_not_found");
+    }
+    state.files.remove(&request.file_id);
+    let found = state.free(
+        library_id,
+        &request.collection_id,
+        &request.path,
+        ItemKind::File,
+    );
+    let path = match found {
+        Ok(path) => path,
+        Err(refused) => {
+            state.files.insert(request.file_id.clone(), current);
+            return Placed::Refused(refused.error_code());
+        }
+    };
+    let place = (
+        library_id.clone(),
+        request.collection_id.clone(),
+        path.clone(),
+    );
+    state.files.insert(request.file_id.clone(), place);
+    Placed::Registered { path }
 }
 
 /// Place `request`'s file in `state`: a file already placed in `library_id` is answered with

@@ -4,14 +4,15 @@
 //! the same registration the import job uses ([`SqliteCatalog::register_file`]), the same
 //! path-taken rule, and a reservation table that keeps each unfinished operation's file ID.
 
-use super::rows::sql;
+use super::rows::{self, sql};
 use super::{placement, RegisterFile, Registration, SqliteCatalog};
 use filesquid_api::canonical::collection_path::{free_path, ItemKind, PathError};
+use filesquid_api::canonical::SnapshotKey;
 use filesquid_api::home::{HomeCollections, HomeRequest, Placed, Reserved};
 use filesquid_api::journal::JournalEntry;
 use filesquid_api::library::{CatalogError, LibraryCatalog};
 use filesquid_core::{CollectionId, FileId, LibraryId};
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, Connection, OptionalExtension, Transaction};
 
 impl SqliteCatalog {
     /// The file ID `operation_id` reserved in `library_id` for the input `fingerprint`,
@@ -101,6 +102,112 @@ impl SqliteCatalog {
     }
 }
 
+impl SqliteCatalog {
+    /// Relocate `request`'s registered file in `library_id` as
+    /// [`HomeCollections::relocate`] says, publishing its entity under the operation ID
+    /// `journal` names; a refusal is journaled `failed` with its code. Database, filesystem
+    /// and journal I/O.
+    ///
+    /// # Errors
+    /// As [`SqliteCatalog::register_file`].
+    fn relocate_file(
+        &self,
+        library_id: &LibraryId,
+        request: &HomeRequest,
+        journal: JournalEntry,
+    ) -> Result<Placed, CatalogError> {
+        let journal = journal
+            .target(request.file_id.as_str())
+            .target(request.collection_id.as_str());
+        let keys = vec![SnapshotKey::File(request.file_id.clone())];
+        let mut outcome = Placed::Refused("internal");
+        self.write_journaled(library_id, journal.clone(), keys, |tx| {
+            outcome = relocate_in(tx, library_id, request)?;
+            Ok(())
+        })?;
+        if let Placed::Refused(code) = outcome {
+            self.journal_refused(library_id, super::register::refused_entry(journal, code))?;
+        }
+        Ok(outcome)
+    }
+
+    /// The home collection and logical path of `file_id` in `library_id`, if registered.
+    /// Database I/O.
+    ///
+    /// # Errors
+    /// [`CatalogError::Failed`] for an unknown library or a database failure.
+    fn placement_in(
+        &self,
+        library_id: &LibraryId,
+        file_id: &FileId,
+    ) -> Result<Option<(CollectionId, String)>, CatalogError> {
+        let libraries = self.lock()?;
+        let library = libraries
+            .get(library_id.as_str())
+            .ok_or_else(|| super::failed("unknown library"))?;
+        home_of(&library.conn, file_id)
+    }
+}
+
+/// The home collection and logical path of the registered file `file_id`. Database I/O.
+fn home_of(
+    conn: &Connection,
+    file_id: &FileId,
+) -> Result<Option<(CollectionId, String)>, CatalogError> {
+    let row: Option<(String, Option<String>)> = conn
+        .query_row(
+            "SELECT home_collection_id, path FROM files WHERE id = ?1",
+            params![file_id.as_str()],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()
+        .map_err(sql)?;
+    let Some((collection, Some(path))) = row else {
+        return Ok(None);
+    };
+    let collection =
+        CollectionId::new(collection).map_err(|_| super::failed("a stored collection ID"))?;
+    Ok(Some((collection, path)))
+}
+
+/// Relocate `request`'s file inside `tx`: refuse an unregistered file and a collection the
+/// library does not hold; answer a file already there as it is; else give it the first free
+/// path, its own path never counting as taken, and store its new home. Database I/O.
+fn relocate_in(
+    tx: &Transaction<'_>,
+    library_id: &LibraryId,
+    request: &HomeRequest,
+) -> Result<Placed, CatalogError> {
+    let Some((home, current)) = home_of(tx, &request.file_id)? else {
+        return Ok(Placed::Refused("not_found"));
+    };
+    if home == request.collection_id && current == request.path {
+        return Ok(Placed::AlreadyRegistered {
+            collection_id: home,
+            path: current,
+        });
+    }
+    if rows::collection(tx, library_id, &request.collection_id)?.is_none() {
+        return Ok(Placed::Refused("collection_not_found"));
+    }
+    let own = |candidate: &str| home == request.collection_id && candidate == current;
+    let mut taken = |candidate: &str| match own(candidate) {
+        true => Ok(false),
+        false => placement::taken(tx, &request.collection_id, candidate),
+    };
+    let path = match free_path(&request.path, ItemKind::File, &mut taken)? {
+        Ok(path) => path,
+        Err(refused) => return Ok(Placed::Refused(refused.error_code())),
+    };
+    tx.execute(
+        "UPDATE files SET home_collection_id = ?2 WHERE id = ?1",
+        params![request.file_id.as_str(), request.collection_id.as_str()],
+    )
+    .map_err(sql)?;
+    placement::place(tx, &request.file_id, &path)?;
+    Ok(Placed::Registered { path })
+}
+
 /// Store `file_id` for the input `fingerprint` as the reservation of `operation_id` unless
 /// it has one. Database I/O.
 fn insert_reservation(
@@ -188,5 +295,22 @@ impl HomeCollections for SqliteCatalog {
         };
         self.release_file(library_id, operation_id)?;
         Ok(answer)
+    }
+
+    fn placement(
+        &self,
+        library_id: &LibraryId,
+        file_id: &FileId,
+    ) -> Result<Option<(CollectionId, String)>, CatalogError> {
+        self.placement_in(library_id, file_id)
+    }
+
+    fn relocate(
+        &self,
+        library_id: &LibraryId,
+        request: &HomeRequest,
+        journal: JournalEntry,
+    ) -> Result<Placed, CatalogError> {
+        self.relocate_file(library_id, request, journal)
     }
 }

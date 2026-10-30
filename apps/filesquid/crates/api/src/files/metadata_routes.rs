@@ -5,6 +5,7 @@
 
 use super::command::{self, FileCommand};
 use super::error::FileError;
+use super::homing;
 use super::provenance::{Caller, Committed};
 use super::routes::{body, files, query, read_answer, recorded, refuse};
 use super::statements::{
@@ -150,15 +151,29 @@ async fn rename(
     request: Result<Json<FileCommand<RenameRequest>>, JsonRejection>,
 ) -> Response {
     let command = body(request).and_then(|c| command::check(c.envelope, c.input));
-    let principal = &principal;
+    let (state, principal) = (&state, &principal);
     command::run(
-        &state,
+        state,
         principal,
         RENAME_OPERATION,
         command,
         |files, c, actor| async move {
+            let operation_id = c.operation_id.as_str().to_string();
+            let input = &c.input;
+            let renaming = homing::prepare_rename(
+                state,
+                &input.library_id,
+                &input.file_id,
+                &input.display_name,
+            )
+            .await?;
             let caller = Caller::new(actor).with_operation(c.operation_id);
-            Ok(recorded(files.rename(c.input, caller, c.expected).await?))
+            let mut renamed = files.rename(c.input, caller, c.expected).await?;
+            if let Some(renaming) = renaming {
+                let path = homing::settle_rename(state, renaming, &operation_id).await?;
+                renamed.view.path = Some(path);
+            }
+            Ok(recorded(renamed))
         },
     )
     .await
