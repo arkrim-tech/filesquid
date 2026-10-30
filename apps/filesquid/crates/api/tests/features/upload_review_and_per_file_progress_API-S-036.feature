@@ -16,7 +16,7 @@
 # retry of one failed file or of all failed files MUST put them back to queued and hand the job
 # to its runner, refuse a paused job as job_paused with no change, change nothing when repeated,
 # and journal each file put back once as job.item_retried.
-# Task API-F2.16 (contract 0.31.0).
+# Task API-F2.16 (contract 0.32.0).
 Feature: Upload review step and per-file job progress
   As a library owner
   I want to review what an upload will do before it starts and follow every file while it runs
