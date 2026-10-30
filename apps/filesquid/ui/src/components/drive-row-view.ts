@@ -53,7 +53,7 @@ export const BADGE_STYLE = `
 /** The stylesheet of rows, tiles, headers and the checkbox, tokens only (UI-S-024). */
 export const STYLE = `
   .table { --cols: 1.5rem 0.5rem 3.25rem minmax(0, 1fr) 6.25rem 1.875rem 6.875rem 5rem 0.375rem 1.875rem; display: flex; flex-direction: column; flex: 1 1 auto; min-width: 0; min-height: 0; background: var(--fs-surface); }
-    .head { display: grid; grid-template-columns: var(--cols); align-items: center; box-sizing: border-box; padding-inline-end: var(--fs-space-2); block-size: 2.375rem; border-block-end: 1px solid var(--fs-outline-strong); font-size: var(--fs-font-size-small); font-weight: 500; color: var(--fs-on-surface-variant); }
+    .head { flex: none; display: grid; grid-template-columns: var(--cols); align-items: center; box-sizing: border-box; padding-inline-end: var(--fs-space-2); block-size: 2.375rem; border-block-end: 1px solid var(--fs-outline-strong); font-size: var(--fs-font-size-small); font-weight: 500; color: var(--fs-on-surface-variant); }
   .head .col-check { grid-column: 1; display: flex; justify-content: center; }
   .head .col-name { grid-column: 4; } .head .col-size { grid-column: 5; text-align: end; }
   .head .col-modified { grid-column: 7; } .head .col-version { grid-column: 8; }

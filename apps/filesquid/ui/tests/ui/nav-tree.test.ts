@@ -168,6 +168,98 @@ describe("<fs-nav-tree> structure", () => {
     expect(item(root, "collection", "Photos").getAttribute("tabindex")).toBe("-1");
   });
 
+  // Task UI-F3.1: a destination change used to rebuild every node of the tree. With the 10,000
+  // nodes of the Large catalog (80,000 elements) that took about 0.7 s of the main thread on
+  // every folder opened, so the title and the rows waited for it. Only aria-current, the Tab
+  // stop and the Pin toggle depend on the current destination, so they move in place.
+  describe("changing the current destination", () => {
+    it("keeps every rendered node and moves aria-current between them", async () => {
+      const { root, tree } = await mount();
+      const photos = item(root, "collection", "Photos");
+      const hobbies = item(root, "collection", "Hobbies");
+      const all = [...root.querySelectorAll("[role=treeitem]")];
+      tree.current = "c1";
+      expect(photos.getAttribute("aria-current")).toBe("page");
+      tree.current = "c2";
+      expect(photos.hasAttribute("aria-current")).toBe(false);
+      expect(hobbies.getAttribute("aria-current")).toBe("page");
+      expect(item(root, "collection", "Photos")).toBe(photos);
+      expect(item(root, "collection", "Hobbies")).toBe(hobbies);
+      expect([...root.querySelectorAll("[role=treeitem]")]).toEqual(all);
+      expect(root.querySelectorAll('[aria-current="page"]')).toHaveLength(1);
+    });
+
+    it("clears aria-current when there is no current destination", async () => {
+      const { root, tree } = await mount();
+      tree.current = "c2";
+      tree.current = undefined;
+      expect(root.querySelectorAll('[aria-current="page"]')).toHaveLength(0);
+    });
+
+    it("marks the node in every section that shows it", async () => {
+      const { root, tree } = await mount(undefined, {
+        pinned: [{ node: "c1", kind: "collection" }],
+      });
+      tree.current = "c1";
+      const marked = [...root.querySelectorAll('[aria-current="page"]')].map(
+        (a) => a.closest("section")?.dataset.section,
+      );
+      expect(marked.sort()).toEqual(["collection", "pinned"]);
+    });
+
+    it("moves each section's Tab stop to the current item, one per section", async () => {
+      const { root, tree } = await mount();
+      tree.current = "c2";
+      tree.current = "v1";
+      for (const section of root.querySelectorAll("section")) {
+        const stops = [...section.querySelectorAll('[role="treeitem"]')].filter(
+          (a) => a.getAttribute("tabindex") === "0",
+        );
+        expect(stops).toHaveLength(section.querySelector('[role="treeitem"]') ? 1 : 0);
+      }
+      expect(item(root, "virtual_collection", "Best of 2025").getAttribute("tabindex")).toBe("0");
+    });
+
+    it("keeps the Tab stop the person moved to, and words the Pin toggle for the stop", async () => {
+      const { root, tree } = await mount();
+      const hobbies = item(root, "collection", "Hobbies");
+      hobbies.focus();
+      tree.current = "c1";
+      expect(hobbies.getAttribute("tabindex")).toBe("0");
+      expect(item(root, "collection", "Photos").getAttribute("tabindex")).toBe("-1");
+      expect(button(root, "collection", "pin").dataset.node).toBe("c2");
+    });
+
+    it("finds a handle that holds quotes, backslashes and line breaks", async () => {
+      const handle = 'c"9\\ x\ny';
+      const library = oneLibrary.children?.[0] as FixtureNode;
+      const odd: FixtureNode = {
+        ...oneLibrary,
+        children: [
+          {
+            ...library,
+            children: [
+              ...(library.children ?? []),
+              { node: handle, kind: "collection", name: "Odd" },
+            ],
+          },
+        ],
+      };
+      const { root, tree } = await mount(new MemoryNavigationSource(odd));
+      tree.current = handle;
+      expect(item(root, "collection", "Odd").getAttribute("aria-current")).toBe("page");
+      expect(item(root, "collection", "Odd").getAttribute("tabindex")).toBe("0");
+    });
+
+    it("words the Pin toggle for the current item when no stop was remembered", async () => {
+      const { root, tree } = await mount();
+      tree.current = "c2";
+      expect(button(root, "collection", "pin").dataset.node).toBe("c2");
+      tree.current = "c1";
+      expect(button(root, "collection", "pin").dataset.node).toBe("c1");
+    });
+  });
+
   it("takes routes from the configured href function", async () => {
     const store = new NavigationStore({});
     store.start();
@@ -214,7 +306,15 @@ describe("<fs-nav-tree> v3 look (UI-S-017, UI-S-024, mockup 55)", () => {
       const glyph = row.querySelector<SVGElement>(".kind-icon");
       expect(glyph?.dataset.icon).toBe(kinds[row.dataset.kind ?? ""]);
       expect(glyph?.getAttribute("width")).toBe("16");
-      expect(row.querySelector<SVGElement>(".twisty svg")?.dataset.icon).toBe("chevron");
+      // Every row keeps its twisty slot, so names align; only a parent draws the chevron (a level
+      // of 10,000 rows saves 20,000 elements: Task UI-F3.1).
+      const twisty = row.querySelector(".twisty");
+      expect(twisty).not.toBeNull();
+      const parent = twisty?.classList.contains("parent") === true;
+      expect(row.querySelector<SVGElement>(".twisty svg")?.dataset.icon).toBe(
+        parent ? "chevron" : undefined,
+      );
+      expect(row.hasAttribute("aria-expanded")).toBe(parent);
     }
     expect(photos.querySelector<SVGElement>(".twisty svg")?.dataset.icon).toBe("chevron");
     expect(photos.querySelector(".twisty")?.classList.contains("parent")).toBe(true);
@@ -236,7 +336,7 @@ describe("<fs-nav-tree> v3 look (UI-S-017, UI-S-024, mockup 55)", () => {
     expect(css).toMatch(/:host \{[^}]*font-size: var\(--fs-font-size-small\)/);
     expect(css).toMatch(/\ba \{[^}]*min-block-size: 1\.875rem/);
     expect(css).toMatch(
-      /a\[aria-current="page"\] \{ background: var\(--fs-primary-container\); color: var\(--fs-on-primary-container\); font-weight: 500; \}/,
+      /a\[aria-current="page"\] \{ position: relative; background: var\(--fs-primary-container\); color: var\(--fs-on-primary-container\); font-weight: 500; \}/,
     );
     expect(css).toMatch(
       /a\[aria-current="page"\]::before \{[^}]*inline-size: 2\.5px; background: var\(--fs-brand\)/,

@@ -53,9 +53,10 @@ export interface NavigationViewOptions {
 const VIEWABLE: ReadonlySet<string> = new Set(["library", "collection", "virtual_collection"]);
 
 const STYLE = `
-  :host { display: block; font-family: var(--fs-font-sans); color: var(--fs-on-surface); }
+  :host { display: block; block-size: 100%; min-block-size: 0; font-family: var(--fs-font-sans); color: var(--fs-on-surface); }
   section { display: grid; gap: var(--fs-space-3); min-width: 0; }
-  section.drive { gap: 0; }
+  section.drive { display: flex; flex-direction: column; gap: 0; block-size: 100%; min-block-size: 0; }
+  section.drive > div { display: flex; flex-direction: column; flex: 1 1 auto; min-block-size: 0; }
   h2 { margin: 0; font-family: var(--fs-font-heading); font-size: var(--fs-font-size-title); font-weight: 700; color: var(--fs-on-surface); overflow-wrap: anywhere; }
   .files { margin: 0; color: var(--fs-on-surface-variant); font-size: var(--fs-font-size-body); }
   [hidden] { display: none !important; }

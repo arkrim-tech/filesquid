@@ -42,6 +42,8 @@ describe("clean results before each run", () => {
     expect(script).toContain("tests/allure-results/playwright ");
     expect(script).toContain("tests/allure-results/playwright-junit.xml");
     expect(script).toContain("tests/allure-results/playwright-preview-junit.xml");
+    expect(script).toContain("tests/allure-results/playwright-performance-junit.xml");
+    expect(script).toContain("tests/allure-results/performance");
     expect(script).not.toMatch(/tests\/allure-results(\s|$)/);
   });
 
@@ -66,15 +68,16 @@ describe("Allure and JUnit output", () => {
     expect(config).toContain('outputFile: { junit: "tests/allure-results/vitest-junit.xml" }');
   });
 
-  it.each(["playwright.config.ts", "playwright.preview.config.ts"])(
-    "writes Playwright Allure results and JUnit from %s",
-    (file) => {
-      const config = code(file);
-      expect(config).toContain('"allure-playwright"');
-      expect(config).toContain('resultsDir: "tests/allure-results/playwright"');
-      expect(config).toMatch(/outputFile: "tests\/allure-results\/playwright[a-z-]*-junit\.xml"/);
-    },
-  );
+  it.each([
+    "playwright.config.ts",
+    "playwright.preview.config.ts",
+    "playwright.performance.config.ts",
+  ])("writes Playwright Allure results and JUnit from %s", (file) => {
+    const config = code(file);
+    expect(config).toContain('"allure-playwright"');
+    expect(config).toContain('resultsDir: "tests/allure-results/playwright"');
+    expect(config).toMatch(/outputFile: "tests\/allure-results\/playwright[a-z-]*-junit\.xml"/);
+  });
 
   it("generates the Allure report into an untracked directory", () => {
     expect(pkg.scripts["report"]).toContain("allure generate");
@@ -100,6 +103,29 @@ describe("production artifact suite", () => {
   it("keeps the preview specs out of the server-backed run and runs both in turn", () => {
     expect(code("playwright.config.ts")).toContain('testIgnore: "**/preview/**"');
     expect(pkg.scripts["test:e2e"]).toBe("node tests/support/run-e2e.mjs");
+  });
+
+  it("runs the performance suite on the same built artifact, with the budgets as assertions", () => {
+    const config = code("playwright.performance.config.ts");
+    expect(config).toMatch(/command: `npm run build && npx vite preview [^`]*--strictPort`/);
+    expect(config).toMatch(new RegExp(`const PORT = ${PREVIEW_PORT};`));
+    expect(config).toContain('testDir: "tests/performance"');
+    expect(config).toContain("workers: 1");
+    expect(config).toContain("retries: 0");
+    expect(config).toContain('trace: "off"');
+    expect(pkg.scripts["test:perf"]).toBe("playwright test -c playwright.performance.config.ts");
+    expect(pkg.scripts["pretest:perf"]).toContain("tests/allure-results/performance");
+    expect(pkg.scripts["pretest:perf"]).toContain(
+      "tests/allure-results/playwright-performance-junit.xml",
+    );
+    // The performance run writes its Allure results into the shared Playwright directory, so a
+    // standalone run clears it too, or it would report the results of an earlier suite.
+    expect(pkg.scripts["pretest:perf"]).toMatch(/tests\/allure-results\/playwright(\s|$)/);
+  });
+
+  it("keeps the performance specs out of the other two Playwright runs", () => {
+    expect(code("playwright.config.ts")).toContain('testDir: "tests/e2e"');
+    expect(code("playwright.preview.config.ts")).toContain('testDir: "tests/e2e/preview"');
   });
 
   it("keeps the preview port in the Vite config", () => {

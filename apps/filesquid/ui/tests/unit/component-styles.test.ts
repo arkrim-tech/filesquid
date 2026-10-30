@@ -314,3 +314,76 @@ describe("UI-S-016 accessibility contracts in component stylesheets", () => {
     );
   });
 });
+
+describe("the list scrolls inside the content area (UI-S-025, UI-S-026, Task UI-F3.1)", () => {
+  // A list as tall as its rows renders every row and loads every page; the virtual window only
+  // works when each element between the shell's main area and the list's scrolling area has a
+  // bounded height. Layout itself is proven by the Playwright DOM-bound test in
+  // tests/performance/40-resources.perf.spec.ts; this keeps the rule in the stylesheet, where a
+  // refactor would break it.
+  const css = sources.find((s) => s.name === "fs-navigation-view.ts")?.css ?? "";
+
+  it("gives the navigation view the height of the main area", () => {
+    expect(css).toMatch(/:host\s*\{[^}]*block-size:\s*100%/);
+    expect(css).toMatch(/:host\s*\{[^}]*min-block-size:\s*0/);
+  });
+
+  it("makes the section that holds a file view a bounded column", () => {
+    expect(css).toMatch(/section\.drive\s*\{[^}]*display:\s*flex/);
+    expect(css).toMatch(/section\.drive\s*\{[^}]*flex-direction:\s*column/);
+    expect(css).toMatch(/section\.drive\s*\{[^}]*block-size:\s*100%/);
+    expect(css).toMatch(/section\.drive\s*\{[^}]*min-block-size:\s*0/);
+  });
+
+  it("keeps the column header at 38 px however long the list is", () => {
+    // The scroller shrinks (min-block-size 0) and its content is 44 px per row, so the free
+    // space is negative by almost its whole height; a header that may shrink gives up nearly all
+    // of its own height (17 px of 38 with 11,000 rows, found by the Large catalog).
+    const rows = sources.find((s) => s.name === "drive-row-view.ts")?.css ?? "";
+    expect(rows).toMatch(/\.head\s*\{[^}]*flex:\s*none/);
+    expect(rows).toMatch(/\.head\s*\{[^}]*block-size:\s*2\.375rem/);
+  });
+
+  it("lets the body of that section shrink to the space that is left", () => {
+    expect(css).toMatch(/section\.drive > div\s*\{[^}]*flex:\s*1 1 auto/);
+    expect(css).toMatch(/section\.drive > div\s*\{[^}]*min-block-size:\s*0/);
+  });
+});
+
+describe("a long navigation tree does not tax every frame (NFR-002, Task UI-F3.1)", () => {
+  // The tree draws every node of a level up to the cap of 10,000 (50 pages of 200), about 80,000
+  // elements. Left uncontained, every change in the main area makes the browser walk and
+  // commit them again: on the Large catalog it added about 20 ms to each frame and pushed the
+  // warm sort result past the 100 ms budget. Layout, paint and style containment (not size,
+  // so the stacked narrow layout keeps its height) stops the tree and the rest of the page from
+  // costing each other; the Playwright warm-browse budgets are the proof.
+  const css = sources.find((s) => s.name === "fs-app-shell.ts")?.css ?? "";
+
+  it("contains the scrolling wrapper of the tree", () => {
+    expect(css).toMatch(/\.tree\s*\{[^}]*contain:\s*layout paint style/);
+  });
+
+  it("does not use size containment, which would collapse the tree in the stacked layout", () => {
+    expect(css).not.toMatch(/\.tree\s*\{[^}]*contain:[^;}]*(size|strict)/);
+  });
+
+  it("positions a tree row only while it is the current one", () => {
+    // A positioned element is its own paint layer: 10,000 rows would be 10,000 layers to walk on
+    // every frame. Only the current row needs a positioned box, for its 2.5 px brand marker.
+    const tree = sources.find((s) => s.name === "fs-nav-tree.ts")?.css ?? "";
+    // Every rule is checked, comma-separated selector lists included: a rule that names a row
+    // (`a`, `a[data-kind=...]`, `a:hover`) other than the current one must not position it.
+    const rules = [...tree.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => ({
+      selectors: (m[1] ?? "").split(",").map((s) => s.trim()),
+      body: m[2] ?? "",
+    }));
+    const rowRules = rules.filter((r) =>
+      r.selectors.some((s) => /^a(?![\w-])/.test(s) && !s.includes('[aria-current="page"]')),
+    );
+    expect(rowRules.length).toBeGreaterThan(0);
+    for (const rule of rowRules)
+      expect(rule.body, rule.selectors.join(", ")).not.toMatch(/position:/);
+    const current = rules.find((r) => r.selectors.includes('a[aria-current="page"]'));
+    expect(current?.body).toMatch(/position:\s*relative/);
+  });
+});
