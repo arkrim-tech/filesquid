@@ -4,7 +4,12 @@
  * (the stop-gap of `singleOpenLibrary`), All files, Recent and the search scope all mean this one
  * library, so the scope chip "In: {library}" and the node a search is sent to cannot disagree.
  */
-import type { NavigationNode, NavigationSource } from "./model";
+import {
+  MAX_PAGES,
+  type NavigationNode,
+  type NavigationPage,
+  type NavigationSource,
+} from "./model";
 
 /** The library a view or a search is scoped to. */
 export interface LibraryScope {
@@ -49,6 +54,26 @@ export function cachedLibraryScope(
 }
 
 /**
+ * The first child of `parent` of one kind, following the listing's cursor (at most
+ * {@link MAX_PAGES} pages), so a node on a later page is found too. Network I/O.
+ */
+async function firstOfKind(
+  navigation: NavigationSource,
+  parent: string | null,
+  kind: NavigationNode["kind"],
+): Promise<NavigationNode | undefined> {
+  let cursor: string | null = null;
+  for (let pages = 0; pages < MAX_PAGES; pages += 1) {
+    const page: NavigationPage = await navigation.list(parent, cursor);
+    const found = page.nodes.find((node) => node.kind === kind);
+    if (found) return found;
+    cursor = page.next_cursor;
+    if (cursor === null) return undefined;
+  }
+  return undefined;
+}
+
+/**
  * The first library the host lists. At most one read per level, so a host with many libraries
  * costs two calls. Network I/O via the navigation source.
  *
@@ -59,10 +84,8 @@ export function cachedLibraryScope(
 export async function firstLibraryScope(
   navigation: NavigationSource,
 ): Promise<LibraryScope | undefined> {
-  const root = await navigation.list(null);
-  const repository: NavigationNode | undefined = root.nodes.find((n) => n.kind === "repository");
+  const repository = await firstOfKind(navigation, null, "repository");
   if (!repository) return undefined;
-  const libraries = await navigation.list(repository.node);
-  const library = libraries.nodes.find((node) => node.kind === "library");
+  const library = await firstOfKind(navigation, repository.node, "library");
   return library ? { node: library.node, name: library.name } : undefined;
 }

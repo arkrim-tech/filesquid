@@ -7,7 +7,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "../../src/api/client";
-import { OPERATORS_ON_HOST, SUGGESTED_FILES } from "../../src/search/model";
+import { MAX_LOCATION_PAGES, OPERATORS_ON_HOST, SUGGESTED_FILES } from "../../src/search/model";
 import {
   SCOPE,
   all,
@@ -421,6 +421,56 @@ describe("<fs-search-bar> Location choices", () => {
     await click(one(element, "button.filter-chip[data-filter=in]"));
     expect(all(element, ".suggestion")).toHaveLength(0);
     expect(warn).toHaveBeenCalled();
+  });
+
+  it("follows the listing's cursor, so a collection past the first page is offered", async () => {
+    const { element } = mountBar();
+    const page = (names: string[], next: string | null) => ({
+      nodes: names.map((name) => ({
+        node: "c-" + name,
+        kind: "collection" as const,
+        name,
+        has_children: false,
+      })),
+      ancestors: [],
+      next_cursor: next,
+    });
+    const list = vi
+      .fn()
+      .mockResolvedValueOnce(page(["Alpha"], "p2"))
+      .mockResolvedValueOnce(page(["Beta"], "p3"))
+      .mockResolvedValueOnce(page(["Zeta"], null));
+    element.configure({
+      labels: (await import("../../src/theme/labels.en.json")).default,
+      search: searchSource(),
+      navigation: { list },
+      scope: async () => SCOPE,
+      debounceMs: 0,
+    });
+    await focusField(element);
+    await click(one(element, "button.filter-chip[data-filter=in]"));
+    expect(texts(element, ".suggestion .value")).toEqual(["Alpha", "Beta", "Zeta"]);
+    expect(list).toHaveBeenCalledTimes(3);
+    expect(list.mock.calls.map((call) => call[1])).toEqual([null, "p2", "p3"]);
+  });
+
+  it("stops after ten pages of collections, however long the listing goes on", async () => {
+    const { element } = mountBar();
+    const list = vi.fn(async () => ({
+      nodes: [{ node: "c", kind: "collection" as const, name: "Same", has_children: false }],
+      ancestors: [],
+      next_cursor: "more",
+    }));
+    element.configure({
+      labels: (await import("../../src/theme/labels.en.json")).default,
+      search: searchSource(),
+      navigation: { list },
+      scope: async () => SCOPE,
+      debounceMs: 0,
+    });
+    await focusField(element);
+    await click(one(element, "button.filter-chip[data-filter=in]"));
+    expect(list).toHaveBeenCalledTimes(MAX_LOCATION_PAGES);
   });
 
   it("lists nothing and logs when the scope cannot be found", async () => {

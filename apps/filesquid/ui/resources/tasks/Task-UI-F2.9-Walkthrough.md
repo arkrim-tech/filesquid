@@ -6,7 +6,7 @@ Branch `feat/ui-f2.9-search-bar-chips`. Module row of global Task FS-2.5. Plan r
 
 | SRS ID and title | What was built | Proof |
 |---|---|---|
-| [UI-S-007](../srs.md) The global search bar MUST offer Type, People, Modified and Location chips with typed suggestions, chip-plus-text layering, per-chip remove and clear-all, drop-down results and Enter for the full list with column sorting; the sidebar filter MUST narrow the current view only; the active scope and result summary MUST show as chips; unsupported operators MUST be shown as unsupported | `<fs-search-bar>`: Type, Location, Modified and Title chips (People left out, UI-S-030), typed suggestions, chips plus text in one field, a remove control on each chip, Clear all, the drop-down with live FILES, Enter to `#/search/<query>`, the results in the Drive list with column heads, the scope and count chips (also while the sidebar filter holds text), and the refusal box for an operator the host cannot answer or does not know | `search-bar.test.ts`, `search-results.test.ts`, `search-route.test.ts`, `search.spec.ts` |
+| [UI-S-007](../srs.md) (partly met: the People chip is deferred to the accounts task, as UI-S-030 directs) The global search bar MUST offer Type, People, Modified and Location chips with typed suggestions, chip-plus-text layering, per-chip remove and clear-all, drop-down results and Enter for the full list with column sorting; the sidebar filter MUST narrow the current view only; the active scope and result summary MUST show as chips; unsupported operators MUST be shown as unsupported | `<fs-search-bar>`: Type, Location, Modified and Title chips (People left out, UI-S-030), typed suggestions, chips plus text in one field, a remove control on each chip, Clear all, the drop-down with live FILES, Enter to `#/search/<query>`, the results in the Drive list with column heads, the scope and count chips (also while the sidebar filter holds text), and the refusal box for an operator the host cannot answer or does not know | `search-bar.test.ts`, `search-results.test.ts`, `search-route.test.ts`, `search.spec.ts` |
 | [UI-S-030](../srs.md) Search composition: while typing (mockup 20), refused as unavailable (mockup 21), unknown operator (mockup 53) | Applied chips inside the field (24 px, `--fs-primary-container`, 13 px 500), Clear all, the field widened to 620 px with the focus border, the 620 x 520 px drop-down with FILTERS, SUGGESTIONS (`in:`, `type:`, `title:`), FILES, OPERATORS and "Enter shows all results"; "Search results" with "In: {library}" and "{n} files" chips, the error box "{operator} is not available on this device." or "{operator} is not a search operator." with their help lines, "Nothing was searched.", OPERATORS ON THIS DEVICE and the footer "0 results"; keys `searchUnavailable`, `searchUnavailableHelp`, `searchUnknownOperator`, `searchUnknownOperatorHelp`, `searchNothingSearched`, `searchOperatorsOnHost`, `searchEnterHint` and 31 more | the three mockup tests of `search.spec.ts` in light and dark (boxes within 2 px, computed styles, strings from the label table) |
 | [UI-S-024](../srs.md) Visual constants of the active mockup suite | Every colour through a token in light and dark (field, chips, drop-down, rows, badge, refusal box, operator chips), Georgia title 30 px 700, 14, 13, 11 and 10 px text, eyebrows 11 px 400 upper case 0.1em, radii 6, 8, 5, 4 and 3 px, 36 px field, 1.5 px control border and 2 px focus border; spacing, type size and radius only from tokens (`component-styles.test.ts` covers the three new stylesheets); no new token | `search.spec.ts` computed-style assertions, `component-styles.test.ts` |
 | [UI-S-025](../srs.md) Shell composition | The header's search field is now the bar (520 x 36 px at 24 px from the sidebar, placeholder `searchPlaceholder`); the shell's `search` slot sizes to it; the sidebar filter is unchanged | `mockup-fidelity.spec.ts` (shell frame), `production-build.spec.ts` |
@@ -67,15 +67,15 @@ tsc exit 0
 Vitest (unit and DOM tests in jsdom), the new files and the total:
 
 ```
- ✓ tests/ui/search-bar.test.ts (35 tests)
- ✓ tests/ui/search-results.test.ts (27 tests)
- ✓ tests/unit/search-model.test.ts (47 tests)
- ✓ tests/unit/search-source.test.ts (18 tests)
+ ✓ tests/ui/search-bar.test.ts (37 tests)
+ ✓ tests/ui/search-results.test.ts (32 tests)
+ ✓ tests/unit/search-model.test.ts (50 tests)
+ ✓ tests/unit/search-source.test.ts (20 tests)
  ✓ tests/ui/search-route.test.ts (13 tests)
- ✓ tests/unit/library-scope.test.ts (8 tests)
+ ✓ tests/unit/library-scope.test.ts (10 tests)
 
  Test Files  83 passed (83)
-      Tests  1991 passed | 1 skipped (1992)
+      Tests  2005 passed | 1 skipped (2006)
 ```
 
 Playwright against `vite build` plus `vite preview` (`FILESQUID_E2E=1`, 1440 x 900, light and dark), the new spec:
@@ -102,7 +102,7 @@ Playwright against `vite build` plus `vite preview` (`FILESQUID_E2E=1`, 1440 x 9
   18 passed
 ```
 
-The whole preview suite after Cubic round 2:
+The whole preview suite after Cubic round 3:
 
 ```
   162 passed (1.0m)
@@ -117,7 +117,7 @@ The server-backed Playwright suite (`playwright.config.ts`) starts `filesquid-se
 
 ## Sync Execution Report
 
-- PRD [F-063](../../../../../resources/prd.md#f-063-file-search-query-language-and-filter-chips), SRS [SRS-F-063](../../../../../resources/srs.md#srs-f-063-file-search-query-language-and-filter-chips), the module SRS rows UI-S-007, UI-S-024 and UI-S-030 and API-S-012 are followed as written; no upstream document was changed to match the code. Where the build reads differently (the focus border token, primary as text, the Type values) it is listed under Decisions to confirm for the owner, not edited into the SRS.
+- PRD [F-063](../../../../../resources/prd.md#f-063-file-search-query-language-and-filter-chips), SRS [SRS-F-063](../../../../../resources/srs.md#srs-f-063-file-search-query-language-and-filter-chips), the module SRS rows UI-S-024 and UI-S-030 and API-S-012 are followed as written, and UI-S-007 is followed except for its People chip, which UI-S-030 and the task defer until accounts exist (so UI-S-007 is partly met, not fully); no upstream document was changed to match the code. Where the build reads differently (the focus border token, primary as text, the Type values) it is listed under Decisions to confirm for the owner, not edited into the SRS.
 - Edited: the module plan row (status, Related Tests, box), the repository-root checklist row and the MVP progress bar, and the package README (the search section). No ADR is needed: the `#/search/<query>` route is a hash route like the others, and no library or architecture was added.
 - BDD: [`global_search_bar_and_filter_chips_UI-S-030.feature`](../../tests/features/global_search_bar_and_filter_chips_UI-S-030.feature) carries the scenarios for the built behaviour.
 - The module plan box and its checklist row are ticked; the global Task FS-2.5 stays open, so its box is unchanged.

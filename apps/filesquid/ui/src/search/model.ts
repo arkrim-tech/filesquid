@@ -26,6 +26,8 @@ export const SUGGESTED_FILES = 3;
 export const SUGGEST_DEBOUNCE_MS = 250;
 /** Most collections the Location filter lists (one page, bounded). */
 export const MAX_LOCATIONS = 50;
+/** Most pages of collections the Location filter reads. */
+export const MAX_LOCATION_PAGES = 10;
 
 /** The classes `type:` takes (API-S-012); `folder` stands for collections. */
 export const TYPE_CLASSES = ["document", "image", "video", "audio", "text", "folder"] as const;
@@ -360,20 +362,21 @@ function tokenOf(
 /**
  * Split a query into its terms as the search operation does: runs of non-space characters, where
  * a quoted part may hold spaces, a leading minus excludes, and an operator is letters before a
- * colon outside quotes (or `size` before `>` or `<`). At most {@link MAX_QUERY_TERMS} tokens are
- * returned. Pure.
+ * colon outside quotes (or `size` before `>` or `<`). At most `limit` tokens are returned (by
+ * default {@link MAX_QUERY_TERMS}; ask for one more to learn that a query is over the bound). Pure.
  *
  * @param query The query.
+ * @param limit Most tokens to return.
  * @returns The tokens, in order.
  */
-export function tokenizeQuery(query: string): QueryToken[] {
+export function tokenizeQuery(query: string, limit: number = MAX_QUERY_TERMS): QueryToken[] {
   const tokens: QueryToken[] = [];
   let start = -1;
   let text = "";
   let quotedFrom: number | undefined;
   let inQuotes = false;
   const flush = (end: number) => {
-    if (start >= 0 && tokens.length < MAX_QUERY_TERMS) {
+    if (start >= 0 && tokens.length < limit) {
       tokens.push(tokenOf(query.slice(start, end), text, quotedFrom, end));
     }
     start = -1;
@@ -478,6 +481,17 @@ function unknownOperator(token: QueryToken): boolean {
   return !ANSWERED.has(name) && !SERVER_OPERATORS.has(name);
 }
 
+/** Whether a query is over the API's bytes or terms, or leaves a quote open. */
+function violatesBounds(query: string): boolean {
+  const bytes = new TextEncoder().encode(query).length;
+  const quotes = [...query].filter((character) => character === '"').length;
+  return (
+    bytes > MAX_QUERY_BYTES ||
+    quotes % 2 === 1 ||
+    tokenizeQuery(query, MAX_QUERY_TERMS + 1).length > MAX_QUERY_TERMS
+  );
+}
+
 /**
  * Tell why the search operation refused a query. An `unavailable` answer (503) names the first
  * operator the host cannot answer; an `invalid_request` (400) names the first operator that is
@@ -490,6 +504,8 @@ function unknownOperator(token: QueryToken): boolean {
  */
 export function refusalOf(error: unknown, query: string): SearchRefusal | undefined {
   if (!(error instanceof ApiError)) return undefined;
+  // A bound or an open quote is refused before any operator is looked at, so name no operator.
+  if (violatesBounds(query)) return undefined;
   const tokens = tokenizeQuery(query);
   if (error.status === 503 && error.code === "unavailable") {
     const token = tokens.find(unanswerable);
@@ -511,11 +527,12 @@ export function refusalOf(error: unknown, query: string): SearchRefusal | undefi
  */
 export function typeClassOf(mediaType: string): TypeClass | undefined {
   const type = mediaType.toLowerCase();
-  // The allowlist of API-S-012: PDF, RTF, the Microsoft Office formats (legacy and macro-enabled),
-  // OOXML and OpenDocument; other `vnd.ms-` types (a font object, say) are not documents.
+  // The allowlist of API-S-012: PDF, RTF (application/rtf only: text/rtf is text), the legacy
+  // Office types and their macro-enabled families, OOXML and OpenDocument; other `vnd.ms-` types
+  // (a font object, say) are not documents.
   const documents =
-    /^application\/(pdf|rtf|msword|vnd\.ms-(word|excel|powerpoint)(\.|$)|vnd\.openxmlformats-officedocument\.|vnd\.oasis\.opendocument\.)/;
-  if (documents.test(type) || type === "text/rtf") return "document";
+    /^application\/(?:pdf|rtf|msword|vnd\.ms-(?:excel|powerpoint)|vnd\.ms-(?:excel|powerpoint|word)\..*|vnd\.openxmlformats-officedocument\..*|vnd\.oasis\.opendocument\..*)$/;
+  if (documents.test(type)) return "document";
   for (const prefix of ["image", "video", "audio", "text"] as const) {
     if (type.startsWith(`${prefix}/`)) return prefix;
   }

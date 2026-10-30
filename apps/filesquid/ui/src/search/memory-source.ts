@@ -15,7 +15,14 @@
 import { ApiError } from "../api/client";
 import { VIEW_PAGE_SIZE, type DrivePage, type DriveRow } from "../drive/model";
 import type { ViewCall } from "../drive/source";
-import { MAX_QUERY_BYTES, foldName, isTypeClass, tokenizeQuery, typeClassOf } from "./model";
+import {
+  MAX_QUERY_BYTES,
+  MAX_QUERY_TERMS,
+  foldName,
+  isTypeClass,
+  tokenizeQuery,
+  typeClassOf,
+} from "./model";
 import type { QueryToken } from "./model";
 import type { SearchQuery, SearchSource } from "./source";
 
@@ -59,7 +66,11 @@ function bytesOf(value: string): number {
 
 /** The calendar date `YYYY-MM-DD` of a value, or a refusal. */
 function dateOf(value: string): string {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) throw refuse(400);
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) throw refuse(400);
+  const date = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
+  // A date that does not round-trip (month 13, 30 February) is not a calendar date.
+  if (date.toISOString().slice(0, 10) !== value) throw refuse(400);
   return value;
 }
 
@@ -125,8 +136,8 @@ function operatorClause(
   const name = token.operator as string;
   const value = fold(token.value);
   if (SERVER_OPERATORS.has(name)) throw refuse(503);
-  if (name === "owner" && value.trim() !== "me") throw refuse(503);
   if (value.trim() === "") throw refuse(400);
+  if (name === "owner" && value.trim() !== "me") throw refuse(503);
   if (name === "type") return typeClause(value);
   if (name === "in") return (row) => row.kind === "file" && fold(row.collection ?? "") === value;
   if (name === "title") return (row) => fold(row.name).includes(value);
@@ -148,6 +159,7 @@ interface Parsed {
 function parseQuery(q: string, deleted: ReadonlySet<string>, zone: string | undefined): Parsed {
   if (q.trim() === "") throw refuse(400);
   zoneMs(zone);
+  if (tokenizeQuery(q, MAX_QUERY_TERMS + 1).length > MAX_QUERY_TERMS) throw refuse(400);
   const quotes = [...q].filter((c) => c === '"').length;
   if (new TextEncoder().encode(q).length > MAX_QUERY_BYTES || quotes % 2 === 1) throw refuse(400);
   const clauses: Parsed["clauses"] = [];

@@ -3,7 +3,12 @@
  * as node and name, and the per-route cache the search bar reads it through.
  */
 import { describe, expect, it, vi } from "vitest";
-import type { NavigationNode, NavigationPage, NavigationSource } from "../../src/navigation/model";
+import {
+  MAX_PAGES,
+  type NavigationNode,
+  type NavigationPage,
+  type NavigationSource,
+} from "../../src/navigation/model";
 import { cachedLibraryScope, firstLibraryScope } from "../../src/navigation/library-scope";
 import { MemoryNavigationSource } from "../../src/navigation/source";
 import { TREE } from "../support/search-fakes";
@@ -46,6 +51,31 @@ describe("firstLibraryScope", () => {
       r: [node("l1", "library", null)],
     });
     expect(await firstLibraryScope(navigation)).toEqual({ node: "l1", name: null });
+  });
+
+  it("finds a repository and a library that a later page of the listing holds", async () => {
+    const pages: Record<string, readonly [NavigationNode[], string | null]> = {
+      "root:null": [[node("x", "library", "Stray")], "p2"],
+      "root:p2": [[node("r", "repository", null)], null],
+      "r:null": [[node("c", "collection", "Inbox")], "q2"],
+      "r:q2": [[node("l9", "library", "Late")], null],
+    };
+    const list = vi.fn(async (parent: string | null, cursor?: string | null) => {
+      const [nodes, next] = pages[`${parent ?? "root"}:${cursor ?? "null"}`] ?? [[], null];
+      return { nodes, ancestors: [], next_cursor: next };
+    });
+    expect(await firstLibraryScope({ list })).toEqual({ node: "l9", name: "Late" });
+    expect(list).toHaveBeenCalledTimes(4);
+  });
+
+  it("stops following a listing that never ends", async () => {
+    const list = vi.fn(async () => ({
+      nodes: [node("c", "collection", "Inbox")],
+      ancestors: [],
+      next_cursor: "more",
+    }));
+    expect(await firstLibraryScope({ list })).toBeUndefined();
+    expect(list.mock.calls.length).toBeLessThanOrEqual(MAX_PAGES);
   });
 
   it("answers undefined when the host lists no library", async () => {

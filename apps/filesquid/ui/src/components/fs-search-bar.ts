@@ -26,10 +26,11 @@
 import { ApiError } from "../api/client";
 import type { DriveRow } from "../drive/model";
 import type { LibraryScope } from "../navigation/library-scope";
-import type { NavigationSource } from "../navigation/model";
+import type { NavigationPage, NavigationSource } from "../navigation/model";
 import {
   FILTER_LABEL,
   MAX_LOCATIONS,
+  MAX_LOCATION_PAGES,
   MAX_QUERY_BYTES,
   MODIFIED_RANGES,
   OPERATORS_ON_HOST,
@@ -405,15 +406,27 @@ export class FsSearchBar extends HTMLElement {
     try {
       const scope = await options.scope();
       if (!scope || !options.navigation) return;
-      const page = await options.navigation.list(scope.node, null, MAX_LOCATIONS);
-      this.locations = page.nodes
-        .filter((node) => node.kind === "collection" && node.name !== null)
-        .map((node) => node.name as string);
+      this.locations = await this.readCollections(options.navigation, scope.node);
     } catch (error) {
       console.warn("FileSquid could not list the collections for the Location filter", error);
       this.locations = [];
     }
     if (this.choice === "in") this.renderDropdown();
+  }
+
+  /** The titles of a library's collections, following the listing's cursor, at most 10 pages. */
+  private async readCollections(navigation: NavigationSource, node: string): Promise<string[]> {
+    const names: string[] = [];
+    let cursor: string | null = null;
+    for (let pages = 0; pages < MAX_LOCATION_PAGES; pages += 1) {
+      const page: NavigationPage = await navigation.list(node, cursor, MAX_LOCATIONS);
+      for (const child of page.nodes) {
+        if (child.kind === "collection" && child.name !== null) names.push(child.name);
+      }
+      cursor = page.next_cursor;
+      if (cursor === null) break;
+    }
+    return names;
   }
 
   /** Apply a suggestion as a chip. A Title chip takes the typed text. */

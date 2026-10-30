@@ -227,6 +227,21 @@ for (const scheme of SCHEMES) {
       });
 
       const files = bar(page).locator(".file-option");
+      // The rows are the files the API returned, named by display name, with where and when.
+      const shown = (await files.locator(".file-name").allTextContents()).sort();
+      expect(shown).toEqual([
+        "harbour-2025-report.pdf",
+        "harbour-masterplan-v7.pdf",
+        "harbour-walk-permit.pdf",
+      ]);
+      const metas = await files.locator(".file-meta").allTextContents();
+      expect(metas).toHaveLength(3);
+      // The API's search rows carry no collection title yet, so the meta is the modified time
+      // alone (see the walkthrough, "What the platform engineer must add"); it is never empty.
+      for (const meta of metas) expect(meta.trim()).not.toBe("");
+      // The 18 September row is long past, so it shows its calendar date, not a relative time.
+      expect(metas).toContain("Sep 18, 2026");
+      await expect(files.first().locator(".badge")).toHaveText("PDF");
       await expectBox(files.first(), { y: 312, height: 44 });
       await expectBox(files.first().locator(".badge"), { x: 280, y: 320, width: 30, height: 16 });
       await expectBox(files.first().locator(".file-name"), { x: 324 });

@@ -227,7 +227,12 @@ describe("refusalOf", () => {
       kind: "unavailable",
       operator: "owner:",
     });
-    expect(refusalOf(unavailable, "to:ben")?.operator).toBe("to:");
+    for (const operator of ["to", "from", "pendingowner", "sharedwith"]) {
+      expect(refusalOf(unavailable, operator + ":ben")).toEqual({
+        kind: "unavailable",
+        operator: operator + ":",
+      });
+    }
   });
 
   it("names the operator of an invalid request that is not in the grammar", () => {
@@ -237,6 +242,13 @@ describe("refusalOf", () => {
     });
     expect(refusalOf(invalid, "generator:x")?.operator).toBe("generator:");
     expect(refusalOf(invalid, "is:unfiled")).toEqual({ kind: "unknown", operator: "is:unfiled" });
+  });
+
+  it("names no operator when a bound or an open quote is what was refused", () => {
+    expect(refusalOf(invalid, 'colour:red "open')).toBeUndefined();
+    expect(refusalOf(invalid, "colour:red " + "x".repeat(1100))).toBeUndefined();
+    const many = Array.from({ length: 33 }, (_, i) => "w" + i).join(" ");
+    expect(refusalOf(invalid, many + " colour:red")).toBeUndefined();
   });
 
   it("matches operator names without case", () => {
@@ -288,7 +300,6 @@ describe("operator list and type classes", () => {
   it.each([
     "application/pdf",
     "application/rtf",
-    "text/rtf",
     "application/msword",
     "application/vnd.ms-excel",
     "application/vnd.ms-powerpoint",
@@ -304,7 +315,14 @@ describe("operator list and type classes", () => {
     expect(typeClassOf(mediaType)).toBe("document");
   });
 
+  it("classes text/rtf as text, as the API does, and application/rtf as a document", () => {
+    expect(typeClassOf("text/rtf")).toBe("text");
+    expect(typeClassOf("application/rtf")).toBe("document");
+  });
+
   it.each([
+    "application/vnd.ms-word",
+    "application/vnd.ms-excelfoo",
     "application/vnd.ms-fontobject",
     "application/vnd.ms-cab-compressed",
     "application/vnd.ms-outlook",

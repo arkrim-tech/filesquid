@@ -23,7 +23,7 @@ export const STYLE = `
   .refusal-title, .refusal-help, .nothing-searched { margin: 0; font-size: var(--fs-font-size-small); line-height: 1.25rem; overflow-wrap: anywhere; }
   .refusal-title { font-weight: 600; color: var(--fs-on-surface); }
   .refusal-help, .nothing-searched { font-weight: 400; color: var(--fs-on-surface-variant); }
-  .nothing-searched { box-sizing: border-box; block-size: 3.625rem; margin-block-start: var(--fs-space-4); padding-block-start: var(--fs-space-1); }
+  .nothing-searched { box-sizing: border-box; min-block-size: 3.625rem; margin-block-start: var(--fs-space-4); padding-block-start: var(--fs-space-1); }
   .operators-host .eyebrow { block-size: 1.5rem; }
   .operator-list { display: flex; flex-wrap: wrap; gap: var(--fs-space-2); margin: 0; padding: 0; list-style: none; }
   .operator-chip { display: inline-flex; align-items: center; box-sizing: border-box; block-size: 1.375rem; padding: 0 var(--fs-space-1); border: 1px solid var(--fs-outline); border-radius: var(--fs-radius-chip); background: var(--fs-surface-raised); font-family: var(--fs-font-mono); font-size: var(--fs-font-size-small); font-weight: 400; color: var(--fs-on-surface); }

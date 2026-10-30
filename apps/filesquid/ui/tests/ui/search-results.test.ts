@@ -125,6 +125,7 @@ describe("search results", () => {
   it("sorts by a column, reverses on a second click and returns to relevance on a third", async () => {
     const search = searchSource();
     const { element, prefs } = await mountSearch("harbour", search);
+    const before = structuredClone(prefs.preferences);
     const head = () => one(element, "button.sort[data-sort=size]");
     await click(head());
     expect(search.calls.at(-1)?.query).toMatchObject({ sort: "size", direction: "descending" });
@@ -136,8 +137,8 @@ describe("search results", () => {
     await click(head());
     expect(search.calls.at(-1)?.query).toMatchObject({ sort: "relevance" });
     expect(all(element, "[aria-sort]")).toHaveLength(0);
-    // The browsing preferences of the Drive views are left alone.
-    expect(prefs.preferences.sort_key).toBe("name");
+    // The browsing preferences of the Drive views are left alone, every field of them.
+    expect(prefs.preferences).toEqual(before);
   });
 
   it("asks for 200 rows a page and starts without a cursor", async () => {
@@ -272,6 +273,17 @@ describe("a refused search", () => {
       "0 files",
     ]);
   });
+
+  it.each(["to:ben", "from:ben", "pendingowner:me", "is:favorite", "owner:ben"])(
+    "names the unavailable operator of %s in the box the user reads",
+    async (term) => {
+      const { element } = await mountSearch("harbour " + term, refusing(refusal503()));
+      const operator = term.startsWith("is:") ? "is:favorite" : term.split(":")[0] + ":";
+      expect(one(element, ".refusal-title").textContent).toBe(
+        labels.searchUnavailable.replace("{operator}", operator),
+      );
+    },
+  );
 
   it("names an operator that is not in the grammar as an invalid request (mockup 53)", async () => {
     const { element } = await mountSearch("harbour colour:red", refusing(refusal400()));
