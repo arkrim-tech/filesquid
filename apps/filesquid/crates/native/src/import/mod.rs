@@ -8,6 +8,7 @@ pub mod facts;
 pub mod file;
 pub mod host;
 pub mod index;
+pub mod items;
 pub mod job;
 pub mod names;
 pub mod placing;

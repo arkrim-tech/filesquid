@@ -44,12 +44,13 @@
 use super::file::{import_file, FileImport, ImportFailure};
 use super::host::Build;
 use super::index::ImportIndex;
+use super::items::{items_of_manifest, SqliteJobItems};
 use super::placing::{logical_path, source_roots};
 use super::plans::{ImportPlan, ManifestEntry, SqliteImportPlans};
 use crate::catalog::{PendingIntent, RegisterFile, Registration, REGISTER_OPERATION};
 use crate::HostFiles;
 use filesquid_api::files::UploadView;
-use filesquid_api::jobs::{Halt, JobError, JobSpec, JobState, Jobs, RunningJob};
+use filesquid_api::jobs::{Halt, JobError, JobItemState, JobSpec, JobState, Jobs, RunningJob};
 use filesquid_api::journal::{JournalEntry, Level, Outcome};
 use filesquid_api::journal_writer::JournalSender;
 use filesquid_api::library::mint_uuid_v4;
@@ -113,6 +114,8 @@ pub struct ImportContext<'a> {
     pub index: &'a dyn ImportIndex,
     /// Each job's plan and manifest.
     pub plans: &'a SqliteImportPlans,
+    /// Each job's per-file progress (Task DE-1.8).
+    pub items: &'a SqliteJobItems,
     /// The host's journal.
     pub journal: &'a JournalSender,
     /// This FileSquid build.
@@ -453,6 +456,9 @@ enum Ended {
     /// The run gave its lease back with a committed file still unregistered; the job is now
     /// in this state, and the import's intent is kept even if it was cancelled.
     Unregistered(JobState),
+    /// Every file was tried and one failed: the run gave its lease back and the job waits,
+    /// pending, for a retry of its failed files (or a cancel).
+    Waiting(JobState),
 }
 
 /// Run the import job `job_id` for `plan`: start it (resuming at its checkpoint), keep or
@@ -492,7 +498,7 @@ pub async fn run_import_job(
             finish(context, job_id, plan, &operation_id);
             run.state = JobState::Completed;
         }
-        Ended::Halted(state) => {
+        Ended::Halted(state) | Ended::Waiting(state) => {
             if state == JobState::Cancelled {
                 finish(context, job_id, plan, &operation_id);
             }
@@ -504,9 +510,10 @@ pub async fn run_import_job(
 }
 
 /// Import every entry of `manifest` from the checkpoint of `running` on, checkpointing after
-/// each; after each checkpoint a pause or cancel asked of the job halts it through
-/// [`RunningJob::halt_if_requested`], and a quit or a lack of space suspends it with its
-/// checkpoint. Filesystem, database and journal I/O.
+/// each, then every file a retry put back to queued, alone (Task DE-1.8); after each file a
+/// pause or cancel asked of the job halts it through [`RunningJob::halt_if_requested`], and a
+/// quit or a lack of space suspends it with its checkpoint. A run that tried every file and
+/// has a failed one leaves the job pending for a retry. Filesystem, database and journal I/O.
 ///
 /// # Errors
 /// The job could not be written, or its lease was lost.
@@ -518,39 +525,131 @@ async fn run_manifest(
     run: &mut ImportRun,
 ) -> Result<Ended, JobError> {
     let total = Some(manifest.len() as u64);
-    let mut index = checkpoint_next(running.checkpoint_text());
-    for _ in 0..manifest.len().saturating_add(MAX_CONTINUED_HALTS) {
-        let Some(entry) = manifest.get(index) else {
-            return Ok(Ended::Done(Box::new(running)));
+    let mut main = checkpoint_next(running.checkpoint_text());
+    let bound = manifest.len().saturating_mul(2) + MAX_CONTINUED_HALTS;
+    for _ in 0..bound {
+        let Some(index) = next_entry(context, &running, main, manifest.len()) else {
+            return finished_manifest(context, running, total);
         };
-        let next = match import_entry(context, &running, plan, entry, &mut run.retries).await {
-            FileOutcome::Imported(view) => {
-                run.imported.push(view);
-                index + 1
-            }
-            FileOutcome::Quarantined(code) => {
-                run.quarantined.push(code);
-                index + 1
-            }
+        let outcome = import_indexed(context, &running, plan, (manifest, index), run).await;
+        let done = match outcome {
+            FileOutcome::Imported(_) | FileOutcome::Quarantined(_) if index == main => main + 1,
+            FileOutcome::Imported(_) | FileOutcome::Quarantined(_) | FileOutcome::Halt => main,
             FileOutcome::Lost(err) => return Err(err),
-            FileOutcome::Halt => index,
             FileOutcome::Suspend => {
-                running.checkpoint(&import_checkpoint(index), index as u64, total)?;
+                running.checkpoint(&import_checkpoint(main), main as u64, total)?;
                 return Ok(Ended::Halted(running.suspend()?));
             }
             FileOutcome::Unregistered => {
-                running.checkpoint(&import_checkpoint(index), index as u64, total)?;
+                running.checkpoint(&import_checkpoint(main), main as u64, total)?;
                 return Ok(Ended::Unregistered(running.suspend()?));
             }
         };
-        running.checkpoint(&import_checkpoint(next), next as u64, total)?;
-        index = next;
+        running.checkpoint(&import_checkpoint(done), done as u64, total)?;
+        main = done;
         running = match halt_if_asked(running)? {
             Halt::Continued(running) => *running,
             Halt::Halted(state) => return Ok(Ended::Halted(state)),
         };
     }
     Ok(Ended::Halted(running.suspend()?))
+}
+
+/// The manifest index to import next: the checkpoint's entry `main` while it is inside the
+/// manifest of `len` entries, then the first file a retry put back. Reads the store; a
+/// failed read is logged and ends the retries for this run.
+fn next_entry(
+    context: &ImportContext<'_>,
+    running: &RunningJob,
+    main: usize,
+    len: usize,
+) -> Option<usize> {
+    if main < len {
+        return Some(main);
+    }
+    let waiting = context.items.waiting(running.job().id.as_str());
+    let waiting = waiting
+        .inspect_err(|err| item_unrecorded(running, err))
+        .ok()?;
+    waiting.into_iter().find(|index| *index < len)
+}
+
+/// The end of a run that tried every entry: the job completes, or waits pending when one of
+/// its files failed. Writes the job store.
+///
+/// # Errors
+/// The job could not be written.
+fn finished_manifest(
+    context: &ImportContext<'_>,
+    running: RunningJob,
+    total: Option<u64>,
+) -> Result<Ended, JobError> {
+    let failed = context.items.has_failed(running.job().id.as_str());
+    match failed.inspect_err(|err| item_unrecorded(&running, err)) {
+        Ok(true) => {
+            let end = total.unwrap_or(0);
+            let end_index = usize::try_from(end).unwrap_or(usize::MAX);
+            let mut running = running;
+            running.checkpoint(&import_checkpoint(end_index), end, total)?;
+            Ok(Ended::Waiting(running.suspend()?))
+        }
+        _ => Ok(Ended::Done(Box::new(running))),
+    }
+}
+
+/// Import manifest entry `index` of `manifest`, keeping its item's state: `copying` while it
+/// is imported, then `copied` or `failed` with its code. Filesystem, database and journal
+/// I/O.
+async fn import_indexed(
+    context: &ImportContext<'_>,
+    running: &RunningJob,
+    plan: &ImportPlan,
+    (manifest, index): (&[ManifestEntry], usize),
+    run: &mut ImportRun,
+) -> FileOutcome {
+    let Some(entry) = manifest.get(index) else {
+        return FileOutcome::Quarantined("not_found".into());
+    };
+    let job_id = running.job().id.as_str();
+    let copying = context
+        .items
+        .set(job_id, index, JobItemState::Copying, 0, None);
+    copying.unwrap_or_else(|err| item_unrecorded(running, &err));
+    let outcome = import_entry(context, running, plan, entry, &mut run.retries).await;
+    let recorded = match &outcome {
+        FileOutcome::Imported(view) => {
+            run.imported.push(view.clone());
+            context.items.copied(job_id, index, size_of(entry))
+        }
+        FileOutcome::Quarantined(code) => {
+            run.quarantined.push(code.clone());
+            let failed = JobItemState::Failed;
+            context.items.set(job_id, index, failed, 0, Some(code))
+        }
+        _ => Ok(()),
+    };
+    recorded.unwrap_or_else(|err| item_unrecorded(running, &err));
+    outcome
+}
+
+/// The size of the file of `entry` now, 0 when it has none or it cannot be read. Reads its
+/// metadata.
+fn size_of(entry: &ManifestEntry) -> u64 {
+    match entry {
+        ManifestEntry::File { path, .. } => std::fs::metadata(path).map_or(0, |meta| meta.len()),
+        ManifestEntry::Skipped { .. } => 0,
+    }
+}
+
+/// Log, with its code, a file state the items store did not take; the job goes on (the file's
+/// outcome is journaled either way). Stdout only.
+fn item_unrecorded(running: &RunningJob, err: &JobError) {
+    tracing::warn!(
+        operation = IMPORT_FILE_OPERATION,
+        job_id = running.job().id.as_str(),
+        error_code = err.error_code(),
+        "a file's state could not be kept"
+    );
 }
 
 /// Halt `running` through the API's atomic check when the last checkpoint or renewal read a
@@ -585,7 +684,13 @@ fn prepare(
     }
     let intent = import_intent(&library, running.job().operation_id.as_str())?;
     context.index.begin(&intent).map_err(|_| "unavailable")?;
-    job_manifest(context, running.job().id.as_str(), plan)
+    let manifest = job_manifest(context, running.job().id.as_str(), plan)?;
+    let items = items_of_manifest(&manifest);
+    context
+        .items
+        .keep(running.job().id.as_str(), &items)
+        .map_err(|_| "unavailable")?;
+    Ok(manifest)
 }
 
 /// The pending intent of the import `operation_id` into `library`: an import adds files and

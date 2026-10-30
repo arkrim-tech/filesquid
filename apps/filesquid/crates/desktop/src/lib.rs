@@ -70,6 +70,7 @@ use filesquid_api::registry::ProcessHandle;
 use filesquid_api::trace_layer::JournalLayer;
 use filesquid_api::ApiState;
 use filesquid_core::{InstallationId, RepositoryId};
+use filesquid_native::import::items::open_import_stores;
 use filesquid_native::import::plans::SqliteImportPlans;
 use filesquid_native::installation::{
     self, InstallationError, InstallationSource, INSTALLATION_CREATED,
@@ -344,6 +345,13 @@ pub struct DesktopValidation(pub ValidationService<FsBackend>);
 /// The durable job service of this launch (Task DE-0.4; `filesquid_native::workers`), held in Tauri's
 /// managed state for the jobs that later tasks (import, upload, migration) run.
 pub struct DesktopJobs(pub Jobs);
+
+/// The import plans and their per-file progress (Tasks DE-1.2, DE-1.8), opened with the job
+/// service, which answers the job items routes from the second.
+pub struct DesktopImportStores(
+    pub Arc<SqliteImportPlans>,
+    pub Arc<filesquid_native::import::items::SqliteJobItems>,
+);
 
 /// The host's out-of-process libvips media workers (Task DE-0.5; DE-S-016), held in Tauri's
 /// managed state for the thumbnail and preview routes. At most two run at once.
@@ -772,7 +780,7 @@ pub fn import_build() -> filesquid_native::import::host::Build {
     }
 }
 
-/// Open the import plans in `data_dir`, start the native import worker (setting `stop`
+/// Start the native import worker over the import stores the job service opened (setting `stop`
 /// suspends it; it runs the unfinished import jobs when the job store was `recovered`), and install
 /// the import route with the native `rfd` dialog (Task DE-1.2) and the worker as the `import`
 /// job runner (Task DE-1.9). Starts a thread; database I/O.
@@ -787,7 +795,8 @@ fn start_imports(
     recovered: bool,
 ) -> Result<Arc<filesquid_native::import::worker::ImportWorker>, String> {
     use filesquid_native::import::worker::{ImportServices, ImportWorker};
-    let plans = Arc::new(SqliteImportPlans::open(&data_dir.join(JOURNAL_FILE))?);
+    let stores = app.state::<DesktopImportStores>();
+    let (plans, items) = (stores.0.clone(), stores.1.clone());
     let jobs = app.state::<DesktopJobs>().0.clone();
     let files = app.state::<DesktopFiles>().0.clone();
     let catalog = app.state::<DesktopCatalog>().0.clone();
@@ -796,6 +805,7 @@ fn start_imports(
         files: files.clone(),
         index: catalog,
         plans: plans.clone(),
+        items,
         journal: host.monitor().journal(),
         build: import_build(),
         actor: Principal::Owner.actor().to_string(),
@@ -861,7 +871,10 @@ fn prepare_backfill(
     opened: &Arc<OpenedRoots>,
 ) -> Result<(BackfillTask, bool), String> {
     let events = app.state::<ApiState>().events.clone();
-    let jobs = history_backfill::open_jobs(data_dir, host)?.with_events(events);
+    let stores = open_import_stores(&data_dir.join(JOURNAL_FILE))?;
+    let jobs = history_backfill::open_jobs(data_dir, host)?
+        .with_items(stores.1.clone())
+        .with_events(events);
     let recovered = history_backfill::recover_jobs(&jobs).is_ok();
     let task = BackfillTask {
         jobs: jobs.clone(),
@@ -871,6 +884,7 @@ fn prepare_backfill(
         opened: opened.clone(),
     };
     app.manage(DesktopJobs(jobs));
+    app.manage(DesktopImportStores(stores.0, stores.1));
     Ok((task, recovered))
 }
 

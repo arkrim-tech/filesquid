@@ -28,8 +28,8 @@ use filesquid_native::catalog::{
     LibraryFolder, PendingIntent, RegisterFile, Registration, DEFAULT_LIBRARY_NAME,
 };
 use filesquid_native::import::index::ImportIndex;
+use filesquid_native::import::items::open_import_stores;
 use filesquid_native::import::job::IMPORT_FILE_OPERATION;
-use filesquid_native::import::plans::SqliteImportPlans;
 use filesquid_native::import::worker::{ImportServices, ImportWorker};
 use filesquid_native::workers::history_backfill::open_jobs;
 use filesquid_native::{
@@ -449,11 +449,12 @@ async fn start(dir: &Path, dialog: &Arc<ScriptedDialog>, gate: &Arc<Gate>, creat
     filesquid_desktop_lib::navigation::install_navigation(&state, catalog.clone(), &installation)
         .expect("navigation");
     install_file_scopes(&files, &catalog).expect("scopes");
+    let (plans, items) = open_import_stores(&data.join(JOURNAL_FILE)).expect("stores");
     let jobs = open_jobs(&data, &host)
         .expect("jobs")
+        .with_items(items.clone())
         .with_events(state.events.clone());
     assert!(state.install_jobs(Arc::new(jobs.clone())), "the job routes");
-    let plans = Arc::new(SqliteImportPlans::open(&data.join(JOURNAL_FILE)).expect("plans"));
     let stop = Arc::new(AtomicBool::new(false));
     let worker = Arc::new(
         ImportWorker::spawn(ImportServices {
@@ -464,6 +465,7 @@ async fn start(dir: &Path, dialog: &Arc<ScriptedDialog>, gate: &Arc<Gate>, creat
                 gate: gate.clone(),
             }),
             plans: plans.clone(),
+            items,
             journal: host.monitor().journal(),
             build: import_build(),
             actor: "owner".into(),
