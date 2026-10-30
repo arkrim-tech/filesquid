@@ -1,19 +1,25 @@
 /**
  * The budget table of the performance suite (Task UI-F3.1, UI-S-035): the values the PRD
  * defines (NFR-002, NFR-003) are checked against the text of the PRD itself so they cannot
- * drift from the requirement they cite; the limits this task proposes (RC-002 asks for them) are
+ * drift from the requirement they cite; the limits this task defined (RC-002 asks for them) are
  * checked against their own rules (the missed-frame threshold is 1.5 frame budgets, the tail
  * limit is twice the feedback budget, a warm class has at least the 100 samples NFR-002 names)
  * and against the values UI-S-035 declares (120 warm samples, a warm-up of 20, 20 cold loads, a
- * 1% idle control, 0.1% stalls).
+ * 1% idle control, 0.1% stalls). The owner confirmed them on 2026-10-30 except the two
+ * 12-megapixel original limits, which stay provisional; the last block checks that UI-S-035 and
+ * `PROVISIONAL_LIMITS` say the same.
  */
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { BUDGETS } from "../performance/budgets";
+import { BUDGETS, PROVISIONAL_LIMITS } from "../performance/budgets";
 import { PROFILES } from "../performance/fixtures";
 
 const PRD = readFileSync(resolve(process.cwd(), "../../../resources/prd.md"), "utf8");
+const UI_SRS = readFileSync(resolve(process.cwd(), "resources/srs.md"), "utf8");
+
+/** The UI-S-035 row of the UI SRS: one table line. */
+const UI_S_035 = UI_SRS.split("\n").find((line) => line.startsWith("| UI-S-035 ")) ?? "";
 
 /** The text of one PRD requirement section, from its heading to the next one. */
 function section(id: string): string {
@@ -143,5 +149,22 @@ describe("the limits this task defines (UI-S-035)", () => {
     expect(BUDGETS.samples.cold).toBe(20);
     expect(BUDGETS.samples.failure).toBe(20);
     expect(BUDGETS.samples.mixed).toBe(600);
+  });
+});
+
+describe("the owner's confirmation of the limits (UI-S-035, 2026-10-30)", () => {
+  it("UI-S-035 records the limits as confirmed, not proposed", () => {
+    expect(UI_S_035).toContain("the owner confirmed them on 2026-10-30");
+    expect(UI_S_035).not.toContain("proposed, the owner confirms");
+  });
+
+  it("exactly the two 12-megapixel original limits are provisional, in code and in UI-S-035", () => {
+    expect([...PROVISIONAL_LIMITS]).toEqual(["largeImageWarmP95Ms", "largeImageColdMs"]);
+    expect(UI_S_035).toContain(
+      "except the two 12-megapixel original limits, which are provisional: no PRD requirement states them",
+    );
+    expect(UI_S_035).toContain(
+      `p95 ≤ ${BUDGETS.largeImageWarmP95Ms.toLocaleString("en-US")} ms warm and ≤ ${BUDGETS.largeImageColdMs.toLocaleString("en-US")} ms cold (both provisional)`,
+    );
   });
 });

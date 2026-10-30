@@ -2,8 +2,9 @@
  * The budgets of the browsing performance suite (Task UI-F3.1, UI-S-035). Each value is either
  * a number NFR-002, NFR-003 or ADR 007 state (checked against the PRD text by
  * `tests/unit/perf-budgets.test.ts`) or a limit this task defines because NFR-002 and RC-002
- * require the profile to define it before acceptance (marked "defined"). The defined limits are
- * proposals for the owner to confirm; they are not claims about any packaged build.
+ * require the profile to define it before acceptance (marked "defined"). The owner confirmed the
+ * defined limits on 2026-10-30, except the two 12-megapixel original limits, which stay provisional
+ * ({@link PROVISIONAL_LIMITS}). None of them is a claim about any packaged build.
  */
 
 /** Sizes of the samples (NFR-002: at least 100 interactions after a declared warm-up). */
@@ -36,9 +37,9 @@ export const BUDGETS = {
   firstUsefulMs: 3000,
   /** NFR-002: a prepared viewer image paints the correct image at p95, milliseconds. */
   preparedImageP95Ms: 100,
-  /** Defined: a 12-megapixel original with no prepared derivative, warm p95, milliseconds. */
+  /** Defined, provisional: a 12-megapixel original with no prepared derivative, warm p95, ms. */
   largeImageWarmP95Ms: 2000,
-  /** Defined: the same original on the first view after load, milliseconds. */
+  /** Defined, provisional: the same original on the first view after load, milliseconds. */
   largeImageColdMs: 3000,
   /** Defined: a preview whose content cannot be read shows the error state within this. */
   failureVisibleMs: 2000,
@@ -75,6 +76,16 @@ export const BUDGETS = {
     mixed: 600,
   } satisfies SampleSizes,
 } as const;
+
+/**
+ * The defined limits the owner left provisional on 2026-10-30 (UI-S-035): no PRD requirement
+ * states a budget for a 12-megapixel original, so Task DE-F3.2 revisits these two in the packaged
+ * macOS app. Every other defined limit in {@link BUDGETS} is confirmed.
+ */
+export const PROVISIONAL_LIMITS = [
+  "largeImageWarmP95Ms",
+  "largeImageColdMs",
+] as const satisfies readonly (keyof typeof BUDGETS)[];
 
 /** The viewport of the declared profile: the mockups' window (UI-S-024, UI-S-025). */
 export const VIEWPORT = { width: 1440, height: 900 } as const;
