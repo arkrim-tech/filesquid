@@ -165,6 +165,22 @@ impl SqliteJobItems {
             .map_err(store_error)
     }
 
+    /// Record that `bytes` of the file `file_id` of job `job_id` are copied, while it is
+    /// `copying` (at most its size). Writes the store.
+    ///
+    /// # Errors
+    /// A store failure.
+    pub fn progress(&self, job_id: &str, file_id: &str, bytes: u64) -> Result<(), JobError> {
+        self.lock()?
+            .execute(
+                "UPDATE import_items SET bytes_done = MIN(?3, bytes_total)
+                 WHERE job_id = ?1 AND file_id = ?2 AND state = 'copying'",
+                params![job_id, file_id, i64::try_from(bytes).unwrap_or(i64::MAX)],
+            )
+            .map(|_| ())
+            .map_err(store_error)
+    }
+
     /// The manifest indexes of job `job_id`'s items that wait to be imported (`queued`, or
     /// `copying` when a run stopped in the middle of the file), in order. Reads the store.
     ///

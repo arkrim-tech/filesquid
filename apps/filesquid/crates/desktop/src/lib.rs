@@ -555,13 +555,15 @@ pub const LIBRARY_ROUTES_OPERATION: &str = "library.routes.install";
 pub struct DesktopLocations(pub Arc<HostLocations>);
 
 /// Install the library and repair routes' host side in `state` (API-S-025, Task DE-1.1): the
-/// library commands over the folders the owner registers ([`HostLocations`] in `data_dir`),
-/// with the repair service of [`local_library_service`] over the persistent repair ledger
+/// library commands over the folders the owner registers ([`HostLocations`] in `data_dir`,
+/// which keeps each library's name, location and last opened time across launches in the
+/// operational store, Task DE-1.8), with the repair service of [`local_library_service`] over the persistent repair ledger
 /// ([`SqliteRepairLedger`] in the operational store), serving each bound library with
-/// `serving`. Answers the folder registry. Opens a database connection.
+/// `serving`. Answers the folder registry. Opens database connections.
 ///
 /// # Errors
-/// The repair ledger could not be opened, or library commands are already installed.
+/// The repair ledger or the library registry could not be opened, or library commands are
+/// already installed.
 pub fn install_library_routes(
     state: &ApiState,
     host: &HostMonitor,
@@ -578,7 +580,10 @@ pub fn install_library_routes(
         "the repair ledger could not be opened".to_string()
     })?;
     let service = local_library_service(host, installation, Arc::new(ledger));
-    let locations = Arc::new(HostLocations::new(&serving.data_dir));
+    let store = filesquid_native::registry_sqlite::SqliteLibraryRegistry::open(
+        &serving.data_dir.join(JOURNAL_FILE),
+    )?;
+    let locations = Arc::new(HostLocations::persistent(&serving.data_dir, store)?);
     let libraries = DesktopLibraries::new(service, locations.clone(), serving);
     if !state.install_libraries(Arc::new(libraries)) {
         return Err("library commands were already installed".to_string());

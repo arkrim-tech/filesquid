@@ -57,7 +57,8 @@ use filesquid_api::library::mint_uuid_v4;
 use filesquid_api::operation::{ExpectedRevision, OperationId};
 use filesquid_core::{CollectionId, FileId, LibraryId};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 /// The job kind of an import.
@@ -785,6 +786,7 @@ async fn import_entry(
                 operation_id: Some(running.job().operation_id.clone()),
                 build: context.build,
                 actor: context.actor,
+                progress: None,
             };
             let placed = Placed {
                 collection_id: plan.collection_id.as_deref().unwrap_or_default(),
@@ -815,6 +817,9 @@ fn renew_lease(running: &RunningJob) {
     }
 }
 
+/// How often the heartbeat records a file's progress.
+const PROGRESS_EVERY: Duration = Duration::from_secs(1);
+
 /// How long the heartbeat sleeps between two looks at the import.
 const HEARTBEAT_STEP: Duration = Duration::from_millis(50);
 
@@ -837,9 +842,14 @@ fn import_with_heartbeat(
     request: &FileImport<'_>,
 ) -> Result<ImportedOriginal, ImportFailure> {
     let every = renewal_interval(context.jobs);
+    let read = Arc::new(AtomicU64::new(0));
+    let counted = FileImport {
+        progress: Some(read.clone()),
+        ..request.clone()
+    };
     std::thread::scope(|scope| {
-        let importing = scope.spawn(|| import_on_own_runtime(context.files, request));
-        let mut renewed = Instant::now();
+        let importing = scope.spawn(|| import_on_own_runtime(context.files, &counted));
+        let (mut renewed, mut reported) = (Instant::now(), Instant::now());
         for _ in 0..MAX_HEARTBEAT_STEPS {
             if importing.is_finished() {
                 break;
@@ -849,12 +859,31 @@ fn import_with_heartbeat(
                 renew_lease(running);
                 renewed = Instant::now();
             }
+            if reported.elapsed() >= PROGRESS_EVERY {
+                report_progress(context, running, request.file_id, &read);
+                reported = Instant::now();
+            }
         }
         importing.join().unwrap_or(Err(ImportFailure::Commit {
             code: "internal",
             retryable: false,
         }))
     })
+}
+
+/// Record the progress of the file `file_id` of `running`: half the bytes its two reads read
+/// so far. A failure is logged. Writes the items store.
+fn report_progress(
+    context: &ImportContext<'_>,
+    running: &RunningJob,
+    file_id: &str,
+    read: &AtomicU64,
+) {
+    let copied = read.load(Ordering::Relaxed) / 2;
+    let job_id = running.job().id.as_str();
+    if let Err(err) = context.items.progress(job_id, file_id, copied) {
+        item_unrecorded(running, &err);
+    }
 }
 
 /// Run [`import_file`] for `request` to its end on a current-thread runtime of this thread.

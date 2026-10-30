@@ -916,3 +916,48 @@ fn a_rebuild_stopped_at_exit_resumes_from_its_checkpoint_when_its_library_opens_
     );
     desktop.stop();
 }
+
+#[test]
+fn recent_libraries_and_their_facts_survive_a_restart_without_a_path() {
+    let dir = fresh_dir("recent-restart");
+    let desktop = Desktop::launch(dir.join("data"));
+    let folder = dir.join("Family archive");
+    std::fs::create_dir_all(&folder).expect("folder");
+    let location = desktop.register(&folder);
+    let body = json!({ "location_id": location, "name": "Family archive" });
+    let (status, created) = desktop.command("/api/v1/libraries", body);
+    assert_eq!(status, 200, "{created}");
+    let library = created["library_id"].as_str().expect("id").to_string();
+    let rename = json!({ "library_id": library, "name": "Family archive 1990s" });
+    assert_eq!(desktop.command("/api/v1/libraries/renames", rename).0, 200);
+    let (data, _) = desktop.stop();
+    let desktop = Desktop::launch(data);
+    let (status, recent) = desktop.get("/api/v1/libraries/recent");
+    assert_eq!(status, 200, "{recent}");
+    let listed = &recent["libraries"][0];
+    assert_eq!(listed["library_id"], library.as_str(), "{recent}");
+    assert_eq!(
+        listed["name"], "Family archive 1990s",
+        "the renamed name kept"
+    );
+    assert_eq!(listed["open"], false, "not opened yet this launch");
+    assert_eq!(
+        desktop.register(&folder),
+        location,
+        "the folder keeps its location across launches"
+    );
+    let body = json!({ "location_id": location, "library_id": library });
+    let (status, opened) = desktop.command("/api/v1/libraries/openings", body);
+    assert_eq!(status, 200, "{opened}");
+    let (status, facts) = desktop.get(&format!("/api/v1/libraries/{library}/facts"));
+    assert_eq!(status, 200, "{facts}");
+    assert_eq!(facts["name"], "Family archive 1990s");
+    if cfg!(any(target_os = "linux", target_os = "macos")) {
+        assert!(facts["free_bytes"].as_u64().is_some(), "{facts}");
+    } else {
+        assert_eq!(facts["free_bytes_reason"], "volume_unreadable");
+    }
+    let text = format!("{recent}{facts}");
+    assert!(!text.contains("loc-"), "no location ID: {text}");
+    desktop.stop();
+}

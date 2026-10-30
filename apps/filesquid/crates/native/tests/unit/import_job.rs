@@ -241,6 +241,7 @@ impl Rig {
             operation_id: None,
             build: &self.build,
             actor: "owner",
+            progress: None,
         };
         import_file(&self.files, &request).await.expect("imported");
     }

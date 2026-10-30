@@ -146,3 +146,22 @@ fn a_retry_puts_back_only_failed_files_and_a_repeat_changes_nothing() {
         (JobItemState::Queued, 0, None)
     );
 }
+
+#[test]
+fn a_copying_file_s_progress_is_kept_up_to_its_size_and_only_while_copying() {
+    let store = Store::new("progress");
+    let items = three_files(&store);
+    items.progress("job-1", "f-a", 5).expect("not copying");
+    let first = || items.page("job-1", None, 1).expect("page").items[0].clone();
+    assert_eq!(first().bytes_done, 0, "a queued file has no progress");
+    items
+        .set("job-1", 0, JobItemState::Copying, 0, None)
+        .expect("copying");
+    items.progress("job-1", "f-a", 4).expect("progress");
+    assert_eq!(
+        (first().state, first().bytes_done),
+        (JobItemState::Copying, 4)
+    );
+    items.progress("job-1", "f-a", 99).expect("progress");
+    assert_eq!(first().bytes_done, 10, "never past its size");
+}

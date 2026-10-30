@@ -102,6 +102,7 @@ async fn a_600_mib_file_is_imported_within_bounded_memory() {
         operation_id: Some("op-1".into()),
         build: &build,
         actor: "owner",
+        progress: None,
     };
     let before = peak_resident();
     let imported = import_file(&files, &request).await;

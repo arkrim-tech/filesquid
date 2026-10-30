@@ -118,6 +118,7 @@ fn request<'a>(path: &'a Path, build: &'a Build) -> FileImport<'a> {
         operation_id: Some("op-1".into()),
         build,
         actor: "owner",
+        progress: None,
     }
 }
 
@@ -308,6 +309,27 @@ fn the_source_entity_tag_changes_when_the_file_is_rewritten() {
     let other = filesquid_ocfl::storage::StorageKey::new("other").expect("key");
     assert!(ready(source.head(&other)).is_err(), "one key only");
     assert!(ready(source.put(&key, b"x")).is_err(), "a read-only source");
+}
+
+#[test]
+fn a_counting_source_adds_every_byte_it_reads() {
+    let dir = TempDir::new("counting");
+    let path = source(&dir.0, "a.txt", b"twelve bytes");
+    let read = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let source = SourceFile::new(&path).counting(Some(read.clone()));
+    let key = filesquid_ocfl::storage::StorageKey::new(SOURCE_KEY).expect("key");
+    let range = filesquid_ocfl::storage::ByteRange::new(0, 64).expect("range");
+    for _ in 0..2 {
+        assert_eq!(
+            ready(source.get_range(&key, range)).expect("read").len(),
+            12
+        );
+    }
+    assert_eq!(
+        read.load(std::sync::atomic::Ordering::SeqCst),
+        24,
+        "two whole reads"
+    );
 }
 
 /// Run `future` to completion on this thread.

@@ -926,3 +926,47 @@ fn copy_dir(from: &Path, to: &Path) {
         }
     }
 }
+
+#[test]
+fn a_persistent_registry_restores_names_locations_and_free_bytes_after_a_restart() {
+    use filesquid_api::local_library::{FreeSpace, LibraryRegistry};
+    use filesquid_native::registry_sqlite::SqliteLibraryRegistry;
+    use filesquid_native::HostLocations;
+    let dir = std::env::temp_dir().join(format!("fs-native-registry-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let (data, folder) = (dir.join("data"), dir.join("Family"));
+    std::fs::create_dir_all(&data).expect("data");
+    std::fs::create_dir_all(&folder).expect("folder");
+    let store = || SqliteLibraryRegistry::open(&data.join("filesquid.sqlite")).expect("store");
+    let library = LibraryId::new("6f1d2c3b-4a5e-4f60-8a7b-9c0d1e2f3a4b").expect("library");
+    let first = HostLocations::persistent(&data, store()).expect("registry");
+    let location = first.register(&folder).expect("location");
+    first.remember(&library, &location, Some("Family archive"), 1_000);
+    assert_eq!(first.rename(&library, "Family photos"), Some(true));
+    drop(first);
+    let second = HostLocations::persistent(&data, store()).expect("restored");
+    let entry = second.entry(&library).expect("remembered across launches");
+    assert_eq!(entry.name, "Family photos");
+    assert_eq!(entry.location_id, location, "the same opaque location");
+    assert_eq!(entry.last_opened_ms, 1_000);
+    assert!(
+        second.root_of(&location).is_some(),
+        "its folder registered again"
+    );
+    let free = second.free_space(&location);
+    if cfg!(any(target_os = "linux", target_os = "macos")) {
+        assert!(matches!(free, FreeSpace::Bytes(_)), "{free:?}");
+    } else {
+        assert_eq!(free, FreeSpace::VolumeUnreadable);
+    }
+    std::fs::remove_dir_all(&folder).expect("folder gone");
+    drop(second);
+    let third = HostLocations::persistent(&data, store()).expect("restored");
+    assert!(
+        third.entry(&library).is_some(),
+        "kept although its folder is gone"
+    );
+    assert_eq!(third.free_space(&location), FreeSpace::VolumeUnreadable);
+    drop(third);
+    std::fs::remove_dir_all(&dir).expect("cleanup");
+}
