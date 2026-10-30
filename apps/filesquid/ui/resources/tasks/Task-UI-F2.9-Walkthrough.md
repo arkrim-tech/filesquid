@@ -112,7 +112,7 @@ The server-backed Playwright suite (`playwright.config.ts`) starts `filesquid-se
 
 ```
 ℹ️  Test scope: npm:apps/filesquid/ui
-✅ All Pre-Commit Hooks Passed! Test scope: npm:apps/filesquid/ui (99s)
+✅ All Pre-Commit Hooks Passed! Test scope: npm:apps/filesquid/ui (75s)
 ```
 
 ## Sync Execution Report
