@@ -687,7 +687,7 @@ fn a_named_library_answers_its_facts_and_is_listed_as_recent_without_its_folder(
     std::fs::create_dir_all(&folder).expect("folder");
     let location = desktop.register(&folder);
     let body = json!({ "location_id": location, "name": "Family archive" });
-    let (status, created) = desktop.post("/api/v1/libraries", body);
+    let (status, created) = desktop.command("/api/v1/libraries", body);
     assert_eq!(status, 200, "{created}");
     let library = created["library_id"].as_str().expect("id").to_string();
     assert_eq!(desktop.entity_name(&library), "Family archive");
@@ -710,8 +710,12 @@ fn a_named_library_answers_its_facts_and_is_listed_as_recent_without_its_folder(
         "no folder path: {facts}"
     );
     let rename = json!({ "library_id": library, "name": "Family archive 1990s" });
-    let (status, renamed) = desktop.post("/api/v1/libraries/renames", rename);
+    let (status, renamed) = desktop.command("/api/v1/libraries/renames", rename);
     assert_eq!(status, 200, "{renamed}");
+    assert_eq!(
+        renamed["revision"], "2",
+        "a changed name advances the revision"
+    );
     assert_eq!(
         desktop.entity_name(&library),
         "Family archive 1990s",

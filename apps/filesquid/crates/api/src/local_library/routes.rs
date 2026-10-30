@@ -48,7 +48,9 @@ use super::service::{
     CANDIDATES_OPERATION, COPY_OPERATION, CREATE_OPERATION, FACTS_OPERATION, OPEN_OPERATION,
     REBUILD_OPERATION, RECENT_OPERATION, RENAME_OPERATION,
 };
-use super::{LibraryRequest, LocalLibraryError, LocationRequest, SnapshotCopyRequest};
+use super::{
+    LibraryRequest, LocalLibraryError, LocationRequest, RenameLibraryRequest, SnapshotCopyRequest,
+};
 use crate::auth::{journal_entry, Action, Principal};
 use crate::envelope::{self, Checked, Command, Settled};
 use crate::error::{ApiError, ErrorCode};
@@ -130,6 +132,12 @@ impl CommandInput for SnapshotCopyRequest {
 }
 
 impl CommandInput for LibraryRequest {
+    fn scope(&self) -> String {
+        format!("library:{}", self.library_id.as_str())
+    }
+}
+
+impl CommandInput for RenameLibraryRequest {
     fn scope(&self) -> String {
         format!("library:{}", self.library_id.as_str())
     }
@@ -299,7 +307,7 @@ async fn open(
             Ok(Done {
                 result: opened.view,
                 pending: false,
-                changed: opened.bound,
+                changed: opened.changed,
             })
         },
     )
@@ -447,18 +455,29 @@ async fn repair(
     answer(operations.repair(principal, request).await)
 }
 
-/// `POST /api/v1/libraries/renames`.
+/// `POST /api/v1/libraries/renames`: rename an open library, answered `committed` with its
+/// facts; a rename that changes nothing stores no receipt.
 async fn rename(
     State(state): State<ApiState>,
     Extension(principal): Extension<Principal>,
-    request: Result<Json<super::RenameLibraryRequest>, JsonRejection>,
+    request: Result<Json<Command<RenameLibraryRequest>>, JsonRejection>,
 ) -> Response {
-    let actor = principal.actor().to_string();
-    let (operations, request) = match ready(&state, body(request)) {
-        Ok(ready) => ready,
-        Err(err) => return refuse(&state, RENAME_OPERATION, &actor, err).await,
-    };
-    answer(operations.rename(actor, request).await)
+    let command = checked(request);
+    run(
+        &state,
+        &principal,
+        RENAME_OPERATION,
+        command,
+        |ops, c, actor| async move {
+            let (facts, changed) = ops.rename(actor, c.input, c.expected).await?;
+            Ok(Done {
+                result: facts,
+                pending: false,
+                changed,
+            })
+        },
+    )
+    .await
 }
 
 /// `GET /api/v1/libraries/{library}/facts`: a library the caller may not read is refused
@@ -479,7 +498,7 @@ async fn facts(
     });
     let (operations, library) = match checked {
         Ok(ready) => ready,
-        Err(err) => return refuse(&state, FACTS_OPERATION, &actor, err).await,
+        Err(err) => return refuse(&state, FACTS_OPERATION, &actor, None, err).await,
     };
     answer(operations.facts(actor, library).await)
 }
@@ -492,7 +511,7 @@ async fn recent(
     let actor = principal.actor().to_string();
     let operations = match ready(&state, Some(())) {
         Ok((operations, ())) => operations,
-        Err(err) => return refuse(&state, RECENT_OPERATION, &actor, err).await,
+        Err(err) => return refuse(&state, RECENT_OPERATION, &actor, None, err).await,
     };
     let reader = state.clone();
     let readable: super::Readable = Box::new(move |library| may_read(&reader, &principal, library));

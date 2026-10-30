@@ -354,12 +354,13 @@ impl LibraryOperations for DesktopLibraries {
         &self,
         actor: String,
         request: RenameLibraryRequest,
-    ) -> LibraryFuture<'_, LibraryFacts> {
+        expected: String,
+    ) -> LibraryFuture<'_, (LibraryFacts, bool)> {
         Box::pin(async move {
             let (library_id, name) = (request.library_id.clone(), request.name.clone());
-            let facts = self.commands.rename(&actor, request).await?;
+            let renamed = self.commands.rename(&actor, request, &expected).await?;
             self.retitle(&actor, &library_id, &name).await;
-            Ok(facts)
+            Ok(renamed)
         })
     }
 

@@ -121,25 +121,27 @@ impl<L: LibraryLocations> LibraryCommands<L> {
         self
     }
 
-    /// Rename a library this host opened, for `actor`, and answer its facts. A rename that
-    /// changes nothing answers the facts and is not journaled.
+    /// Rename a library open on this host, for `actor`, when the caller expects its current
+    /// revision, and answer its facts: a changed name advances the revision; a rename that
+    /// changes nothing answers the facts, advances nothing and is not journaled. Answers the
+    /// facts and whether the name changed.
     ///
     /// # Errors
     ///
-    /// `invalid_name`, `library_not_found` (a library this host never opened), or
+    /// `invalid_name`, `library_not_open` (a library not open here now), `conflict` (a stale
+    /// expected revision), `library_not_found` (a library this host never opened), or
     /// `unavailable` without a registry; each journaled once.
     pub async fn rename(
         &self,
         actor: &str,
         request: RenameLibraryRequest,
-    ) -> Result<LibraryFacts, LocalLibraryError> {
+        expected: &str,
+    ) -> Result<(LibraryFacts, bool), LocalLibraryError> {
         let library = &request.library_id;
         let checked = self.registry().and_then(|registry| {
             name_or_refusal(Some(&request.name))?;
-            let renamed = registry.rename(library, &request.name);
-            renamed
-                .map(|changed| (registry, changed))
-                .ok_or_else(library_not_found)
+            let changed = self.rename_at(registry.as_ref(), library, &request.name, expected)?;
+            Ok((registry, changed))
         });
         let (registry, changed) = self.refused(actor, RENAME_OPERATION, Some(library), checked)?;
         if changed {
@@ -148,7 +150,32 @@ impl<L: LibraryLocations> LibraryCommands<L> {
         }
         let entry = registry.entry(library).ok_or(LocalLibraryError::Internal)?;
         let space = read_free_space(registry, &entry.location_id).await;
-        Ok(LibraryFacts::of(&entry, &space))
+        let facts = LibraryFacts::of(&entry, &space, self.revision_of(library));
+        Ok((facts, changed))
+    }
+
+    /// Rename the open library `library` to `name` in `registry` under the open-library
+    /// lock, so the revision check, the rename and the revision advance are one step; answer
+    /// whether the name changed. Registry I/O under the lock, without an await.
+    fn rename_at(
+        &self,
+        registry: &dyn LibraryRegistry,
+        library: &LibraryId,
+        name: &str,
+        expected: &str,
+    ) -> Result<bool, LocalLibraryError> {
+        let mut open = self.lock();
+        let bound = open.get_mut(library).ok_or_else(library_not_open)?;
+        if bound.revision != expected {
+            return Err(stale_revision());
+        }
+        let changed = registry
+            .rename(library, name)
+            .ok_or_else(library_not_found)?;
+        if changed {
+            bound.revision = next_revision(&bound.revision);
+        }
+        Ok(changed)
     }
 
     /// The facts of a library this host opened, for `actor`: its name and the free space of
@@ -168,7 +195,7 @@ impl<L: LibraryLocations> LibraryCommands<L> {
         });
         let (registry, entry) = self.refused(actor, FACTS_OPERATION, Some(library), checked)?;
         let space = read_free_space(registry, &entry.location_id).await;
-        Ok(LibraryFacts::of(&entry, &space))
+        Ok(LibraryFacts::of(&entry, &space, self.revision_of(library)))
     }
 
     /// The libraries this host opened that `readable` keeps, then at most
@@ -207,22 +234,25 @@ impl<L: LibraryLocations> LibraryCommands<L> {
     }
 
     /// Remember the library just bound from `request` in `registry`, journaling a rename
-    /// when the request's name replaces a different one this host knew.
+    /// when the request's name replaces a different one this host knew; answers whether it
+    /// did.
     fn remember(
         &self,
         actor: &str,
         registry: &dyn LibraryRegistry,
         library_id: &LibraryId,
         request: &LocationRequest,
-    ) {
+    ) -> bool {
         let known = registry.entry(library_id).map(|entry| entry.name);
         let now = self.service.now_ms();
         let name = request.name.as_deref();
         let kept = registry.remember(library_id, &request.location_id, name, now);
-        if known.is_some_and(|known| known != kept) {
+        let renamed = known.is_some_and(|known| known != kept);
+        if renamed {
             self.service
                 .journal_success(actor, RENAME_OPERATION, library_id);
         }
+        renamed
     }
 
     /// The installed registry, or `unavailable`.
@@ -428,22 +458,30 @@ impl<L: LibraryLocations> LibraryCommands<L> {
             Binding::Create => self.service.create_root(actor, &library_id, backend).await,
             Binding::Open => self.service.open_root(actor, &library_id, backend).await,
         }?;
-        if let Some(registry) = &self.registry {
-            self.remember(actor, registry.as_ref(), &library_id, &request);
-        }
-        let revision = self.keep_bound(&library_id, request.location_id, bound);
+        let renamed = match &self.registry {
+            Some(registry) => self.remember(actor, registry.as_ref(), &library_id, &request),
+            None => false,
+        };
+        let revision = self.keep_bound(&library_id, request.location_id, bound, renamed);
         let view = LibraryView {
             library_id,
             spec_version: summary.spec_version,
             objects: summary.objects,
             revision,
         };
-        Ok(Opened { view, bound })
+        let changed = bound || renamed;
+        Ok(Opened { view, changed })
     }
 
     /// Bind `library_id` to `location` at [`INITIAL_REVISION`] when `fresh`, else keep its
-    /// binding; answer its revision.
-    fn keep_bound(&self, library_id: &LibraryId, location: String, fresh: bool) -> String {
+    /// binding, advancing its revision when the open `renamed` it; answer its revision.
+    fn keep_bound(
+        &self,
+        library_id: &LibraryId,
+        location: String,
+        fresh: bool,
+        renamed: bool,
+    ) -> String {
         let mut open = self.lock();
         if fresh {
             let bound = Bound {
@@ -452,9 +490,13 @@ impl<L: LibraryLocations> LibraryCommands<L> {
             };
             open.insert(library_id.clone(), bound);
         }
-        open.get(library_id)
-            .map(|bound| bound.revision.clone())
-            .unwrap_or_else(|| INITIAL_REVISION.to_string())
+        let Some(bound) = open.get_mut(library_id) else {
+            return INITIAL_REVISION.to_string();
+        };
+        if renamed && !fresh {
+            bound.revision = next_revision(&bound.revision);
+        }
+        bound.revision.clone()
     }
 
     /// Refuse a command whose `expected` revision is not the current revision of the open
@@ -619,6 +661,16 @@ impl<L: LibraryLocations> LibraryCommands<L> {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
+}
+
+/// The revision after `current`: the next integer, or [`INITIAL_REVISION`] for a revision
+/// that is not one (never answered by this host). Pure.
+fn next_revision(current: &str) -> String {
+    current
+        .parse::<u64>()
+        .ok()
+        .and_then(|n| n.checked_add(1))
+        .map_or_else(|| INITIAL_REVISION.to_string(), |n| n.to_string())
 }
 
 /// Refuse an `expected` revision that is none of `accepted`. Pure.

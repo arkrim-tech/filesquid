@@ -206,7 +206,8 @@ impl LibraryOperations for ScriptedLibrary {
         &self,
         _: String,
         _: filesquid_api::local_library::RenameLibraryRequest,
-    ) -> LibraryFuture<'_, filesquid_api::local_library::LibraryFacts> {
+        _: String,
+    ) -> LibraryFuture<'_, (filesquid_api::local_library::LibraryFacts, bool)> {
         unused()
     }
 
@@ -737,7 +738,8 @@ impl LibraryOperations for Refusing {
         &self,
         _: String,
         _: filesquid_api::local_library::RenameLibraryRequest,
-    ) -> LibraryFuture<'_, filesquid_api::local_library::LibraryFacts> {
+        _: String,
+    ) -> LibraryFuture<'_, (filesquid_api::local_library::LibraryFacts, bool)> {
         unused()
     }
 

@@ -9,6 +9,7 @@
 # answered before the revision is checked; a command that changes nothing stores no receipt.
 # API-S-025: the rebuild runs as a durable job answered pending; a request for a library whose
 # rebuild job is unfinished answers that job and submits none.
+# API-S-038: the rename route takes the envelope; a changed name advances the library's revision.
 # UI-S-012: a 2xx answer resolves to a CommandOutcome for the same operation id; HTTP 409
 # resolves to conflict.
 # Task API-F2.19.
@@ -30,6 +31,13 @@ Feature: Command envelopes on the library routes
     When the owner starts a rebuild of the library as operation "op-rebuild-1" expecting "1"
     Then the answer should be a pending library.rebuild job without a result
     And the answer should be a pending outcome of operation "op-rebuild-1" naming the same job
+
+  Scenario: Renaming a library carries an envelope and advances its revision
+    Given the desktop owner's library with a complete object and an object without a version inventory
+    When the owner renames the library to "Family archive" as operation "op-rename-1" expecting "1"
+    Then the answer should be a committed library outcome of operation "op-rename-1"
+    And the library should be at revision "2"
+    And "library.rename" should be journaled 1 time as a success
 
   # Edge cases
   Scenario: A repeated copy answers its first answer with no second write

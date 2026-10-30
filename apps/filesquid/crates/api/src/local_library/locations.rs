@@ -85,14 +85,15 @@ pub struct LibraryView {
     pub revision: String,
 }
 
-/// What an open answered: the library, and whether this call bound it (a library already
-/// open at that location is answered again and nothing changes).
+/// What an open answered: the library, and whether this call changed anything (bound the
+/// library, or renamed an open one with the name it gave); a library already open at that
+/// location under its own name is answered again and nothing changes.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Opened {
     /// The library and what its storage root holds.
     pub view: LibraryView,
-    /// True when this call bound the library to its location.
-    pub bound: bool,
+    /// True when this call bound the library to its location or renamed it.
+    pub changed: bool,
 }
 
 /// Body of `POST /api/v1/libraries/snapshot-copies`.

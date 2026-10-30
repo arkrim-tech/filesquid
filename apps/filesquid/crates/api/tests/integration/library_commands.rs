@@ -14,7 +14,7 @@ mod fixture;
 use axum::http::StatusCode;
 use filesquid_api::journal::Outcome;
 use filesquid_api::local_library::{
-    COPY_OPERATION, CREATE_OPERATION, OPEN_OPERATION, REBUILD_OPERATION,
+    COPY_OPERATION, CREATE_OPERATION, OPEN_OPERATION, REBUILD_OPERATION, RENAME_OPERATION,
 };
 use fixture::{
     command, library_command, location_command, operation_id, Answer, LibraryRig, Mount,
@@ -29,6 +29,14 @@ const OPEN: &str = "/api/v1/libraries/openings";
 const COPY: &str = "/api/v1/libraries/snapshot-copies";
 /// The rebuild route.
 const REBUILD: &str = "/api/v1/libraries/rebuilds";
+/// The rename route.
+const RENAME: &str = "/api/v1/libraries/renames";
+
+/// The rename command of `library` to `name`, expecting `revision`.
+fn rename_body(library: &str, operation: &str, revision: &str, name: &str) -> Value {
+    let input = json!({ "library_id": library, "name": name });
+    library_command(library, operation, revision, input)
+}
 
 /// Assert `answer` is HTTP 200 with a `committed` outcome of `operation` and a result.
 fn assert_committed(answer: &Answer, operation: &str) -> Value {
@@ -328,6 +336,47 @@ async fn a_rebuild_with_an_unfinished_job_answers_that_job_under_a_new_operation
     let input = json!({ "library_id": library, "destination_location_id": dest });
     let body = library_command(&library, &second, "1", input);
     assert_committed(&rig.post(COPY, body).await, &second);
+}
+
+#[tokio::test]
+async fn a_rename_takes_an_envelope_advances_the_revision_and_replays_its_answer() {
+    let (rig, library, _) = library(Mount::Desktop).await;
+    let plain = json!({ "library_id": library, "name": "Plain" });
+    assert_error(&rig.post(RENAME, plain).await, 400, "invalid_request");
+
+    let renamed = operation_id();
+    let body = rename_body(&library, &renamed, "1", "Family archive");
+    let first = rig.post(RENAME, body.clone()).await;
+    let facts = assert_committed(&first, &renamed);
+    assert_eq!(facts["name"], "Family archive", "{facts}");
+    assert_eq!(
+        facts["revision"], "2",
+        "a changed name advances it: {facts}"
+    );
+    let again = rig.post(RENAME, body).await;
+    assert_eq!(again.json(), first.json(), "the first answer again");
+    assert_eq!(count(&rig, RENAME_OPERATION, Outcome::Succeeded), 1);
+
+    let stale = operation_id();
+    let body = rename_body(&library, &stale, "1", "Stale name");
+    assert_conflict(&rig.post(RENAME, body).await, &stale);
+    let read = rig.get(&format!("/api/v1/libraries/{library}/facts")).await;
+    assert_eq!(read.json()["name"], "Family archive", "nothing changed");
+    assert_eq!(read.json()["revision"], "2", "{}", read.text());
+
+    let same = operation_id();
+    let body = rename_body(&library, &same, "2", "Family archive");
+    let unchanged = assert_committed(&rig.post(RENAME, body).await, &same);
+    assert_eq!(
+        unchanged["revision"], "2",
+        "a rename to the current name advances nothing"
+    );
+    // It changed nothing, so its operation ID stored no receipt and is free for another command.
+    let dest = rig.locations.register("copy");
+    let input = json!({ "library_id": library, "destination_location_id": dest });
+    let copy = library_command(&library, &same, "2", input);
+    assert_committed(&rig.post(COPY, copy).await, &same);
+    assert_eq!(count(&rig, RENAME_OPERATION, Outcome::Succeeded), 1);
 }
 
 #[tokio::test]

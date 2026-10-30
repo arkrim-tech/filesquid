@@ -176,6 +176,15 @@ async fn copy_as(w: &mut MonitorWorld, operation: String, revision: String) {
     w.routes.answer = Some(answer);
 }
 
+#[when(expr = "the owner renames the library to {string} as operation {string} expecting {string}")]
+async fn rename_as(w: &mut MonitorWorld, name: String, operation: String, revision: String) {
+    let input = json!({ "library_id": w.routes.library, "name": name });
+    let body = library_command(&w.routes.library, &operation, &revision, input);
+    let answer = w.routes.rig().post("/api/v1/libraries/renames", body).await;
+    w.routes.keep_first(&operation, &answer);
+    w.routes.answer = Some(answer);
+}
+
 #[when(expr = "the owner sends a rebuild of the library without an envelope")]
 async fn rebuild_without_envelope(w: &mut MonitorWorld) {
     let body = json!({ "library_id": w.routes.library });

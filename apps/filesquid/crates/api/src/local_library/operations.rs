@@ -84,12 +84,14 @@ pub trait LibraryOperations: Send + Sync {
     /// Run the consented version-inventory repair, for `caller`.
     fn repair(&self, caller: Principal, request: RepairRequest) -> LibraryFuture<'_, RepairAnswer>;
 
-    /// Rename a library this host opened, for `actor` (API-S-038).
+    /// Rename a library open on this host, for `actor`, expecting its current revision
+    /// (API-S-038, Task API-F2.19); answers its facts and whether the name changed.
     fn rename(
         &self,
         actor: String,
         request: RenameLibraryRequest,
-    ) -> LibraryFuture<'_, LibraryFacts>;
+        expected: String,
+    ) -> LibraryFuture<'_, (LibraryFacts, bool)>;
 
     /// The facts of a library this host opened, for `actor` (API-S-038).
     fn facts(&self, actor: String, library_id: LibraryId) -> LibraryFuture<'_, LibraryFacts>;
@@ -166,8 +168,9 @@ impl<L: LibraryLocations> LibraryOperations for LibraryCommands<L> {
         &self,
         actor: String,
         request: RenameLibraryRequest,
-    ) -> LibraryFuture<'_, LibraryFacts> {
-        Box::pin(async move { LibraryCommands::rename(self, &actor, request).await })
+        expected: String,
+    ) -> LibraryFuture<'_, (LibraryFacts, bool)> {
+        Box::pin(async move { LibraryCommands::rename(self, &actor, request, &expected).await })
     }
 
     fn facts(&self, actor: String, library_id: LibraryId) -> LibraryFuture<'_, LibraryFacts> {

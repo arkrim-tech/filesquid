@@ -270,9 +270,12 @@ pub fn sample(method: &Method, path: &str) -> Option<(String, SampleBody)> {
         ("POST", "/api/v1/libraries/repairs") => {
             serde_json::to_value(repair_request()).expect("json")
         }
-        ("POST", "/api/v1/libraries/renames") => {
-            json!({ "library_id": LIBRARY, "name": "Renamed sample library" })
-        }
+        ("POST", "/api/v1/libraries/renames") => command_body(
+            path,
+            &library_scope,
+            "1",
+            json!({ "library_id": LIBRARY, "name": "Renamed sample library" }),
+        ),
         ("GET", "/api/v1/libraries/{library}/facts") => {
             return Some((format!("/api/v1/libraries/{LIBRARY}/facts"), None));
         }
@@ -455,7 +458,31 @@ pub fn samples() -> Vec<(&'static str, Vec<Value>)> {
                 input: LocationRequest {
                     location_id: SAMPLE.to_string(),
                     library_id: Some(library()),
+                    name: None,
                 },
+            })],
+        ),
+        (
+            "RenameLibraryCommand",
+            vec![to_value(Command {
+                envelope: envelope("sample", &format!("library:{LIBRARY}"), "1"),
+                input: RenameLibraryRequest {
+                    library_id: library(),
+                    name: "Family archive 1990s".to_string(),
+                },
+            })],
+        ),
+        (
+            "LibraryFactsOutcome",
+            vec![to_value(CommandAnswer {
+                outcome: CommandOutcome::new(operation(), CommandOutcomeKind::Committed),
+                result: Some(LibraryFacts {
+                    library_id: library(),
+                    name: "Family archive 1990s".to_string(),
+                    free_bytes: Some(1_000_000),
+                    free_bytes_reason: None,
+                    revision: Some("2".to_string()),
+                }),
             })],
         ),
         (
@@ -634,10 +661,12 @@ fn facts_samples() -> Vec<(&'static str, Vec<Value>)> {
         name: "Family archive".to_string(),
         free_bytes: Some(1_000_000),
         free_bytes_reason: None,
+        revision: Some("1".to_string()),
     };
     let unknown = LibraryFacts {
         free_bytes: None,
         free_bytes_reason: Some(FreeBytesReason::NotLocal),
+        revision: None,
         ..known.clone()
     };
     let recent = RecentLibrary {
