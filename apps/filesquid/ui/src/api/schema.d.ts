@@ -444,7 +444,7 @@ export interface paths {
         put?: never;
         /**
          * Create a folder (pending until a file is added)
-         * @description Writes nothing: OCFL stores no empty folder, so a new folder stays pending in the client and is persisted only when a file is added beneath its prefix. A file at the path or at a parent of it is a conflict. Command (Task API-F2.13, API-S-002): the body carries a `CommandEnvelope` beside the input (schema version 1; an opaque operation_id of 1 to 128 letters, digits, `.`, `_`, `-` or `:`; scope `library:<library_id>`). The expected revision is the head version of `object_id` that the caller read (`v1`, `v2`, ...). A stale revision is answered 409 with a `conflict` outcome and changes nothing. A 200 answer is a `CommandOutcome` of the same operation_id (`committed`) whose `result` is what the command made. A repeated operation_id of the same command that changed something answers its first answer again, before the revision is checked, with no second change; the same operation_id with another route, library or input is refused (400). Creating a folder writes nothing, so it never stores a receipt: a repeated operation_id is evaluated again.
+         * @description Writes nothing: OCFL stores no empty folder, so a new folder stays pending in the client and is persisted only when a file is added beneath its prefix. A file at the path or at a parent of it is a conflict. Command (Task API-F2.13, API-S-002): the body carries a `CommandEnvelope` beside the input (schema version 1; an opaque operation_id of 1 to 128 letters, digits, `.`, `_`, `-` or `:`; scope `library:<library_id>`). The expected revision is the head version of `object_id` that the caller read (`v1`, `v2`, ...). A stale revision is answered 409 with a `conflict` outcome and changes nothing. A 200 answer is a `CommandOutcome` of the same operation_id (`committed`) whose `result` is what the command made. A repeated operation_id of the same command that changed something answers its first answer again, before the revision is checked, with no second change; the same operation_id with another route, library or input is refused (400). Creating a folder writes nothing, so it never stores a receipt: a repeated operation_id is evaluated again. Collection folder (Task API-F2.14, API-S-011): an input with `collection_id` and `folder` answers the free collection logical path for a new folder, numbered beside a taken one (`directoryY-1`, then `directoryY-2`; a recoverably deleted file's path counts as taken), and writes nothing, since a folder is only the prefix of its files' paths (ADR 041 Decision 3); the expected revision is not compared. Refusals: `destination_required` (400), `collection_not_found` (404), `invalid_path` and `name_too_long` (400), `path_suffix_exhausted` (409), each journaled once as `files.create_folder` with opaque IDs only. A success changes nothing and is not journaled.
          */
         post: operations["createFolder"];
         delete?: never;
@@ -464,7 +464,7 @@ export interface paths {
         put?: never;
         /**
          * Move or rename one file or folder
-         * @description A folder moves every file below it; no bytes are written. Publishes exactly one OCFL version through the filesquid-ocfl change model, or is refused (409) without publishing when nothing would change, another change is staged or the head is incomplete (API-S-008). The commit is linked to the activity journal (API-S-028): its version `user` is the installation (name `FileSquid installation`, address `urn:uuid:<installation-uuid>`) once the host configures provenance, else the caller; its message is `filesquid.operation.v1` with the operation_id and kind `move`, and the optional `message` as its `label`; with provenance configured the version carries its PROV-O record; and it is journaled with opaque IDs only, once as `ocfl.commit` and once as `files.move`, each with the operation_id and the object reference `<object-id>@vN`. A refusal is journaled once and commits nothing. A file object's stored original (`original/` of `files/<file-id>`) never moves: such a move is refused (400) with a pointer to `POST /api/v1/files/renames`, since a rename changes only the display name (API-S-027). Command (Task API-F2.13, API-S-002): the body carries a `CommandEnvelope` beside the input (schema version 1; an opaque operation_id of 1 to 128 letters, digits, `.`, `_`, `-` or `:`; scope `library:<library_id>`). The expected revision is the head version of `object_id` that the caller read (`v1`, `v2`, ...). A stale revision is answered 409 with a `conflict` outcome and changes nothing. A 200 answer is a `CommandOutcome` of the same operation_id (`committed`) whose `result` is what the command made. A repeated operation_id of the same command that changed something answers its first answer again, before the revision is checked, with no second change; the same operation_id with another route, library or input is refused (400). A refusal stores no receipt, so its retry is evaluated again. Receipts are kept in memory while the host runs, at most 10,000.
+         * @description A folder moves every file below it; no bytes are written. Publishes exactly one OCFL version through the filesquid-ocfl change model, or is refused (409) without publishing when nothing would change, another change is staged or the head is incomplete (API-S-008). The commit is linked to the activity journal (API-S-028): its version `user` is the installation (name `FileSquid installation`, address `urn:uuid:<installation-uuid>`) once the host configures provenance, else the caller; its message is `filesquid.operation.v1` with the operation_id and kind `move`, and the optional `message` as its `label`; with provenance configured the version carries its PROV-O record; and it is journaled with opaque IDs only, once as `ocfl.commit` and once as `files.move`, each with the operation_id and the object reference `<object-id>@vN`. A refusal is journaled once and commits nothing. A file object's stored original (`original/` of `files/<file-id>`) never moves: such a move is refused (400) with a pointer to `POST /api/v1/files/renames`, since a rename changes only the display name (API-S-027). Command (Task API-F2.13, API-S-002): the body carries a `CommandEnvelope` beside the input (schema version 1; an opaque operation_id of 1 to 128 letters, digits, `.`, `_`, `-` or `:`; scope `library:<library_id>`). The expected revision is the head version of `object_id` that the caller read (`v1`, `v2`, ...). A stale revision is answered 409 with a `conflict` outcome and changes nothing. A 200 answer is a `CommandOutcome` of the same operation_id (`committed`) whose `result` is what the command made. A repeated operation_id of the same command that changed something answers its first answer again, before the revision is checked, with no second change; the same operation_id with another route, library or input is refused (400). A refusal stores no receipt, so its retry is evaluated again. Receipts are kept in memory while the host runs, at most 10,000. Collection move (Task API-F2.14, API-S-011): an input with `file_id`, `collection_id` and optionally `folder` gives a file the collection snapshot registers another home collection or folder, keeping its name, numbered beside a path another item takes (a recoverably deleted file's included; `path_suffix_exhausted` after 9,999 numbers), in one snapshot version journaled `library.files.place` under the operation ID, rewriting no bytes. Without `collection_id` it is refused 400 invalid_request (`destination_required`), an unknown or foreign collection 404 not_found (`collection_not_found`), a file no home collection registers 404 not_found. Its expected revision is not compared: the move changes no file object. Journaled once as `file.move` with opaque IDs only, and `navigation.change` announces the folders it left and entered; a move to where the file already is changes nothing.
          */
         post: operations["moveFiles"];
         delete?: never;
@@ -1032,7 +1032,7 @@ export interface paths {
         put?: never;
         /**
          * Rename a file
-         * @description Set the display name of a file object's original (API-S-027): the record's display name changes and nothing else, so the stored name, the logical path, the original name and every import entry stay. Publishes exactly one new version of the file's metadata record through the metadata module's `ocfl` store, or is refused without publishing (400 for an empty name, one over 1,024 bytes or one with `/` or NUL; 409 when the name is already the display name or another writer moved the record first). The commit is linked to the activity journal (API-S-028): its version `user` is the installation (name `FileSquid installation`, address `urn:uuid:<installation-uuid>`) once the host configures provenance, else the caller; its message is `filesquid.operation.v1` with the operation_id and kind `rename`; with provenance configured the version carries its PROV-O record; and it is journaled with opaque IDs only, once as `ocfl.commit` and once as `files.rename` and `metadata.edit`, each with the operation_id and the object reference `<object-id>@vN`. A refusal is journaled once and commits nothing. Command (Task API-F2.13, API-S-002): the body carries a `CommandEnvelope` beside the input (schema version 1; an opaque operation_id of 1 to 128 letters, digits, `.`, `_`, `-` or `:`; scope `library:<library_id>`). The expected revision is the head version of the file's object `urn:uuid:<file_id>` that the caller read. A stale revision is answered 409 with a `conflict` outcome and changes nothing. A 200 answer is a `CommandOutcome` of the same operation_id (`committed`) whose `result` is what the command made. A repeated operation_id of the same command that changed something answers its first answer again, before the revision is checked, with no second change; the same operation_id with another route, library or input is refused (400). A refusal stores no receipt, so its retry is evaluated again. Receipts are kept in memory while the host runs, at most 10,000.
+         * @description Set the display name of a file object's original (API-S-027): the record's display name changes and nothing else, so the stored name, the logical path, the original name and every import entry stay. Publishes exactly one new version of the file's metadata record through the metadata module's `ocfl` store, or is refused without publishing (400 for an empty name, one over 1,024 bytes or one with `/` or NUL; 409 when the name is already the display name or another writer moved the record first). The commit is linked to the activity journal (API-S-028): its version `user` is the installation (name `FileSquid installation`, address `urn:uuid:<installation-uuid>`) once the host configures provenance, else the caller; its message is `filesquid.operation.v1` with the operation_id and kind `rename`; with provenance configured the version carries its PROV-O record; and it is journaled with opaque IDs only, once as `ocfl.commit` and once as `files.rename` and `metadata.edit`, each with the operation_id and the object reference `<object-id>@vN`. A refusal is journaled once and commits nothing. Command (Task API-F2.13, API-S-002): the body carries a `CommandEnvelope` beside the input (schema version 1; an opaque operation_id of 1 to 128 letters, digits, `.`, `_`, `-` or `:`; scope `library:<library_id>`). The expected revision is the head version of the file's object `urn:uuid:<file_id>` that the caller read. A stale revision is answered 409 with a `conflict` outcome and changes nothing. A 200 answer is a `CommandOutcome` of the same operation_id (`committed`) whose `result` is what the command made. A repeated operation_id of the same command that changed something answers its first answer again, before the revision is checked, with no second change; the same operation_id with another route, library or input is refused (400). A refusal stores no receipt, so its retry is evaluated again. Receipts are kept in memory while the host runs, at most 10,000. Home collection (Task API-F2.14, API-S-011): a file the collection snapshot registers also takes its new safe name as the last segment of its collection logical path, numbered beside a path another item takes (a recoverably deleted file's included), in one snapshot version journaled `library.files.place` under the same operation ID; the answer's `path` names it, and `navigation.change` announces its folder. A name that cannot be placed (`path_suffix_exhausted` after 9,999 numbers, `name_too_long`) is refused before the name is committed, with no change.
          */
         post: operations["renameFile"];
         delete?: never;
@@ -2437,6 +2437,8 @@ export interface components {
             version: string;
             /** @description When it was created, RFC 3339 UTC. */
             created: string;
+            /** @description A renamed file's collection logical path after the rename (Task API-F2.14): its new name in its folder, or the numbered path beside a taken one (API-S-011 Same logical path); absent for other edits and for a file no home collection registers. */
+            path?: string;
         };
         /**
          * @description The namespace kind of a term candidate, in the add order.
@@ -2874,8 +2876,8 @@ export interface components {
             kind: components["schemas"]["CommandOutcomeKind"];
             /** @description Always null for these routes: a refusal is an error answer. */
             error: components["schemas"]["PortError"] | null;
-            /** @description Whether the folder exists or stays pending (nothing is written, so no receipt is stored). */
-            result: components["schemas"]["FolderAnswer"] | null;
+            /** @description Whether the in-object folder exists or stays pending, or where the collection folder is (nothing is written, so no receipt is stored). */
+            result: components["schemas"]["FolderAnswer"] | components["schemas"]["CollectionFolder"] | null;
         };
         /** @description The 409 answer of a file write command (Task API-F2.13, API-S-002): the `ApiError` fields (code `conflict`) beside a `conflict` outcome of the same operation_id, so a `CommandOutcome` reader and an `ApiError` reader both read it. A stale expected revision, a command that would change nothing, a concurrent change and an operation_id still in flight are conflicts. */
         FileCommandConflict: {
@@ -2896,12 +2898,14 @@ export interface components {
         /** @description Body of `POST /api/v1/files/folders`: the command envelope and the input (Task API-F2.13, API-S-002). */
         CreateFolderCommand: {
             envelope: components["schemas"]["CommandEnvelope"];
-            input: components["schemas"]["CreateFolderRequest"];
+            /** @description A folder inside one OCFL object (`object_id`, `path`; API-S-008), or a folder of a collection (`collection_id`, `folder`; API-S-011). */
+            input: components["schemas"]["CreateFolderRequest"] | components["schemas"]["CollectionFolderRequest"];
         };
         /** @description Body of `POST /api/v1/files/moves`: the command envelope and the input (Task API-F2.13, API-S-002). */
         MoveCommand: {
             envelope: components["schemas"]["CommandEnvelope"];
-            input: components["schemas"]["MoveRequest"];
+            /** @description A move inside one OCFL object (`object_id`, `from`, `to`; API-S-008, API-S-014), or a collection move (`file_id`, `collection_id`, `folder`; API-S-011). */
+            input: components["schemas"]["MoveRequest"] | components["schemas"]["CollectionMoveRequest"];
         };
         /** @description Body of `POST /api/v1/files/removals`: the command envelope and the input (Task API-F2.13, API-S-002). */
         RemoveCommand: {
@@ -3175,6 +3179,61 @@ export interface components {
             message: string;
             /** @description True when repeating the same request unchanged may succeed. */
             retryable: boolean;
+        };
+        /** @description The collection move of `POST /api/v1/files/moves` (Task API-F2.14, API-S-011 Destination): a registered file gets another home collection or folder, keeping its name, in one snapshot version that rewrites no bytes. */
+        CollectionMoveRequest: {
+            /** @description The library. */
+            library_id: string;
+            /** @description The file to move (UUID v4). */
+            file_id: string;
+            /** @description The destination collection, a collection of the library (API-S-011 Destination; owner decision 2026-10-22, "Must choose", ADR 041). Required: a request without it is refused 400 invalid_request with the journal code `destination_required` before any byte is staged, so nothing goes to a library's top level and no default collection is chosen; an unknown collection, one of another library or one the caller may not read is refused 404 not_found (`collection_not_found`). The new file is registered in this collection's snapshot under the request's operation ID. */
+            collection_id: string;
+            /** @description The destination folder inside the collection: a collection logical path (1 to 1,024 UTF-8 bytes in NFC, `/`-separated segments of 1 to 255 bytes without `\`, NUL or control characters, never `.` or `..`), not inside the reserved `provenance` or `.filesquid` folders; the collection's root when absent. A folder outside the rule is refused 400 invalid_request (`invalid_path`). */
+            folder?: string;
+        };
+        /** @description Where a collection move put the file. */
+        CollectionMove: {
+            /** @description The library. */
+            library_id: string;
+            /** @description The file. */
+            file_id: string;
+            /** @description Its home collection. */
+            collection_id: string;
+            /** @description Its collection logical path: its name in the destination folder, or the numbered path beside a taken one (API-S-011 Same logical path). */
+            path: string;
+        };
+        /** @description The collection folder of `POST /api/v1/files/folders` (Task API-F2.14, API-S-011 Same logical path): a new folder at a collection logical path, numbered beside a taken one. A folder is the prefix of the logical paths of the files inside it (ADR 041 Decision 3), so nothing is written. */
+        CollectionFolderRequest: {
+            /** @description The library. */
+            library_id: string;
+            /** @description The collection the folder is in, a collection of the library. Required: a request without it is refused 400 invalid_request (`destination_required`); an unknown collection, one of another library or one the caller may not read is refused 404 not_found (`collection_not_found`). */
+            collection_id: string;
+            /** @description The new folder's collection logical path (1 to 1,024 UTF-8 bytes in NFC, `/`-separated segments of 1 to 255 bytes without `\`, NUL or control characters, never `.` or `..`), not inside the reserved `provenance` or `.filesquid` folders; outside the rule it is refused 400 invalid_request (`invalid_path`). When a file sits at it, below it or at one of its parents (a recoverably deleted file included), its last segment takes a hyphen and the first free number (`directoryY-1`, then `directoryY-2`); after 9,999 numbers 409 conflict (`path_suffix_exhausted`), and a numbered segment over 255 bytes 400 invalid_request (`name_too_long`). */
+            folder: string;
+        };
+        /** @description Where a collection folder is: nothing is written, so it stays pending in the client until a file is uploaded, copied or moved into it (ADR 041 Decision 3). */
+        CollectionFolder: {
+            /** @description The library. */
+            library_id: string;
+            /** @description The collection. */
+            collection_id: string;
+            /** @description The folder's collection logical path: the one asked for, or the numbered path beside a taken one (`directoryY-1`). */
+            path: string;
+            /**
+             * @description Always true: the folder exists once a file is placed in it.
+             * @constant
+             */
+            pending: true;
+        };
+        /** @description The command outcome of a move: the in-object move's committed version, or where a collection move put the file. */
+        FileMoveOutcome: {
+            /** @description The command's operation id. */
+            operation_id: string;
+            kind: components["schemas"]["CommandOutcomeKind"];
+            /** @description Always null for these routes: a refusal is an error answer. */
+            error: components["schemas"]["PortError"] | null;
+            /** @description What the move made. */
+            result: components["schemas"]["FileCommit"] | components["schemas"]["CollectionMove"] | null;
         };
     };
     responses: {
@@ -4282,7 +4341,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Whether the folder exists or stays pending. */
+            /** @description Whether the folder exists or stays pending, or the collection folder's free path. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -4313,13 +4372,13 @@ export interface operations {
             };
         };
         responses: {
-            /** @description The version published. */
+            /** @description The version published, or where the collection move put the file. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["FileCommitOutcome"];
+                    "application/json": components["schemas"]["FileMoveOutcome"];
                 };
             };
             400: components["responses"]["InvalidRequest"];

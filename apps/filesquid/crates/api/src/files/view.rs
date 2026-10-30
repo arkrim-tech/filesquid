@@ -189,6 +189,49 @@ pub struct MoveRequest {
     pub message: Option<String>,
 }
 
+/// The collection move of `POST /api/v1/files/moves` (Task API-F2.14; API-S-011
+/// **Destination**): a registered file gets another home collection or folder, keeping its
+/// name, in one snapshot version that rewrites no bytes.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CollectionMoveRequest {
+    /// The library.
+    pub library_id: String,
+    /// The file to move.
+    pub file_id: String,
+    /// The destination collection, a collection of the library. Required: a move without it
+    /// is refused (`destination_required`).
+    pub collection_id: Option<String>,
+    /// The destination folder inside the collection; the collection's root when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub folder: Option<String>,
+}
+
+/// The input of `POST /api/v1/files/moves`: a move inside one OCFL object (API-S-008,
+/// API-S-014), or a collection move (API-S-011). The shapes are told apart by their fields.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(untagged)]
+pub enum MoveInput {
+    /// A file or folder of one OCFL object moved to another logical path in that object.
+    InObject(MoveRequest),
+    /// A registered file moved to another home collection or folder.
+    Collection(CollectionMoveRequest),
+}
+
+/// The answer to a collection move: where the file is now.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct CollectionMoveView {
+    /// The library.
+    pub library_id: String,
+    /// The file.
+    pub file_id: String,
+    /// Its home collection.
+    pub collection_id: String,
+    /// Its collection logical path: its name in the destination folder, or the numbered path
+    /// beside a taken one (API-S-011 **Same logical path**).
+    pub path: String,
+}
+
 /// Body of `POST /api/v1/files/removals`.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -597,6 +640,47 @@ pub struct FolderView {
     pub path: String,
     /// True when no file lies below the folder yet, so it exists only in the client until a
     /// file is added beneath it (OCFL stores no empty folder); false when it already exists.
+    pub pending: bool,
+}
+
+/// The collection folder of `POST /api/v1/files/folders` (Task API-F2.14; API-S-011 **Same
+/// logical path**): a new folder at a collection logical path, numbered beside a taken one.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CollectionFolderRequest {
+    /// The library.
+    pub library_id: String,
+    /// The collection the folder is in. Required: a request without it is refused
+    /// (`destination_required`).
+    pub collection_id: Option<String>,
+    /// The new folder's collection logical path.
+    pub folder: String,
+}
+
+/// The input of `POST /api/v1/files/folders`: a folder inside one OCFL object (API-S-008), or
+/// a folder of a collection (API-S-011). The shapes are told apart by their fields.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(untagged)]
+pub enum FolderInput {
+    /// A folder inside one OCFL object.
+    InObject(FolderRequest),
+    /// A folder of a collection.
+    Collection(CollectionFolderRequest),
+}
+
+/// The answer to a collection folder: where the folder is. A folder is the prefix of the
+/// logical paths of the files inside it (ADR 041 Decision 3), so a new folder stays pending in
+/// the client until a file is uploaded, copied or moved into it; nothing is written.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct CollectionFolderView {
+    /// The library.
+    pub library_id: String,
+    /// The collection.
+    pub collection_id: String,
+    /// The folder's collection logical path: the one asked for, or the numbered path beside a
+    /// taken one (`directoryY-1`).
+    pub path: String,
+    /// Always true: the folder exists once a file is placed in it.
     pub pending: bool,
 }
 

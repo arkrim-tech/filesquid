@@ -89,11 +89,23 @@ pub(crate) fn taken(
     collection_id: &CollectionId,
     path: &str,
 ) -> Result<bool, CatalogError> {
-    if at_or_below(conn, collection_id, path)? {
+    taken_by_other(conn, collection_id, path, None)
+}
+
+/// As [`taken`], counting no file but `moving`: a file being relocated never takes its own
+/// target, at it, below it or above it, since it leaves its path. Database I/O.
+pub(crate) fn taken_by_other(
+    conn: &Connection,
+    collection_id: &CollectionId,
+    path: &str,
+    moving: Option<&FileId>,
+) -> Result<bool, CatalogError> {
+    let moving = moving.map(FileId::as_str);
+    if at_or_below(conn, collection_id, path, moving)? {
         return Ok(true);
     }
     for ancestor in ancestors(path) {
-        if file_at(conn, collection_id, ancestor)? {
+        if file_at(conn, collection_id, ancestor, moving)? {
             return Ok(true);
         }
     }
@@ -106,15 +118,18 @@ fn ancestors(path: &str) -> impl Iterator<Item = &str> {
     path.match_indices('/').rev().map(|(at, _)| &path[..at])
 }
 
-/// Whether a file of any state sits exactly at `path` in `collection_id`. Database I/O.
+/// Whether a file of any state other than `moving` sits exactly at `path` in
+/// `collection_id`. Database I/O.
 fn file_at(
     conn: &Connection,
     collection_id: &CollectionId,
     path: &str,
+    moving: Option<&str>,
 ) -> Result<bool, CatalogError> {
     conn.query_row(
-        "SELECT EXISTS (SELECT 1 FROM files WHERE home_collection_id = ?1 AND path = ?2)",
-        params![collection_id.as_str(), path],
+        "SELECT EXISTS (SELECT 1 FROM files WHERE home_collection_id = ?1 AND path = ?2
+             AND (?3 IS NULL OR id <> ?3))",
+        params![collection_id.as_str(), path, moving],
         |r| r.get::<_, bool>(0),
     )
     .map_err(sql)
@@ -125,13 +140,14 @@ fn at_or_below(
     conn: &Connection,
     collection_id: &CollectionId,
     path: &str,
+    moving: Option<&str>,
 ) -> Result<bool, CatalogError> {
     let below = format!("{path}/");
     let past = format!("{path}0");
     conn.query_row(
         "SELECT EXISTS (SELECT 1 FROM files WHERE home_collection_id = ?1
-             AND (path = ?2 OR (path >= ?3 AND path < ?4)))",
-        params![collection_id.as_str(), path, below, past],
+             AND (path = ?2 OR (path >= ?3 AND path < ?4)) AND (?5 IS NULL OR id <> ?5))",
+        params![collection_id.as_str(), path, below, past, moving],
         |r| r.get::<_, bool>(0),
     )
     .map_err(sql)

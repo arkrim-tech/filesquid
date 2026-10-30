@@ -12,14 +12,14 @@
 #[path = "../support/files_fixture.rs"]
 mod files_fixture;
 
-use axum::http::StatusCode;
+use axum::http::{Method, StatusCode};
 use files_fixture::{
     command_body, operation_id, upload_input, Answer, FilesRig, HOME_COLLECTION, LIBRARY,
 };
 use filesquid_api::canonical::collection_path::MAX_SUFFIX;
 use filesquid_api::events::topic;
 use filesquid_api::files::NEW_FILE_REVISION;
-use filesquid_api::home::REGISTER_OPERATION;
+use filesquid_api::home::{PLACE_OPERATION, REGISTER_OPERATION};
 use filesquid_api::journal::Outcome;
 use filesquid_core::{CollectionId, FileId};
 use serde_json::{json, Value};
@@ -321,4 +321,312 @@ async fn a_copy_is_registered_in_its_destination_beside_its_source() {
         "file.copy",
     );
     assert_redacted(&rig, &["beach", "Summer"]);
+}
+
+/// Rename the file `file_id` to `name`; answer the answer.
+async fn renamed(rig: &FilesRig, file_id: &Value, name: &str) -> Answer {
+    let body = json!({ "library_id": LIBRARY, "file_id": file_id, "display_name": name });
+    rig.command("/api/v1/files/renames", body).await
+}
+
+/// The topics of the events `events` received so far.
+fn topics(
+    events: &mut tokio::sync::broadcast::Receiver<filesquid_api::events::ApiEvent>,
+) -> Vec<String> {
+    std::iter::from_fn(|| events.try_recv().ok())
+        .take(1_000)
+        .map(|event| event.topic)
+        .collect()
+}
+
+#[tokio::test]
+async fn a_rename_gives_a_registered_file_its_new_name_in_its_folder_numbered_when_taken() {
+    let rig = FilesRig::new().await;
+    let upload = uploaded(&rig, "IMG_0001.jpg", b"jpeg", Some("Summer")).await;
+    rig.home.place(&placed_id(1), &home(), "Summer/Harbour.jpg");
+    let mut events = rig.state.events.subscribe();
+    let answer = renamed(&rig, &upload["file_id"], "Harbour.jpg").await;
+    assert_eq!(answer.status, StatusCode::OK, "{:?}", answer.json());
+    assert_eq!(answer.result()["path"], "Summer/Harbour-1.jpg");
+    let file = FileId::new(upload["file_id"].as_str().expect("file")).expect("id");
+    assert_eq!(
+        rig.home.placed(&file),
+        Some((home(), "Summer/Harbour-1.jpg".into()))
+    );
+    let placed = rig.home.journal();
+    assert_eq!(placed.last().expect("relocated").operation, PLACE_OPERATION);
+    let seen = topics(&mut events);
+    assert!(
+        seen.iter().any(|t| t == topic::NAVIGATION_CHANGE),
+        "{seen:?}"
+    );
+    assert_redacted(&rig, &["Harbour", "Summer"]);
+}
+
+#[tokio::test]
+async fn a_rename_that_cannot_be_placed_is_refused_before_the_name_changes() {
+    let rig = FilesRig::new().await;
+    let upload = uploaded(&rig, "a.txt", b"abc", None).await;
+    rig.home.place(&placed_id(0), &home(), "full.txt");
+    for n in 1..=MAX_SUFFIX {
+        rig.home
+            .place(&placed_id(n), &home(), &format!("full-{n}.txt"));
+    }
+    let answer = renamed(&rig, &upload["file_id"], "full.txt").await;
+    assert_refused(
+        &rig,
+        &answer,
+        (409, "conflict"),
+        "path_suffix_exhausted",
+        "files.rename",
+    );
+    let file = FileId::new(upload["file_id"].as_str().expect("file")).expect("id");
+    assert_eq!(
+        rig.home.placed(&file),
+        Some((home(), "a.txt".into())),
+        "nothing moved"
+    );
+}
+
+#[tokio::test]
+async fn a_rename_whose_relocation_failed_is_completed_by_its_retry() {
+    let rig = FilesRig::new().await;
+    let upload = uploaded(&rig, "IMG_0001.jpg", b"jpeg", Some("Summer")).await;
+    let input = json!({
+        "library_id": LIBRARY, "file_id": upload["file_id"], "display_name": "Harbour.jpg"
+    });
+    let body = command_body(&input, &operation_id(), &rig.revision_of(&input).await);
+    rig.home.fail_next_relocation();
+    let crashed = rig
+        .send_command(Method::POST, "/api/v1/files/renames", &body)
+        .await;
+    assert_eq!(crashed.status, StatusCode::SERVICE_UNAVAILABLE);
+    let file = FileId::new(upload["file_id"].as_str().expect("file")).expect("id");
+    assert_eq!(
+        rig.home.placed(&file),
+        Some((home(), "Summer/IMG_0001.jpg".into())),
+        "the name was committed, the path not yet"
+    );
+    let retry = rig
+        .send_command(Method::POST, "/api/v1/files/renames", &body)
+        .await;
+    assert_eq!(retry.status, StatusCode::CONFLICT, "{:?}", retry.json());
+    assert_eq!(
+        rig.home.placed(&file),
+        Some((home(), "Summer/Harbour.jpg".into())),
+        "the retry completed the relocation"
+    );
+    let fresh = renamed(&rig, &upload["file_id"], "Harbour.jpg").await;
+    assert_eq!(
+        fresh.status,
+        StatusCode::CONFLICT,
+        "nothing is left to change"
+    );
+    let places = rig
+        .home
+        .journal()
+        .into_iter()
+        .filter(|e| e.operation == PLACE_OPERATION)
+        .count();
+    assert_eq!(places, 1, "relocated once");
+}
+
+/// The bytes and head version of the stored original of the file `file_id`, read through the
+/// listing and content routes.
+async fn original_of(rig: &FilesRig, file_id: &Value) -> (Vec<u8>, String) {
+    let object = format!("urn:uuid:{}", file_id.as_str().expect("file"));
+    let object = files_fixture::encode(&object);
+    let listing = rig
+        .get(&format!(
+            "/api/v1/files/listing?library_id={LIBRARY}&object_id={object}&prefix=original"
+        ))
+        .await;
+    assert_eq!(listing.status, StatusCode::OK, "{:?}", listing.json());
+    let path = listing.json()["entries"][0]["path"]
+        .as_str()
+        .expect("the original")
+        .to_string();
+    let path = files_fixture::encode(&path);
+    let content = rig
+        .get(&format!(
+            "/api/v1/files/content?library_id={LIBRARY}&object_id={object}&path={path}"
+        ))
+        .await;
+    assert_eq!(content.status, StatusCode::OK);
+    let head = rig.revision_of(&json!({ "file_id": file_id })).await;
+    (content.body, head)
+}
+
+#[tokio::test]
+async fn a_collection_move_gives_a_file_another_folder_keeping_its_name_and_its_bytes() {
+    let rig = FilesRig::new().await;
+    let upload = uploaded(&rig, "beach.jpg", b"jpeg", Some("Summer")).await;
+    let before = original_of(&rig, &upload["file_id"]).await;
+    rig.home.place(&placed_id(1), &home(), "Archive/beach.jpg");
+    let mut events = rig.state.events.subscribe();
+    let body = json!({
+        "library_id": LIBRARY, "file_id": upload["file_id"],
+        "collection_id": HOME_COLLECTION, "folder": "Archive"
+    });
+    let answer = rig.command("/api/v1/files/moves", body.clone()).await;
+    assert_eq!(answer.status, StatusCode::OK, "{:?}", answer.json());
+    assert_eq!(answer.result()["path"], "Archive/beach-1.jpg");
+    assert_eq!(answer.result()["collection_id"], HOME_COLLECTION);
+    let file = FileId::new(upload["file_id"].as_str().expect("file")).expect("id");
+    assert_eq!(
+        rig.home.placed(&file),
+        Some((home(), "Archive/beach-1.jpg".into()))
+    );
+    let changes = topics(&mut events)
+        .iter()
+        .filter(|t| *t == topic::NAVIGATION_CHANGE)
+        .count();
+    assert_eq!(changes, 2, "the folder it left and the folder it entered");
+    let after = original_of(&rig, &upload["file_id"]).await;
+    assert_eq!(after, before, "no byte and no file version changed");
+    assert_eq!(after.0, b"jpeg");
+    let moves: Vec<_> = rig
+        .journaled("file.move")
+        .into_iter()
+        .filter(|e| e.outcome == Outcome::Succeeded)
+        .collect();
+    assert_eq!(moves.len(), 1, "journaled once");
+    let mut nowhere = body;
+    nowhere
+        .as_object_mut()
+        .expect("object")
+        .remove("collection_id");
+    let refused = rig.command("/api/v1/files/moves", nowhere).await;
+    assert_refused(
+        &rig,
+        &refused,
+        (400, "invalid_request"),
+        "destination_required",
+        "file.move",
+    );
+    assert_redacted(&rig, &["beach", "Archive", "Summer"]);
+}
+
+/// Ask for the collection folder `folder` with the extra fields of `extra`; answer the answer.
+async fn foldered(rig: &FilesRig, folder: &str, extra: Value) -> Answer {
+    let mut body = json!({
+        "library_id": LIBRARY, "collection_id": HOME_COLLECTION, "folder": folder
+    });
+    let fields = body.as_object_mut().expect("object");
+    for (key, value) in extra.as_object().expect("extra fields") {
+        match value {
+            Value::Null => fields.remove(key),
+            _ => fields.insert(key.clone(), value.clone()),
+        };
+    }
+    rig.command("/api/v1/files/folders", body).await
+}
+
+#[tokio::test]
+async fn a_new_folder_at_a_taken_path_is_numbered_beside_it_and_nothing_is_written() {
+    let rig = FilesRig::new().await;
+    rig.home
+        .place(&placed_id(1), &home(), "filepathX/directoryY/a.jpg");
+    let answer = foldered(&rig, "filepathX/directoryY", json!({})).await;
+    assert_eq!(answer.status, StatusCode::OK, "{:?}", answer.json());
+    assert_eq!(
+        answer.result(),
+        json!({
+            "library_id": LIBRARY, "collection_id": HOME_COLLECTION,
+            "path": "filepathX/directoryY-1", "pending": true
+        })
+    );
+    rig.home
+        .place(&placed_id(2), &home(), "filepathX/directoryY-1/b.jpg");
+    let again = foldered(&rig, "filepathX/directoryY", json!({})).await;
+    assert_eq!(again.result()["path"], "filepathX/directoryY-2");
+    let fresh = foldered(&rig, "filepathX/Fresh", json!({})).await;
+    assert_eq!(fresh.result()["path"], "filepathX/Fresh");
+    assert!(rig.home.journal().is_empty(), "no snapshot version");
+    assert_eq!(
+        rig.home.placed(&placed_id(1)),
+        Some((home(), "filepathX/directoryY/a.jpg".into())),
+        "nothing moved"
+    );
+    assert_redacted(&rig, &["filepathX", "directoryY", "Fresh"]);
+}
+
+#[tokio::test]
+async fn a_new_folder_at_a_file_path_is_numbered_beside_the_file() {
+    let rig = FilesRig::new().await;
+    rig.home.place(&placed_id(1), &home(), "Summer/notes");
+    let answer = foldered(&rig, "Summer/notes", json!({})).await;
+    assert_eq!(answer.status, StatusCode::OK, "{:?}", answer.json());
+    assert_eq!(answer.result()["path"], "Summer/notes-1");
+}
+
+#[tokio::test]
+async fn a_new_folder_names_its_collection_or_is_refused_with_the_rule_code() {
+    let cases = [
+        (
+            json!({ "collection_id": null }),
+            (400, "invalid_request"),
+            "destination_required",
+            "Summer",
+        ),
+        (
+            json!({ "collection_id": STRANGER }),
+            (404, "not_found"),
+            "collection_not_found",
+            "Summer",
+        ),
+        (
+            json!({}),
+            (400, "invalid_request"),
+            "invalid_path",
+            "provenance",
+        ),
+        (
+            json!({}),
+            (400, "invalid_request"),
+            "invalid_path",
+            ".filesquid/notes",
+        ),
+    ];
+    for (extra, status, journal_code, folder) in cases {
+        let rig = FilesRig::new().await;
+        let answer = foldered(&rig, folder, extra).await;
+        assert_refused(&rig, &answer, status, journal_code, "files.create_folder");
+        assert_redacted(&rig, &["Summer"]);
+    }
+}
+
+#[tokio::test]
+async fn after_9999_numbers_a_new_folder_is_path_suffix_exhausted() {
+    let rig = FilesRig::new().await;
+    rig.home.place(&placed_id(0), &home(), "full/a.txt");
+    for n in 1..=MAX_SUFFIX {
+        rig.home
+            .place(&placed_id(n), &home(), &format!("full-{n}/a.txt"));
+    }
+    let answer = foldered(&rig, "full", json!({})).await;
+    assert_refused(
+        &rig,
+        &answer,
+        (409, "conflict"),
+        "path_suffix_exhausted",
+        "files.create_folder",
+    );
+    assert!(rig.home.journal().is_empty(), "no snapshot version");
+}
+
+#[tokio::test]
+async fn a_numbered_folder_over_255_bytes_is_name_too_long() {
+    let rig = FilesRig::new().await;
+    let long = "d".repeat(255);
+    rig.home
+        .place(&placed_id(1), &home(), &format!("{long}/a.txt"));
+    let answer = foldered(&rig, &long, json!({})).await;
+    assert_refused(
+        &rig,
+        &answer,
+        (400, "invalid_request"),
+        "name_too_long",
+        "files.create_folder",
+    );
 }
