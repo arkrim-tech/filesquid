@@ -52,12 +52,31 @@ Feature: File browser
 
   # Writes: each is one API call that commits one OCFL version
   Scenario: Uploading files commits one version per file, each in the file's own object
+    Given the browser shows the folder "Contracts" of a collection
     When I choose a file "Café scan.pdf" to upload
     Then one upload call should be sent for "Café scan.pdf"
-    And its query should hold the library, the name, its normalisation form "nfc", the size, the media type and the last-modified time
+    And its input should hold the library, the collection, the folder "Contracts", the name, its normalisation form "nfc", the size, the media type and the last-modified time
     And its query should hold no logical path and no object
     And the status should say the upload committed version "v1"
     And the object shown should gain no version
+
+  # API-S-011 Destination, ADR 041 "Must choose": the API refuses an upload without a collection
+  Scenario: An upload at a collection's root names the collection and no folder
+    Given the browser shows the root of a collection
+    When I choose a file "scan.pdf" to upload
+    Then the upload input should hold the collection
+    And the upload input should hold no folder
+
+  Scenario: An upload where no collection is shown is refused before any dialog or call
+    Given the browser shows no collection
+    When I press "Upload files"
+    Then no file dialog should open
+    And no upload call should be sent
+    And the alert should say "Open a collection or folder to upload into it."
+    When I choose a file "scan.pdf" without the dialog
+    Then no upload call should be sent
+    When I drop a file "scan.pdf" on the listing
+    Then no upload call should be sent
 
   Scenario: A media type with parameters is sent as its type/subtype only
     When I upload a file whose media type is "text/plain;charset=utf-8"
@@ -121,11 +140,12 @@ Feature: File browser
     When I try to create a folder named "a/b", or with only spaces, or longer than 255 bytes
     Then the form should say why and no call should be sent
 
-  Scenario: Dropped files upload into the library shown
+  Scenario: Dropped files upload into the collection and folder shown
+    Given the browser shows the folder "Drawings" of a collection
     When I drag files over the listing
     Then the listing should say "Drop to upload into" the folder
     When I drop the files
-    Then each file should be uploaded into that library under its own name
+    Then each file should be uploaded into that collection and folder under its own name
 
   # Virtualised listing
   Scenario: A long folder keeps only the rows near the viewport in the page

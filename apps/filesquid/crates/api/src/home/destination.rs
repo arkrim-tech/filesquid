@@ -20,6 +20,9 @@ use filesquid_core::CollectionId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
+/// Log target of the destination check.
+const LOG_TARGET: &str = "filesquid::home";
+
 /// Error code of a request that names no destination collection.
 pub const DESTINATION_REQUIRED: &str = "destination_required";
 
@@ -147,7 +150,10 @@ pub async fn check(
         Lookup::Home(home) => collection_held(home.as_ref(), &library, &collection),
     })
     .await
-    .unwrap_or(Err(DestinationRefusal::Unavailable))?;
+    .unwrap_or_else(|err| {
+        tracing::error!(target: LOG_TARGET, error = %err, "a collection lookup failed");
+        Err(DestinationRefusal::Internal)
+    })?;
     Ok(Checked {
         collection_id: found,
         folder: destination.folder.clone(),

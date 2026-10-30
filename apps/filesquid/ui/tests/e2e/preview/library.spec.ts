@@ -170,6 +170,7 @@ test("(1) copy asks for a destination and passes it as destination_location_id",
   expect(api.to("/api/v1/libraries/location-choices").map(({ body }) => body)).toEqual([
     { purpose: "copy_destination" },
   ]);
+  expect(api.to(`/api/v1/libraries/${LIB}/facts`)).toHaveLength(1);
   expect(api.to("/api/v1/libraries/snapshot-copies").map(({ body }) => body)).toEqual([
     command(`library:${LIB}`, "1", {
       library_id: LIB,
@@ -181,6 +182,42 @@ test("(1) copy asks for a destination and passes it as destination_location_id",
       .replace("{object}", OBJECTS[1] ?? "")
       .replace("{codes}", "E023"),
   );
+  expect(errors).toEqual([]);
+});
+
+test("(1) copy of a library the host has not open sends the initial revision for the API to refuse", async ({
+  page,
+}) => {
+  const errors = trackErrors(page);
+  const api = await serveLibraries(page);
+  api.libraries.set(LIB, null);
+  await page.goto(`/#/library/${LIB}`);
+  await detail(page).locator('button[data-action="copy"]').click();
+  await expect(detail(page).locator('[data-result="copy"] p').first()).toBeVisible();
+  expect(api.to(`/api/v1/libraries/${LIB}/facts`)).toHaveLength(1);
+  const sent = api.to("/api/v1/libraries/snapshot-copies").map(({ body }) => body);
+  expect(sent).toEqual([
+    command(`library:${LIB}`, "1", {
+      library_id: LIB,
+      destination_location_id: "loc-copy_destination",
+    }),
+  ]);
+  expect(errors).toEqual([]);
+});
+
+test("(1) copy of a library the host does not know reads its facts, sends no copy and says so", async ({
+  page,
+}) => {
+  const errors = trackErrors(page, /status of 404/);
+  const api = await serveLibraries(page);
+  api.libraries.clear();
+  await page.goto(`/#/library/${LIB}`);
+  await detail(page).locator('button[data-action="copy"]').click();
+  await expect(detail(page).locator('[data-for="actions"] > p.alert')).toHaveText(
+    text("libraryNotFound"),
+  );
+  expect(api.to(`/api/v1/libraries/${LIB}/facts`)).toHaveLength(1);
+  expect(api.to("/api/v1/libraries/snapshot-copies")).toEqual([]);
   expect(errors).toEqual([]);
 });
 

@@ -140,6 +140,19 @@ describe("ClientLibrarySource", () => {
     ]);
   });
 
+  it("reads a library's current revision from its facts, the initial one when it is not open", async () => {
+    const facts = { library_id: "lib 1", name: "n", free_bytes: null, revision: "4" };
+    const open = setup(facts, 200, "none");
+    await expect(open.source.revision("lib 1")).resolves.toBe("4");
+    expect(open.seen).toEqual([
+      { url: "/api/v1/libraries/lib%201/facts", method: "GET", body: undefined },
+    ]);
+    const closed = setup({ ...facts, revision: null }, 200, "none");
+    await expect(closed.source.revision("lib 1")).resolves.toBe("1");
+    const broken = setup({ ...facts, revision: 4 }, 200, "none");
+    await expect(broken.source.revision("lib 1")).rejects.toBeInstanceOf(TypeError);
+  });
+
   it("posts the repair request as given", async () => {
     const answer = {
       library_id: "lib-1",

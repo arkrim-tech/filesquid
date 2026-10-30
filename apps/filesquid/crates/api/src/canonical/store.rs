@@ -330,7 +330,9 @@ fn published(result: Result<CommitReceipt, ChangeError>) -> Result<CommitReceipt
 /// `original/<file-uuid>.metadata.md`. `previous` is the record at the head, if any: the new
 /// record must extend it and add the import entries that cite these bytes
 /// ([`check_new_original`]). Committing the head's original and record again writes no
-/// version and answers `None`, as [`commit_snapshot`] does for an unchanged state.
+/// version and answers `None`, as [`commit_snapshot`] does for an unchanged state. `meta`
+/// may bind files to the version ([`BoundMeta`]), written in that same version after the
+/// journal-file checks and through `transform`, as [`commit_snapshot_with`] does.
 ///
 /// # Errors
 /// As [`commit_snapshot`]; [`CanonicalError::InvalidIdentifier`] for a file identifier that
@@ -343,13 +345,14 @@ pub async fn commit_file_original<B, R, S>(
     record: &FileRecord,
     previous: Option<&FileRecord>,
     bytes: &[u8],
-    meta: VersionMeta,
+    meta: impl Into<BoundMeta<'_>>,
 ) -> Result<Option<CommitReceipt>, CanonicalError>
 where
     B: StorageBackend,
     R: VersionReservations,
     S: StorageBackend,
 {
+    let BoundMeta { meta, bound } = meta.into();
     let path = original_path_of(file_id, record)?;
     match previous == Some(record) {
         true => check_same_original(record, bytes)?,
@@ -362,9 +365,28 @@ where
     let sealed = transform.seal(&companion, encode_record(record))?;
     model.stage_bytes(&companion, &sealed).await?;
     let span = super::message::commit_span(meta.message.as_deref());
-    match model.commit(meta).instrument(span).await {
+    let sealed = bound.map(|inner| Sealed { inner, transform });
+    let sealed = sealed.as_ref().map(|s| s as &dyn VersionBoundFiles);
+    match model.commit_with(meta, sealed).instrument(span).await {
         Err(ChangeError::NothingToCommit) => Ok(None),
         result => published(result).map(Some),
+    }
+}
+
+/// The version metadata of a commit and the files bound to the version it reserves
+/// (OCFL-S-024), such as a [`crate::history::CommitRecorder`] writing the PROV-O record and
+/// journal entries of the commit (API-S-028). A plain [`VersionMeta`] binds no file.
+pub struct BoundMeta<'b> {
+    /// The version's `created`, `message` and `user`.
+    pub meta: VersionMeta,
+    /// The files written into the reserved version, if any.
+    pub bound: Option<&'b dyn VersionBoundFiles>,
+}
+
+impl From<VersionMeta> for BoundMeta<'_> {
+    /// `meta` with no bound file.
+    fn from(meta: VersionMeta) -> Self {
+        Self { meta, bound: None }
     }
 }
 

@@ -315,7 +315,7 @@ async fn a_caller_who_may_not_read_the_repository_cannot_search_it() {
     let query = serde_json::from_value(facts).expect("upload facts");
     let new_file = filesquid_api::files::NEW_FILE_REVISION;
     let upload = rig.service.upload(query, b"abc", "owner", new_file).await;
-    drive.file_in_collection(&upload.expect("committed directly").file_id);
+    drive.file_in_collection(&upload.expect("committed directly").view.file_id);
     assert_refused(&search(&rig, "budget", "").await, 404, "not_found");
 }
 

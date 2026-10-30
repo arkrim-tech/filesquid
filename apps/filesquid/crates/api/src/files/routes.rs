@@ -3,18 +3,17 @@
 //! JSON or bytes. Every handler runs only after the router's guard has authorised its action
 //! and put the [`Principal`] in the request extensions (API-S-004).
 
-use super::command::{self, version_entry, Checked, CommandInput, Done, FileCommand};
+use super::command::{self, Checked, CommandInput, Done, FileCommand};
 use super::error::FileError;
 use super::homing;
 use super::names::{content_disposition, Disposition};
 use super::nodes::{listing_query, Listing};
+use super::provenance::{Caller, Committed};
 use super::range::{RangePlan, RangeRequest};
 use super::service::{ContentAnswer, ContentRequest};
-use super::versions::Committed;
 use super::view::{
-    CollectionMoveView, ContentQuery, FileQuery, FolderRequest, HistoryQuery, LabelRequest,
-    LibraryQuery, ListingRequest, MoveInput, ObjectQuery, RemoveRequest, RestoreRequest,
-    UploadQuery,
+    ContentQuery, FileQuery, FolderRequest, HistoryQuery, LabelRequest, LibraryQuery,
+    ListingRequest, MoveRequest, ObjectQuery, RemoveRequest, RestoreRequest, UploadQuery,
 };
 use super::{
     DETAILS_OPERATION, DOWNLOAD_OPERATION, FOLDER_OPERATION, HISTORY_OPERATION,
@@ -314,32 +313,30 @@ async fn upload(
         command,
         |files, c, actor| async move {
             let operation_id = c.operation_id.as_str().to_string();
+            let fingerprint = match c.input.facts.file_id {
+                None => Some(homing::fingerprint_of(&c.input)?),
+                Some(_) => None,
+            };
             let mut facts = c.input.facts;
             let destination = Destination {
                 collection_id: facts.collection_id.clone(),
                 folder: facts.folder.clone(),
             };
-            let new_file = facts.file_id.is_none();
             let place = (facts.library_id.as_str(), &destination);
-            let ids = (operation_id.as_str(), new_file);
+            let ids = (operation_id.as_str(), fingerprint.as_deref());
             let prepared = homing::prepare_home(state, principal, place, &facts.name, ids).await?;
             facts.reserved_file_id = prepared.reserved.as_ref().map(|id| id.as_str().to_string());
-            let mut upload = files.upload(facts, bytes, actor, c.expected).await?;
+            let caller = Caller::new(actor).with_operation(c.operation_id);
+            let uploaded = files.upload(facts, bytes, caller, c.expected).await;
+            if uploaded.is_err() {
+                homing::release_reservation(&prepared, &operation_id).await;
+            }
+            let mut upload = uploaded?;
             let (collection, path) =
-                homing::settle_home(state, prepared, &operation_id, &upload.file_id).await?;
-            upload.collection_id = Some(collection);
-            upload.path = Some(path);
-            let ids = (
-                upload.library_id.as_str(),
-                upload.object_id.as_str(),
-                upload.version.as_str(),
-            );
-            let entry = version_entry(UPLOAD_OPERATION, principal, ids, true);
-            Ok(Done {
-                view: upload,
-                entries: vec![entry],
-                changed: true,
-            })
+                homing::settle_home(state, prepared, &operation_id, &upload.view.file_id).await?;
+            upload.view.collection_id = Some(collection);
+            upload.view.path = Some(path);
+            Ok(recorded(resumed_entry(UPLOAD_OPERATION, principal, upload)))
         },
     )
     .await
@@ -502,81 +499,23 @@ async fn create_folder(
 async fn move_path(
     State(state): State<ApiState>,
     Extension(principal): Extension<Principal>,
-    request: Result<Json<FileCommand<MoveInput>>, JsonRejection>,
+    request: Result<Json<FileCommand<MoveRequest>>, JsonRejection>,
 ) -> Response {
     let command = json_command(request);
-    let (state, principal) = (&state, &principal);
+    let principal = &principal;
     command::run(
-        state,
+        &state,
         principal,
         MOVE_OPERATION,
         command,
         |files, c, actor| async move {
-            match c.input {
-                MoveInput::InObject(input) => {
-                    let commit = files.move_path(input, actor, c.expected).await?;
-                    Ok(MoveAnswer::InObject(published(
-                        MOVE_OPERATION,
-                        principal,
-                        commit,
-                    )))
-                }
-                MoveInput::Collection(input) => {
-                    let operation_id = c.operation_id.as_str();
-                    let (view, changed) =
-                        homing::move_to_destination(state, principal, input, operation_id).await?;
-                    Ok(MoveAnswer::Collection(collection_moved(
-                        principal, view, changed,
-                    )))
-                }
-            }
-            .map(MoveAnswer::done)
+            let caller = Caller::new(actor).with_operation(c.operation_id);
+            Ok(recorded(
+                files.move_path(c.input, caller, c.expected).await?,
+            ))
         },
     )
     .await
-}
-
-/// What a move answers: the in-object move's committed version, or where a collection move
-/// put the file.
-enum MoveAnswer {
-    /// The in-object move.
-    InObject(Done<super::CommitView>),
-    /// The collection move.
-    Collection(Done<CollectionMoveView>),
-}
-
-impl MoveAnswer {
-    /// The answer as one command outcome. Pure.
-    fn done(self) -> Done<serde_json::Value> {
-        let (view, entries, changed) = match self {
-            Self::InObject(done) => (serde_json::to_value(done.view), done.entries, done.changed),
-            Self::Collection(done) => (serde_json::to_value(done.view), done.entries, done.changed),
-        };
-        Done {
-            view: view.unwrap_or(serde_json::Value::Null),
-            entries,
-            changed,
-        }
-    }
-}
-
-/// The outcome of a collection move: journaled once as `file.move` with the library and the
-/// file (never a path or a name) when it changed the file's place.
-fn collection_moved(
-    principal: &Principal,
-    view: CollectionMoveView,
-    changed: bool,
-) -> Done<CollectionMoveView> {
-    let entry = JournalEntry::new(MOVE_OPERATION, Outcome::Succeeded)
-        .actor(principal.actor())
-        .target(view.library_id.as_str())
-        .target(view.file_id.as_str())
-        .target(view.collection_id.as_str());
-    Done {
-        view,
-        entries: vec![entry],
-        changed,
-    }
 }
 
 /// `POST /api/v1/files/removals`.
@@ -593,8 +532,8 @@ async fn remove(
         REMOVE_OPERATION,
         command,
         |files, c, actor| async move {
-            let commit = files.remove(c.input, actor, c.expected).await?;
-            Ok(published(REMOVE_OPERATION, principal, commit))
+            let caller = Caller::new(actor).with_operation(c.operation_id);
+            Ok(recorded(files.remove(c.input, caller, c.expected).await?))
         },
     )
     .await
@@ -614,8 +553,8 @@ async fn restore(
         RESTORE_OPERATION,
         command,
         |files, c, actor| async move {
-            let committed = files.restore(c.input, actor, c.expected).await?;
-            Ok(recorded(RESTORE_OPERATION, principal, committed))
+            let caller = Caller::new(actor).with_operation(c.operation_id);
+            Ok(recorded(files.restore(c.input, caller, c.expected).await?))
         },
     )
     .await
@@ -635,47 +574,76 @@ async fn set_label(
         LABEL_OPERATION,
         command,
         |files, c, actor| async move {
-            let committed = files.set_label(c.input, actor, c.expected).await?;
-            Ok(recorded(LABEL_OPERATION, principal, committed))
+            let caller = Caller::new(actor).with_operation(c.operation_id);
+            Ok(recorded(
+                files.set_label(c.input, caller, c.expected).await?,
+            ))
         },
     )
     .await
 }
 
-/// A published version, journaled as `operation` with its object reference.
-fn published(
-    operation: &str,
-    principal: &Principal,
-    commit: super::CommitView,
-) -> Done<super::CommitView> {
-    let ids = (
-        commit.library_id.as_str(),
-        commit.object_id.as_str(),
-        commit.version.as_str(),
-    );
-    let entry = version_entry(operation, principal, ids, true);
-    Done {
-        view: commit,
-        entries: vec![entry],
-        changed: true,
-    }
-}
-
-/// A version that may carry its commit's journal entries: with provenance installed they are
-/// journaled (each once, under its pre-allocated ID) instead of the route's own entry;
-/// without, the version is journaled as [`published`] does.
-fn recorded(
-    operation: &str,
-    principal: &Principal,
-    committed: Committed,
-) -> Done<super::CommitView> {
-    if committed.entries.is_empty() {
-        return published(operation, principal, committed.view);
-    }
+/// A published version with its commit's journal entries ([`super::Committed`]): the
+/// `ocfl.commit` entry and the operation's own, each journaled once.
+pub(super) fn recorded<V>(committed: Committed<V>) -> Done<V> {
     Done {
         view: committed.view,
         entries: committed.entries,
         changed: true,
+    }
+}
+
+/// `committed` with the journal entry of its success when it carries none: a new file an
+/// earlier, unfinished run of the same operation committed, which this run completed by
+/// registering it (Task API-F2.14), is journaled once as `operation` with the library, its
+/// object and its version. Pure.
+pub(super) fn resumed_entry<V: FileIds>(
+    operation: &'static str,
+    principal: &Principal,
+    mut committed: Committed<V>,
+) -> Committed<V> {
+    if committed.entries.is_empty() {
+        let view = &committed.view;
+        let entry = JournalEntry::new(operation, Outcome::Succeeded)
+            .actor(principal.actor())
+            .target(view.library_id())
+            .target(format!("{}@{}", view.object_id(), view.version()));
+        committed.entries.push(entry);
+    }
+    committed
+}
+
+/// The opaque IDs of a new file's committed version, for its journal entry.
+pub(super) trait FileIds {
+    /// The library.
+    fn library_id(&self) -> &str;
+    /// The file's object.
+    fn object_id(&self) -> &str;
+    /// The version.
+    fn version(&self) -> &str;
+}
+
+impl FileIds for super::UploadView {
+    fn library_id(&self) -> &str {
+        &self.library_id
+    }
+    fn object_id(&self) -> &str {
+        &self.object_id
+    }
+    fn version(&self) -> &str {
+        &self.version
+    }
+}
+
+impl FileIds for super::copy::CopyView {
+    fn library_id(&self) -> &str {
+        &self.library_id
+    }
+    fn object_id(&self) -> &str {
+        &self.object_id
+    }
+    fn version(&self) -> &str {
+        &self.version
     }
 }
 

@@ -18,11 +18,12 @@ import {
   lastSegment,
   validateName,
   type FileRow,
-  type LibraryRef,
+  type FileLocation,
   type NameNormalization,
   type NameProblem,
   type UploadCommit,
   type UploadFacts,
+  type UploadTarget,
 } from "./model";
 import { newOperationId } from "../api/commands";
 import type { FileSource } from "./source";
@@ -69,6 +70,22 @@ export function uploadName(name: string): string {
 }
 
 /**
+ * Where an upload from `where` goes (API-S-011 **Destination**, ADR 041 "Must choose"): the
+ * library, the collection the location is in and the folder shown inside it (none at the
+ * collection's root). A location that names no collection is no destination, so there is no
+ * target and the caller refuses the upload before any dialog or call; a collection is never
+ * chosen for the owner. Pure.
+ *
+ * @param where The location the browser shows.
+ * @returns The target, or undefined when no collection is shown.
+ */
+export function uploadTarget(where: FileLocation): UploadTarget | undefined {
+  const { library_id, collection_id, prefix } = where;
+  if (collection_id === undefined || collection_id === "") return undefined;
+  return { library_id, collection_id, ...(prefix === "" ? {} : { folder: prefix }) };
+}
+
+/**
  * Upload files one at a time, each one `PUT` that creates the file's own object in one version
  * (API-S-026). A file over 64 MiB or with a name over 255 bytes is refused without being sent;
  * a failed file is recorded and the rest continue (files are never sent together). At most
@@ -80,7 +97,7 @@ export function uploadName(name: string): string {
  * Network I/O through `source`.
  *
  * @param source The file source.
- * @param library The library to upload into.
+ * @param target The library, collection and folder to upload into (see {@link uploadTarget}).
  * @param files The files.
  * @param progress Called before each file with its place (1-based), the total and its name.
  * @param operationIdOf The operation id of each file; a new one per file by default.
@@ -88,7 +105,7 @@ export function uploadName(name: string): string {
  */
 export async function uploadFiles(
   source: FileSource,
-  library: LibraryRef,
+  target: UploadTarget,
   files: readonly File[],
   progress: (current: number, total: number, name: string) => void = () => undefined,
   operationIdOf: (file: File) => string = () => newOperationId(),
@@ -109,7 +126,7 @@ export async function uploadFiles(
     }
     try {
       const operationId = operationIdOf(file);
-      committed.push(await source.upload(library, uploadFacts(file, name), file, { operationId }));
+      committed.push(await source.upload(target, uploadFacts(file, name), file, { operationId }));
     } catch (error) {
       console.warn("FileSquid could not upload a file", errorKind(error));
       failed.push({ file, name, reason: { error } });

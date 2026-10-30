@@ -4,7 +4,7 @@
 //! upload and copy sent through the router.
 
 use crate::files_fixture::{
-    command_body, library, operation_id, upload_input, Answer, FilesRig, HOME_COLLECTION, LIBRARY,
+    command_body, operation_id, upload_input, Answer, FilesRig, HOME_COLLECTION, LIBRARY,
 };
 use crate::MonitorWorld;
 use axum::http::StatusCode;
@@ -12,7 +12,6 @@ use cucumber::{given, then, when};
 use filesquid_api::canonical::collection_path::MAX_SUFFIX;
 use filesquid_api::events::{topic, ApiEvent};
 use filesquid_api::files::NEW_FILE_REVISION;
-use filesquid_api::home::HomeCollections;
 use filesquid_api::journal::Outcome;
 use filesquid_core::{CollectionId, FileId};
 use serde_json::{json, Value};
@@ -30,7 +29,7 @@ pub struct HomeWorld {
     rig: Option<FilesRig>,
     events: Option<Receiver<ApiEvent>>,
     answers: Vec<Answer>,
-    pending: Option<(String, Value, FileId)>,
+    pending: Option<(String, Value)>,
     placed: u32,
 }
 
@@ -152,40 +151,47 @@ fn all_taken(w: &mut MonitorWorld, path: String, title: String) {
 async fn crashed(w: &mut MonitorWorld, name: String) {
     let rig = w.home.rig();
     let operation = operation_id();
-    let minted = FileId::new("0b6f6a58-5c1d-4b5e-9f3e-0000000c4a5e").expect("id");
-    let reserved = rig
-        .home
-        .reserve(&library(), &operation, &minted)
-        .expect("reserve");
     let input = facts(&name, None);
-    let mut query: filesquid_api::files::UploadQuery =
-        serde_json::from_value(input.clone()).expect("facts");
-    query.reserved_file_id = Some(reserved.as_str().to_string());
-    let bytes = name.as_bytes();
-    let committed = rig
-        .service
-        .upload(query, bytes, "owner", NEW_FILE_REVISION)
-        .await;
-    assert!(committed.is_ok(), "the first run committed its object");
-    w.home.pending = Some((operation, input, reserved));
+    let envelope = command_body(&input, &operation, NEW_FILE_REVISION)["envelope"].clone();
+    rig.home.fail_next_registration();
+    let answer = rig.send_upload(&envelope, &input, name.as_bytes()).await;
+    assert_eq!(
+        answer.status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "{:?}",
+        answer.json()
+    );
+    assert_eq!(rig.home.reserved(), 1, "the crash left its reservation");
+    w.home.pending = Some((operation, input));
 }
 
 #[when("the owner retries the upload with the same operation ID")]
 async fn retry(w: &mut MonitorWorld) {
-    let (operation, input, _) = w.home.pending.clone().expect("a crashed upload");
+    let (operation, input) = w.home.pending.clone().expect("a crashed upload");
     let envelope = command_body(&input, &operation, NEW_FILE_REVISION)["envelope"].clone();
     let bytes = input["name"].as_str().expect("name").as_bytes().to_vec();
     let answer = w.home.rig().send_upload(&envelope, &input, &bytes).await;
     w.home.answers.push(answer);
 }
 
-#[then("the retry should answer the same file at its first version")]
-fn same_file(w: &mut MonitorWorld) {
-    let (_, _, reserved) = w.home.pending.clone().expect("a crashed upload");
+#[then("the retry should answer the file at its first version")]
+fn first_version(w: &mut MonitorWorld) {
     let answer = w.home.last();
     assert_eq!(answer.status, StatusCode::OK, "{:?}", answer.json());
-    assert_eq!(answer.result()["file_id"], reserved.as_str());
-    assert_eq!(answer.result()["version"], "v1");
+    assert_eq!(answer.result()["version"], "v1", "no second version");
+}
+
+#[then("the file should be registered once and the upload journaled once as a success")]
+fn exactly_once(w: &mut MonitorWorld) {
+    let rig = w.home.rig();
+    assert_eq!(rig.home.journal().len(), 1, "one registration");
+    assert_eq!(rig.home.reserved(), 0, "the reservation is released");
+    let succeeded = rig
+        .journaled("file.upload")
+        .into_iter()
+        .filter(|e| e.outcome == Outcome::Succeeded)
+        .count();
+    assert_eq!(succeeded, 1);
 }
 
 #[then(expr = "the file should be registered at {string} in {string}")]

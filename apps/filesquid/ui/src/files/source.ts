@@ -26,6 +26,7 @@ import type {
   RenameRequest,
   UploadCommit,
   UploadFacts,
+  UploadTarget,
 } from "./model";
 import { PAGE_SIZE } from "./model";
 
@@ -87,7 +88,7 @@ export interface FileSource {
    * commits one version in that file's object. Writes.
    */
   upload(
-    library: LibraryRef,
+    target: UploadTarget,
     facts: UploadFacts,
     body: Blob,
     options?: UploadSourceOptions,
@@ -306,7 +307,8 @@ export class ClientFileSource implements FileSource {
    * envelope, the facts as the `input` part with the declared size from the body, and the
    * bytes; no logical path. Network I/O; commits one version in the file's own object.
    *
-   * @param library The library.
+   * @param target The library, the destination collection and the folder inside it, if any
+   *   (API-S-011 **Destination**): the API refuses an upload without a collection.
    * @param facts The file's name, its normalisation form and the other facts the client gives.
    * @param body The bytes (at most 64 MiB; the caller checks first).
    * @param options The revision of `facts.file_id`'s object (a new file by default) and abort
@@ -315,14 +317,20 @@ export class ClientFileSource implements FileSource {
    * @throws ApiError when the API refuses, `invalid_request` and `conflict` included.
    */
   async upload(
-    library: LibraryRef,
+    target: UploadTarget,
     facts: UploadFacts,
     body: Blob,
     options: UploadSourceOptions = {},
   ): Promise<UploadCommit> {
-    const input = { ...facts, library_id: library.library_id, size: body.size };
+    const input = {
+      ...facts,
+      library_id: target.library_id,
+      collection_id: target.collection_id,
+      ...(target.folder === undefined ? {} : { folder: target.folder }),
+      size: body.size,
+    };
     const envelope = commandEnvelope({
-      scope: `library:${library.library_id}`,
+      scope: `library:${target.library_id}`,
       expectedRevision: options.revision ?? NEW_FILE_REVISION,
       operationId: options.operationId,
     });

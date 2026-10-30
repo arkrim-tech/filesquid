@@ -26,7 +26,7 @@ pub const MAX_RECEIPTS: usize = 10_000;
 /// its input.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Fingerprint {
-    /// The route's journal operation, for example `files.move`.
+    /// The route's journal operation, for example `file.move`.
     pub route: &'static str,
     /// The library the command names.
     pub library_id: String,

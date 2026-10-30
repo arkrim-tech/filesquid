@@ -14,12 +14,12 @@ mod files_fixture;
 
 use axum::http::StatusCode;
 use files_fixture::{
-    command_body, library, operation_id, upload_input, Answer, FilesRig, HOME_COLLECTION, LIBRARY,
+    command_body, operation_id, upload_input, Answer, FilesRig, HOME_COLLECTION, LIBRARY,
 };
 use filesquid_api::canonical::collection_path::MAX_SUFFIX;
 use filesquid_api::events::topic;
 use filesquid_api::files::NEW_FILE_REVISION;
-use filesquid_api::home::{HomeCollections, PLACE_OPERATION, REGISTER_OPERATION};
+use filesquid_api::home::REGISTER_OPERATION;
 use filesquid_api::journal::Outcome;
 use filesquid_core::{CollectionId, FileId};
 use serde_json::{json, Value};
@@ -216,40 +216,80 @@ async fn after_9999_numbers_the_upload_is_path_suffix_exhausted_with_no_change()
 #[tokio::test]
 async fn a_retry_after_a_crash_between_the_object_and_its_registration_completes_once() {
     let rig = FilesRig::new().await;
-    let operation = operation_id();
-    let minted = placed_id(77);
-    let reserved = rig
-        .home
-        .reserve(&library(), &operation, &minted)
-        .expect("reserved");
     let input = into("crash.txt", b"abc", None);
-    let mut query: filesquid_api::files::UploadQuery =
-        serde_json::from_value(input.clone()).expect("facts");
-    query.reserved_file_id = Some(reserved.as_str().to_string());
-    let first = rig
-        .service
-        .upload(query, b"abc", "owner", NEW_FILE_REVISION)
-        .await;
-    assert_eq!(
-        first.expect("the first run committed").file_id,
-        reserved.as_str()
-    );
-    assert_eq!(
-        rig.home.placed(&reserved),
-        None,
-        "the crash left it unregistered"
-    );
+    let operation = operation_id();
     let envelope = command_body(&input, &operation, NEW_FILE_REVISION)["envelope"].clone();
+    rig.home.fail_next_registration();
+    let crashed = rig.send_upload(&envelope, &input, b"abc").await;
+    assert_eq!(
+        crashed.status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "{:?}",
+        crashed.json()
+    );
+    assert_eq!(rig.home.reserved(), 1, "the reservation survives the crash");
     let retried = rig.send_upload(&envelope, &input, b"abc").await;
     assert_eq!(retried.status, StatusCode::OK, "{:?}", retried.json());
     let result = retried.result();
-    assert_eq!(result["file_id"], reserved.as_str(), "the same file");
     assert_eq!(result["version"], "v1", "no second version");
-    assert_eq!(
-        rig.home.placed(&reserved),
-        Some((home(), "crash.txt".into()))
-    );
+    let file = FileId::new(result["file_id"].as_str().expect("file")).expect("id");
+    assert_eq!(rig.home.placed(&file), Some((home(), "crash.txt".into())));
+    assert_eq!(rig.home.journal().len(), 1, "registered once");
     assert_eq!(rig.home.reserved(), 0);
+    let succeeded = rig
+        .journaled("file.upload")
+        .into_iter()
+        .filter(|e| e.outcome == Outcome::Succeeded)
+        .count();
+    assert_eq!(succeeded, 1, "journaled once as a success");
+}
+
+#[tokio::test]
+async fn the_same_operation_id_with_other_bytes_after_a_crash_is_refused() {
+    let rig = FilesRig::new().await;
+    let input = into("crash.txt", b"abc", None);
+    let operation = operation_id();
+    let envelope = command_body(&input, &operation, NEW_FILE_REVISION)["envelope"].clone();
+    rig.home.fail_next_registration();
+    let crashed = rig.send_upload(&envelope, &input, b"abc").await;
+    assert_eq!(crashed.status, StatusCode::SERVICE_UNAVAILABLE);
+    let other = rig.send_upload(&envelope, &input, b"xyz").await;
+    assert_eq!(other.status, StatusCode::BAD_REQUEST, "{:?}", other.json());
+    assert_eq!(rig.home.journal().len(), 0, "nothing registered");
+}
+
+#[tokio::test]
+async fn a_failed_upload_releases_its_reservation() {
+    let rig = FilesRig::new().await;
+    let input = upload_input("short.txt", 9, json!({}));
+    let answer = rig.upload(input, b"abc").await;
+    assert_eq!(
+        answer.status,
+        StatusCode::BAD_REQUEST,
+        "{:?}",
+        answer.json()
+    );
+    assert_eq!(rig.home.reserved(), 0, "released");
+}
+
+#[tokio::test]
+async fn new_content_of_a_file_answers_its_own_home() {
+    let rig = FilesRig::new().await;
+    let first = uploaded(&rig, "notes.txt", b"one", Some("Work")).await;
+    let file = first["file_id"].as_str().expect("file").to_string();
+    let input = upload_input(
+        "notes.txt",
+        3,
+        json!({ "file_id": file, "folder": "Elsewhere" }),
+    );
+    let answer = rig.upload(input, b"two").await;
+    assert_eq!(answer.status, StatusCode::OK, "{:?}", answer.json());
+    assert_eq!(answer.result()["collection_id"], HOME_COLLECTION);
+    assert_eq!(
+        answer.result()["path"],
+        "Work/notes.txt",
+        "it keeps its home"
+    );
 }
 
 #[tokio::test]
@@ -281,64 +321,4 @@ async fn a_copy_is_registered_in_its_destination_beside_its_source() {
         "file.copy",
     );
     assert_redacted(&rig, &["beach", "Summer"]);
-}
-
-/// Rename the file `file_id` to `name`; answer the answer.
-async fn renamed(rig: &FilesRig, file_id: &Value, name: &str) -> Answer {
-    let body = json!({ "library_id": LIBRARY, "file_id": file_id, "display_name": name });
-    rig.command("/api/v1/files/renames", body).await
-}
-
-#[tokio::test]
-async fn a_rename_gives_a_registered_file_its_new_name_in_its_folder_numbered_when_taken() {
-    let rig = FilesRig::new().await;
-    let upload = uploaded(&rig, "IMG_0001.jpg", b"jpeg", Some("Summer")).await;
-    rig.home.place(&placed_id(1), &home(), "Summer/Harbour.jpg");
-    let mut events = rig.state.events.subscribe();
-    let answer = renamed(&rig, &upload["file_id"], "Harbour.jpg").await;
-    assert_eq!(answer.status, StatusCode::OK, "{:?}", answer.json());
-    assert_eq!(answer.result()["path"], "Summer/Harbour-1.jpg");
-    let file = FileId::new(upload["file_id"].as_str().expect("file")).expect("id");
-    assert_eq!(
-        rig.home.placed(&file),
-        Some((home(), "Summer/Harbour-1.jpg".into()))
-    );
-    let placed = rig.home.journal();
-    assert_eq!(placed.last().expect("relocated").operation, PLACE_OPERATION);
-    let topics: Vec<String> = std::iter::from_fn(|| events.try_recv().ok())
-        .take(1_000)
-        .map(|event| event.topic)
-        .collect();
-    assert!(
-        topics.iter().any(|t| t == topic::NAVIGATION_CHANGE),
-        "{topics:?}"
-    );
-    let same = renamed(&rig, &upload["file_id"], "Harbour-1.jpg").await;
-    assert_eq!(same.status, StatusCode::OK, "{:?}", same.json());
-    assert_redacted(&rig, &["Harbour", "Summer"]);
-}
-
-#[tokio::test]
-async fn a_rename_that_cannot_be_placed_is_refused_before_the_name_changes() {
-    let rig = FilesRig::new().await;
-    let upload = uploaded(&rig, "a.txt", b"abc", None).await;
-    rig.home.place(&placed_id(0), &home(), "full.txt");
-    for n in 1..=MAX_SUFFIX {
-        rig.home
-            .place(&placed_id(n), &home(), &format!("full-{n}.txt"));
-    }
-    let answer = renamed(&rig, &upload["file_id"], "full.txt").await;
-    assert_refused(
-        &rig,
-        &answer,
-        (409, "conflict"),
-        "path_suffix_exhausted",
-        "files.rename",
-    );
-    let file = FileId::new(upload["file_id"].as_str().expect("file")).expect("id");
-    assert_eq!(
-        rig.home.placed(&file),
-        Some((home(), "a.txt".into())),
-        "nothing moved"
-    );
 }
