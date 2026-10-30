@@ -142,6 +142,11 @@ pub struct MetadataCommitView {
     pub version: String,
     /// When it was created (RFC 3339 UTC).
     pub created: String,
+    /// A renamed file's collection logical path after the rename: its new name in its folder,
+    /// or the numbered path beside a taken one (API-S-011 **Same logical path**); absent for
+    /// other edits and for a file no home collection registers.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
 }
 
 /// Query of `GET /api/v1/files/metadata/terms`.
@@ -573,6 +578,7 @@ fn committed(
         object_id: receipt.object_id,
         version: receipt.version.to_string(),
         created: receipt.created,
+        path: None,
     })
 }
 

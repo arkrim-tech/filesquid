@@ -28,6 +28,10 @@ use filesquid_core::{CollectionId, FileId, LibraryId};
 /// the import job's registrations use the same name.
 pub const REGISTER_OPERATION: &str = "library.files.register";
 
+/// Journal operation of the snapshot version that gives a registered file another home
+/// collection or logical path (a move or a rename).
+pub const PLACE_OPERATION: &str = "library.files.place";
+
 /// One file to register in its home collection.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HomeRequest {
@@ -113,6 +117,39 @@ pub trait HomeCollections: Send + Sync {
         request: &HomeRequest,
         journal: JournalEntry,
     ) -> Result<Placed, CatalogError>;
+
+    /// The home collection and logical path of the registered file `file_id` of
+    /// `library_id`; `None` for a file the snapshot does not register. Reads only.
+    ///
+    /// # Errors
+    /// A store failure.
+    fn placement(
+        &self,
+        library_id: &LibraryId,
+        file_id: &FileId,
+    ) -> Result<Option<(CollectionId, String)>, CatalogError>;
+
+    /// Give the registered file `request.file_id` the home collection and logical path of
+    /// `request`, numbered beside a path another item takes (its own path never takes it),
+    /// publishing one snapshot version with `journal`; no bytes are rewritten. A file already
+    /// there is answered `AlreadyRegistered` and changes nothing.
+    ///
+    /// # Errors
+    /// A store failure; a refusal (`not_found` for an unregistered file,
+    /// `collection_not_found`, `path_suffix_exhausted`, `name_too_long`, `invalid_path`) is
+    /// an `Ok(Placed::Refused(..))` answer.
+    fn relocate(
+        &self,
+        library_id: &LibraryId,
+        request: &HomeRequest,
+        journal: JournalEntry,
+    ) -> Result<Placed, CatalogError>;
+}
+
+/// The journal entry a relocation is published with: [`PLACE_OPERATION`] under the operation
+/// ID; the port adds the file and collection as targets. Pure.
+pub fn place_entry(operation_id: &str) -> JournalEntry {
+    JournalEntry::new(PLACE_OPERATION, Outcome::Succeeded).operation_id(operation_id)
 }
 
 /// The journal entry a registration is published with: [`REGISTER_OPERATION`] under the

@@ -10,7 +10,7 @@ use crate::auth::Principal;
 use crate::canonical::collection_path::{join, safe_segment, ItemKind, PathError};
 use crate::error::ErrorCode;
 use crate::home::destination::{self, Checked, Destination};
-use crate::home::{register_entry, HomeCollections, HomeRequest, Placed};
+use crate::home::{place_entry, register_entry, HomeCollections, HomeRequest, Placed};
 use crate::library::CatalogError;
 use crate::navigation::{FolderScope, NavigationPublisher, NodeRef};
 use crate::ApiState;
@@ -209,6 +209,117 @@ pub(super) async fn settle_home(
     Ok((collection.as_str().to_string(), path))
 }
 
+/// A rename's new place, checked before the new name is committed: the registered file, its
+/// collection and the path its new name asks for.
+pub(super) struct Renaming {
+    /// The host's home collections.
+    home: Arc<dyn HomeCollections>,
+    /// The file's library.
+    library_id: LibraryId,
+    /// The new place asked for.
+    request: HomeRequest,
+}
+
+/// The new place of the file `file_id` of `library` renamed to `name`: its folder and the
+/// safe new name, after checking that the numbering rule can place it; `None` on a host
+/// without home collections, for a file no home collection registers, or when the path does
+/// not change. Reads the catalog.
+///
+/// # Errors
+/// `invalid_request` for a malformed ID; the path's refusal (`path_suffix_exhausted`,
+/// `name_too_long`, `invalid_path`); a store failure.
+pub(super) async fn prepare_rename(
+    state: &ApiState,
+    library: &str,
+    file_id: &str,
+    name: &str,
+) -> Result<Option<Renaming>, FileError> {
+    let Some(home) = state.home_collections() else {
+        return Ok(None);
+    };
+    let library_id = LibraryId::new(library).map_err(|_| FileError::not_found())?;
+    let file_id =
+        FileId::new(file_id).map_err(|_| FileError::invalid("A file_id is a UUID v4."))?;
+    let Some((collection, current)) = read_placement(home.clone(), &library_id, &file_id).await?
+    else {
+        return Ok(None);
+    };
+    let folder = current
+        .rsplit_once('/')
+        .map(|(folder, _)| folder.to_string());
+    let path = join(folder.as_deref(), &safe_segment(name).map_err(path_error)?);
+    if path == current {
+        return Ok(None);
+    }
+    let homing = Homing {
+        library_id: library_id.clone(),
+        destination: Checked {
+            collection_id: collection.clone(),
+            folder,
+        },
+        path: path.clone(),
+    };
+    read_free_path(home.clone(), &homing).await?;
+    let request = HomeRequest {
+        file_id,
+        collection_id: collection,
+        path,
+    };
+    Ok(Some(Renaming {
+        home,
+        library_id,
+        request,
+    }))
+}
+
+/// Give the renamed file of `renaming` its new path under `operation_id`, publishing one
+/// snapshot version, and announce the change; answer the path it got. Writes the catalog.
+///
+/// # Errors
+/// The relocation's refusal, or a store failure.
+pub(super) async fn settle_rename(
+    state: &ApiState,
+    renaming: Renaming,
+    operation_id: &str,
+) -> Result<String, FileError> {
+    let Renaming {
+        home,
+        library_id,
+        request,
+    } = renaming;
+    let collection = request.collection_id.clone();
+    let operation = operation_id.to_string();
+    let placed = tokio::task::spawn_blocking(move || {
+        home.relocate(&library_id, &request, place_entry(&operation))
+    })
+    .await
+    .map_err(|_| FileError::internal("the home-collection task failed"))?
+    .map_err(catalog_error)?;
+    let path = match placed {
+        Placed::Registered { path } | Placed::AlreadyRegistered { path } => path,
+        Placed::Refused(code) => return Err(refused(code)),
+    };
+    publish_change(state, &collection, &path);
+    Ok(path)
+}
+
+/// The home collection and logical path of `file_id`, read from the host's catalog on a
+/// blocking thread.
+///
+/// # Errors
+/// A store failure.
+async fn read_placement(
+    home: Arc<dyn HomeCollections>,
+    library: &LibraryId,
+    file_id: &FileId,
+) -> Result<Option<(CollectionId, String)>, FileError> {
+    let (library, file_id) = (library.clone(), file_id.clone());
+    tokio::task::spawn_blocking(move || home.placement(&library, &file_id))
+        .await
+        .map_err(|_| FileError::internal("the home-collection task failed"))?
+        .map_err(catalog_error)
+}
+
 /// The refusal of a path the rule of API-S-011 refuses. Pure.
 fn path_error(err: PathError) -> FileError {
     refused(err.error_code())
@@ -223,6 +334,7 @@ fn refused(code: &'static str) -> FileError {
             "Every name from -1 to -9999 beside that one is taken (path_suffix_exhausted); \
              nothing was changed.",
         ),
+        "not_found" => FileError::not_found(),
         "collection_not_found" => FileError::coded(
             ErrorCode::NotFound,
             code,

@@ -199,7 +199,7 @@ fn registered(w: &mut MonitorWorld, path: String, title: String) {
         .expect("file")
         .to_string();
     let file = FileId::new(file).expect("file id");
-    assert_eq!(w.home.rig().home.placement(&file), Some((home(), path)));
+    assert_eq!(w.home.rig().home.placed(&file), Some((home(), path)));
 }
 
 #[then(expr = "the answer should name the collection and the path {string}")]

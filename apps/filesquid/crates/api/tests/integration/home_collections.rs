@@ -19,7 +19,7 @@ use files_fixture::{
 use filesquid_api::canonical::collection_path::MAX_SUFFIX;
 use filesquid_api::events::topic;
 use filesquid_api::files::NEW_FILE_REVISION;
-use filesquid_api::home::{HomeCollections, REGISTER_OPERATION};
+use filesquid_api::home::{HomeCollections, PLACE_OPERATION, REGISTER_OPERATION};
 use filesquid_api::journal::Outcome;
 use filesquid_core::{CollectionId, FileId};
 use serde_json::{json, Value};
@@ -142,7 +142,7 @@ async fn an_upload_is_registered_at_its_folder_and_name_and_answered_with_it() {
     assert_eq!(upload["path"], "Trips/2026/Harbour.jpg");
     let file = FileId::new(upload["file_id"].as_str().expect("file")).expect("id");
     assert_eq!(
-        rig.home.placement(&file),
+        rig.home.placed(&file),
         Some((home(), "Trips/2026/Harbour.jpg".into()))
     );
     let registered = rig.home.journal();
@@ -235,7 +235,7 @@ async fn a_retry_after_a_crash_between_the_object_and_its_registration_completes
         reserved.as_str()
     );
     assert_eq!(
-        rig.home.placement(&reserved),
+        rig.home.placed(&reserved),
         None,
         "the crash left it unregistered"
     );
@@ -246,7 +246,7 @@ async fn a_retry_after_a_crash_between_the_object_and_its_registration_completes
     assert_eq!(result["file_id"], reserved.as_str(), "the same file");
     assert_eq!(result["version"], "v1", "no second version");
     assert_eq!(
-        rig.home.placement(&reserved),
+        rig.home.placed(&reserved),
         Some((home(), "crash.txt".into()))
     );
     assert_eq!(rig.home.reserved(), 0);
@@ -267,7 +267,7 @@ async fn a_copy_is_registered_in_its_destination_beside_its_source() {
     assert_eq!(copy["path"], "Summer/beach-1.jpg");
     let file = FileId::new(copy["file_id"].as_str().expect("copy")).expect("id");
     assert_eq!(
-        rig.home.placement(&file),
+        rig.home.placed(&file),
         Some((home(), "Summer/beach-1.jpg".into()))
     );
     assert_eq!(rig.journaled("file.copy").len(), 1);
@@ -281,4 +281,64 @@ async fn a_copy_is_registered_in_its_destination_beside_its_source() {
         "file.copy",
     );
     assert_redacted(&rig, &["beach", "Summer"]);
+}
+
+/// Rename the file `file_id` to `name`; answer the answer.
+async fn renamed(rig: &FilesRig, file_id: &Value, name: &str) -> Answer {
+    let body = json!({ "library_id": LIBRARY, "file_id": file_id, "display_name": name });
+    rig.command("/api/v1/files/renames", body).await
+}
+
+#[tokio::test]
+async fn a_rename_gives_a_registered_file_its_new_name_in_its_folder_numbered_when_taken() {
+    let rig = FilesRig::new().await;
+    let upload = uploaded(&rig, "IMG_0001.jpg", b"jpeg", Some("Summer")).await;
+    rig.home.place(&placed_id(1), &home(), "Summer/Harbour.jpg");
+    let mut events = rig.state.events.subscribe();
+    let answer = renamed(&rig, &upload["file_id"], "Harbour.jpg").await;
+    assert_eq!(answer.status, StatusCode::OK, "{:?}", answer.json());
+    assert_eq!(answer.result()["path"], "Summer/Harbour-1.jpg");
+    let file = FileId::new(upload["file_id"].as_str().expect("file")).expect("id");
+    assert_eq!(
+        rig.home.placed(&file),
+        Some((home(), "Summer/Harbour-1.jpg".into()))
+    );
+    let placed = rig.home.journal();
+    assert_eq!(placed.last().expect("relocated").operation, PLACE_OPERATION);
+    let topics: Vec<String> = std::iter::from_fn(|| events.try_recv().ok())
+        .take(1_000)
+        .map(|event| event.topic)
+        .collect();
+    assert!(
+        topics.iter().any(|t| t == topic::NAVIGATION_CHANGE),
+        "{topics:?}"
+    );
+    let same = renamed(&rig, &upload["file_id"], "Harbour-1.jpg").await;
+    assert_eq!(same.status, StatusCode::OK, "{:?}", same.json());
+    assert_redacted(&rig, &["Harbour", "Summer"]);
+}
+
+#[tokio::test]
+async fn a_rename_that_cannot_be_placed_is_refused_before_the_name_changes() {
+    let rig = FilesRig::new().await;
+    let upload = uploaded(&rig, "a.txt", b"abc", None).await;
+    rig.home.place(&placed_id(0), &home(), "full.txt");
+    for n in 1..=MAX_SUFFIX {
+        rig.home
+            .place(&placed_id(n), &home(), &format!("full-{n}.txt"));
+    }
+    let answer = renamed(&rig, &upload["file_id"], "full.txt").await;
+    assert_refused(
+        &rig,
+        &answer,
+        (409, "conflict"),
+        "path_suffix_exhausted",
+        "files.rename",
+    );
+    let file = FileId::new(upload["file_id"].as_str().expect("file")).expect("id");
+    assert_eq!(
+        rig.home.placed(&file),
+        Some((home(), "a.txt".into())),
+        "nothing moved"
+    );
 }

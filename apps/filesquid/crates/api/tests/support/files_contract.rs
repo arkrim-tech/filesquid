@@ -639,6 +639,7 @@ fn command_samples() -> Vec<(&'static str, Vec<Value>)> {
         object_id: format!("urn:uuid:{FILE}"),
         version: "v2".into(),
         created: "2026-10-18T00:00:00Z".into(),
+        path: None,
     };
     let folder = FolderView {
         library_id: LIBRARY.into(),
@@ -1026,6 +1027,7 @@ fn metadata_samples() -> Vec<(&'static str, Vec<Value>)> {
         object_id: format!("urn:uuid:{FILE}"),
         version: "v2".into(),
         created: "2026-10-18T00:00:00Z".into(),
+        path: None,
     };
     let set = SetStatementRequest {
         library_id: LIBRARY.into(),
