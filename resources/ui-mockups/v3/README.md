@@ -155,7 +155,7 @@ Status after the owner's answers: **redrawn** (content changed for an answer), *
 
 | Surface | Mockup | Source | Status |
 |---|---|---|---|
-| Image preview; light and dark | [22](./22-preview-image.svg), [22 dark](./22-preview-image-dark.svg) | UI-F2.2 (built); top bar and zoom chip UI-F2.19; filmstrip deferred after the MVP (owner decision 2026-10-30, UI-S-031); API-S-018 | updated |
+| Image preview; light and dark | [22](./22-preview-image.svg), [22 dark](./22-preview-image-dark.svg) | UI-F2.2 (built); top bar and zoom chip UI-F2.19; filmstrip deferred after the MVP (owner decision 2026-10-30, UI-S-031; both SVGs still draw it and are unchanged, so the filmstrip in them is not required); API-S-018 | updated |
 | Video preview | [23](./23-preview-video.svg) | UI-F2.2 | updated |
 | Unsupported format | [24](./24-preview-unsupported.svg) | UI-F2.2 | updated |
 | Panel states | [25](./25-panel-states.svg) | UI-F2.15; UI-S-022 | updated |

@@ -54,7 +54,7 @@ Feature: Virtualised navigation tree
     Given the first collection of the level has focus
     When I press End
     Then the last of the 10,000 collections should be drawn and have focus
-    And exactly one tree item should be in the tab order
+    And exactly one tree item of the Collections section should be in the tab order, as each section's tree keeps one tab stop
 
   Scenario: Collapse state and pins survive a reload
     Given 1,000 nodes are collapsed and 3 destinations are pinned

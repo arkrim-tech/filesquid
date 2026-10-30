@@ -58,25 +58,25 @@ The new unit test, red against the UI-S-035 on `origin/main`, then green:
       Tests  2 failed | 18 passed (20)
 ```
 
-```text
- ✓ tests/unit/perf-budgets.test.ts (20 tests) 51ms
+After Cubic round 1 the test also checks every confirmed limit against the text of UI-S-035 (21 tests):
 
- Test Files  1 passed (1)
-      Tests  20 passed (20)
+```text
+      Tests  21 passed (21)
 ```
 
-`bash scripts/verify_docs.sh`:
+`bash scripts/verify_docs.sh` (after Cubic round 1):
 
 ```text
+✅ ADR structure (ISO 42010) passed.
 OK: every vision ID is allocated
 ✅ PRD allocation passed.
 OK: every requirement is accounted for in a plan task
 ✅ Plan traceability passed.
-checked 310 Markdown files: 0 broken link(s)
+checked 309 Markdown files: 0 broken link(s)
 ✅ Relative links and anchors passed.
 checked 177 documents: 0 link(s) cross the FileSquid/ImageSquid boundary
 ✅ FileSquid and ImageSquid document boundary passed.
-Ran 54 tests in 5.554s
+Ran 54 tests in 5.661s
 OK
 ✅ MVP queue and merge driver tests passed.
 ✅ MVP progress bar passed.
@@ -84,4 +84,18 @@ OK
 ✅ Documentation validation passed.
 ```
 
-The pre-commit hook's summary line for the head commit is in the pull request.
+The change scope against `origin/main` is `rust:filesquid-desktop npm:apps/filesquid/ui`: the desktop plan file belongs to its crate, so the full hook runs. `FULL=1 bash scripts/pre-commit.sh` on the first commit (`748283f1`):
+
+```text
+ℹ️  Test scope: full
+✅ Clippy passed (143s).
+✅ Workspace tests passed (310s).
+✅ Vitest passed (45s).
+✅ All Pre-Commit Hooks Passed! Test scope: full (1051s)
+```
+
+The browser performance suite (`npm run test:perf`) was not run: no code it measures changed. Later commits' hook lines are in the pull request.
+
+## Cubic round 1
+
+Eleven findings (seven P2, four P3). Fixed: dark-theme outlines for the zoom chip and loading scenarios; label-table assertions limited to static wording; README and mockup index wording (UI-F3.4 not yet done; mockup 22 still draws the filmstrip); the confirmed limits checked against UI-S-035; the profile sentence of UI-S-035 (the API pages 1 to 1,000 nodes; the UI's own cap is 50 pages of 200); one tab stop per section's tree; DE-F3.2's Related Tests; the link-check count; this section's hook output; and UI-S-035's staging words, which now describe the state ("while the tree draws every node of a level") and keep the task reference the decision asked for.

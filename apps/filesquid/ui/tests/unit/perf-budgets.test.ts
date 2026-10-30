@@ -158,6 +158,25 @@ describe("the owner's confirmation of the limits (UI-S-035, 2026-10-30)", () => 
     expect(UI_S_035).not.toContain("proposed, the owner confirms");
   });
 
+  it("every confirmed limit in BUDGETS is the value UI-S-035 states", () => {
+    const n = (value: number): string => value.toLocaleString("en-US");
+    const percent = (rate: number): string => n(Math.round(rate * 1000) / 10);
+    const stated = [
+      `warm N = ${n(BUDGETS.samples.warm)} samples a class after a warm-up of ${n(BUDGETS.samples.warmup)}`,
+      `${n(BUDGETS.samples.cold)} cold loads per profile`,
+      `p99 ≤ ${n(BUDGETS.warmTailP99Ms)} ms for every ${n(BUDGETS.warmFeedbackP95Ms)} ms class`,
+      `within ${n(BUDGETS.sampleTimeoutMs)} ms fails the run`,
+      `a frame is missed above ${BUDGETS.missedFrameAboveMs.toFixed(2)} ms (1.5 budgets)`,
+      `at most ${percent(BUDGETS.missedFrameRateMax)}% of at least ${n(BUDGETS.minFramesPerLayout)} frames per layout`,
+      `p99 frame ≤ ${n(BUDGETS.frameP99Ms)} ms`,
+      `stalls above ${n(BUDGETS.stallAboveMs)} ms at most ${percent(BUDGETS.stallRateMax)}% of the frames`,
+      `the first ${n(BUDGETS.discardFrames)} frames of a run discarded`,
+      `miss at most ${percent(BUDGETS.controlMissedRateMax)}% of its frames`,
+      `show its error state within ${n(BUDGETS.failureVisibleMs)} ms`,
+    ];
+    for (const text of stated) expect(UI_S_035).toContain(text);
+  });
+
   it("exactly the two 12-megapixel original limits are provisional, in code and in UI-S-035", () => {
     expect([...PROVISIONAL_LIMITS]).toEqual(["largeImageWarmP95Ms", "largeImageColdMs"]);
     expect(UI_S_035).toContain(

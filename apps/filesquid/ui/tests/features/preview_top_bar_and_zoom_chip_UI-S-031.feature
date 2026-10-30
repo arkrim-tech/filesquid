@@ -22,24 +22,40 @@ Feature: Preview top bar and zoom chip
     Then the top bar should show "Harbour project", the JPG badge, "facade-study.jpg" and "3 of 11"
     And the display name should be 14 pixels at weight 600 in the heading colour
     And the collection should be 13 pixels in the secondary colour and the position 13 pixels in the muted colour
-    And each string should come from the active label table and the console should show no error
+    And the collection and display names should be the API's data and the badge the file's extension, shown as data
+    And the position template and the previous and next labels should come from the active label table
+    And the console should show no error
 
     Examples:
       | scheme |
       | light  |
       | dark   |
 
-  Scenario: The zoom chip states the fitted scale
+  Scenario Outline: The zoom chip states the fitted scale
+    Given the browser prefers the <scheme> colour scheme
     When I open "facade-study.jpg" in the preview
-    Then the zoom chip under the media should read "Fit · {percent}%"
+    Then the zoom chip under the media should read "Fit · {percent}%" from the active label table
     And the percent should be the shown width over the image's natural width, rounded to a whole percent
+    And the chip's background, border and text should be the card, outline and body token values of the <scheme> theme
     And the media should keep the 8 pixel radius of the --fs-radius token
 
-  Scenario: The full-size image reports that it is loading
-    Given the full-size image of "facade-study.jpg" has not finished loading
+    Examples:
+      | scheme |
+      | light  |
+      | dark   |
+
+  Scenario Outline: The full-size image reports that it is loading
+    Given the browser prefers the <scheme> colour scheme
+    And the full-size image of "facade-study.jpg" has not finished loading
     When I open "facade-study.jpg" in the preview
-    Then the zoom chip should show "Loading full size" with its progress bar
+    Then the zoom chip should show "Loading full size" from the active label table, in the muted token value of the <scheme> theme
+    And its progress bar should be the primary token value on the outline token value of the <scheme> theme
     And the text should go away when the full-size image has loaded
+
+    Examples:
+      | scheme |
+      | light  |
+      | dark   |
 
   # User interactions
   Scenario: Next and previous move through the collection
