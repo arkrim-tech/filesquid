@@ -195,7 +195,7 @@ FileSquid MVP (early access) on the macOS desktop: phases F0 to F3, closed by ga
 Ubuntu (GNOME) and Windows Tauri desktop releases are Release 1 and start right after the MVP (owner decision 2026-10-29). Task FS-3.11 starts when Task FS-3.9 is checked. It does not wait on Task FS-4.2, and phase F4 does not wait on it (0 of 1 done).
 
 29. [ ] [Task FS-3.11](./implementation-plan.md#task-fs-3.11) Ubuntu (GNOME) and Windows Tauri desktop releases
-    - [ ] [DE-F3.3](../apps/filesquid/crates/desktop/resources/plan.md#phase-f3-installers-and-performance-global-tasks-fs-31-fs-34-and-after-the-mvp-fs-311) Ubuntu (GNOME) and Windows installers, ImageSquid overlay
+    - [ ] [DE-F3.3](../apps/filesquid/crates/desktop/resources/plan.md#phase-f3-installers-and-performance-global-tasks-fs-31-fs-34-and-after-the-mvp-fs-311) Ubuntu (GNOME) and Windows installers, FileSquid overlay
     - [ ] [UI-F3.3](../apps/filesquid/ui/resources/plan.md#phase-f3r-linux-media-playback-global-task-fs-311-after-the-mvp) MediaSource video player for WebKitGTK
 
 ## Backup
