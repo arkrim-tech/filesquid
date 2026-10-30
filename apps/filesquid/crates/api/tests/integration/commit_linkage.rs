@@ -14,7 +14,9 @@
 mod files_fixture;
 
 use axum::http::{Method, StatusCode};
-use files_fixture::{command_body, operation_id, upload_facts, Answer, FilesRig, LIBRARY, OBJECT};
+use files_fixture::{
+    command_body, operation_id, upload_facts, Answer, FilesRig, HOME_COLLECTION, LIBRARY, OBJECT,
+};
 use filesquid_api::history::ProvenanceContext;
 use filesquid_api::journal::{is_opaque, JournalEntry, Outcome};
 use filesquid_core::InstallationId;
@@ -170,7 +172,7 @@ async fn an_upload_is_committed_by_the_installation_and_journaled_once_as_ocfl_c
     let answer = upload(&rig, "harbour.jpg", b"jpeg").await;
     let result = committed(&answer);
     assert_linked(&rig, &result, &operation_of(&answer), "upload").await;
-    let own = rig.journaled("files.upload");
+    let own = rig.journaled("file.upload");
     assert_eq!(own.len(), 1);
     assert_eq!(own[0].operation_id, Some(operation_of(&answer)));
     assert!(own[0].object_ref.is_some());
@@ -201,7 +203,9 @@ async fn a_copy_and_a_rename_are_each_one_linked_commit() {
     let rig = FilesRig::new().await;
     with_provenance(&rig);
     let source = committed(&upload(&rig, "harbour.jpg", b"jpeg").await);
-    let copying = json!({ "library_id": LIBRARY, "file_id": source["file_id"] });
+    let copying = json!({
+        "library_id": LIBRARY, "file_id": source["file_id"], "collection_id": HOME_COLLECTION
+    });
     let copied = rig.command("/api/v1/files/copies", copying).await;
     assert_linked(&rig, &committed(&copied), &operation_of(&copied), "copy").await;
     let renaming =
@@ -214,7 +218,7 @@ async fn a_copy_and_a_rename_are_each_one_linked_commit() {
         "rename",
     )
     .await;
-    for (answer, operation) in [(&copied, "files.copy"), (&renamed, "files.rename")] {
+    for (answer, operation) in [(&copied, "file.copy"), (&renamed, "files.rename")] {
         let result = committed(answer);
         let own = rig.journaled(operation);
         assert_eq!(own.len(), 1, "{own:?}");
@@ -328,7 +332,7 @@ async fn a_refused_commit_is_journaled_as_before_and_never_reaches_the_history()
         .send_command(Method::POST, "/api/v1/files/moves", &body)
         .await;
     assert_eq!(answer.status, StatusCode::CONFLICT, "{:?}", answer.json());
-    let refusals = rig.journaled("files.move");
+    let refusals = rig.journaled("file.move");
     assert_eq!(refusals.len(), 1);
     assert_eq!(refusals[0].outcome, Outcome::Failed);
     assert_eq!(refusals[0].operation_id.as_deref(), Some(id.as_str()));

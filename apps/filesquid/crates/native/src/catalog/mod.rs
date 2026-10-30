@@ -40,6 +40,7 @@
 mod attach;
 mod canonical;
 mod history;
+mod home;
 mod intent;
 mod outbox;
 mod placement;
@@ -86,7 +87,7 @@ pub const CATALOG_FILE_EXTENSION: &str = "sqlite";
 
 /// Version of the catalog schema this host writes (`PRAGMA user_version`). A file with a
 /// newer version is refused rather than misread.
-pub const CATALOG_SCHEMA_VERSION: i64 = 3;
+pub const CATALOG_SCHEMA_VERSION: i64 = 4;
 
 /// Most library catalogs one catalog directory may hold; opening more fails (AGENTS.md §22).
 pub const MAX_LIBRARIES: usize = 256;

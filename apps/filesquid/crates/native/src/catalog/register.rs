@@ -22,7 +22,7 @@ use filesquid_core::{CollectionId, File, FileId, LibraryId};
 use rusqlite::{Connection, Transaction};
 
 /// Journal operation of registering imported files in their home collection.
-pub const REGISTER_OPERATION: &str = "library.files.register";
+pub const REGISTER_OPERATION: &str = filesquid_api::home::REGISTER_OPERATION;
 
 /// One file to register.
 #[derive(Clone, Debug, PartialEq, Eq)]

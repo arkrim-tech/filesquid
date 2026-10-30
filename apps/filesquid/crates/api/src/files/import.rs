@@ -340,6 +340,8 @@ fn view_of(
         object_id: receipt.object_id,
         version: receipt.version.to_string(),
         created: receipt.created,
+        collection_id: None,
+        path: None,
     }
 }
 
@@ -361,6 +363,8 @@ fn replayed(import: &SourceImport, record: &FileRecord) -> Result<UploadView, Fi
         object_id: entry.acquisition.object_id.clone(),
         version: entry.acquisition.object_version.clone(),
         created: entry.acquisition.recorded_at.clone(),
+        collection_id: None,
+        path: None,
     })
 }
 

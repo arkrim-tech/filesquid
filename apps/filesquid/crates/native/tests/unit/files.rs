@@ -143,6 +143,9 @@ async fn a_write_through_the_host_service_publishes_one_version() {
         last_modified: None,
         name_normalization: None,
         message: None,
+        collection_id: None,
+        folder: None,
+        reserved_file_id: None,
     };
     let bytes = b"bee".to_vec().into();
     let new_file = filesquid_api::files::NEW_FILE_REVISION.to_string();

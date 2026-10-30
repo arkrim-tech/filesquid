@@ -12,7 +12,7 @@ mod drive_catalog;
 
 use axum::http::StatusCode;
 use drive_catalog::{DriveCatalog, COLLECTION};
-use files_fixture::{encode, upload_facts, Answer, FilesRig, LIBRARY};
+use files_fixture::{encode, upload_facts, Answer, FilesRig, HOME_COLLECTION, LIBRARY};
 use filesquid_api::journal::{JournalEntry, JournalStore, Outcome};
 use serde_json::{json, Value};
 
@@ -104,7 +104,8 @@ async fn a_copy_is_a_new_file_that_keeps_the_display_name_and_names_its_source()
         rig.command("/api/v1/files/renames", rename).await.status,
         StatusCode::OK
     );
-    let body = json!({ "library_id": LIBRARY, "file_id": source });
+    let body =
+        json!({ "library_id": LIBRARY, "file_id": source, "collection_id": HOME_COLLECTION });
     let answer = rig.command("/api/v1/files/copies", body).await;
     assert_eq!(answer.status, StatusCode::OK, "{:?}", answer.json());
     let copy = answer.result();
@@ -154,7 +155,7 @@ async fn a_copy_is_a_new_file_that_keeps_the_display_name_and_names_its_source()
         .await
         .json();
     assert_eq!(source_versions["head"], "v2", "the source never changes");
-    let journaled = rig.journaled("files.copy");
+    let journaled = rig.journaled("file.copy");
     assert_eq!(journaled.len(), 1);
     assert!(journaled[0]
         .target_ids
@@ -164,20 +165,20 @@ async fn a_copy_is_a_new_file_that_keeps_the_display_name_and_names_its_source()
 #[tokio::test]
 async fn a_copy_of_an_unknown_or_malformed_file_publishes_nothing() {
     let (rig, _drive) = rig().await;
-    let unknown =
-        json!({ "library_id": LIBRARY, "file_id": "0b6f6a58-5c1d-4b5e-9f3e-2a7d8c9e0f19" });
+    let unknown = json!({ "library_id": LIBRARY, "file_id": "0b6f6a58-5c1d-4b5e-9f3e-2a7d8c9e0f19", "collection_id": HOME_COLLECTION });
     assert_error(
         &rig.command("/api/v1/files/copies", unknown).await,
         404,
         "not_found",
     );
-    let malformed = json!({ "library_id": LIBRARY, "file_id": "../x" });
+    let malformed =
+        json!({ "library_id": LIBRARY, "file_id": "../x", "collection_id": HOME_COLLECTION });
     assert_error(
         &rig.command("/api/v1/files/copies", malformed).await,
         400,
         "invalid_request",
     );
-    assert_eq!(rig.journaled("files.copy").len(), 2, "each refusal once");
+    assert_eq!(rig.journaled("file.copy").len(), 2, "each refusal once");
     assert!(!rig.dir.join("root").join("files").exists());
 }
 

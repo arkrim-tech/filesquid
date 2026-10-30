@@ -54,6 +54,18 @@ export interface LibraryRef {
   readonly library_id: string;
 }
 
+/**
+ * Where an upload goes (API-S-011 **Destination**, ADR 041 "Must choose"): a library, a
+ * collection of it and, optionally, a folder inside the collection. There is no default
+ * collection and no top-level upload, so the collection is required.
+ */
+export interface UploadTarget extends LibraryRef {
+  /** The destination collection of the library, as the API names it. */
+  readonly collection_id: string;
+  /** The folder inside the collection, a collection logical path; the root when absent. */
+  readonly folder?: string;
+}
+
 /** The object whose files are listed: a library and one OCFL object in it. */
 export interface ObjectRef {
   /** The library. */
@@ -66,6 +78,12 @@ export interface ObjectRef {
 export interface FileLocation extends ObjectRef {
   /** The folder, a logical-path prefix without a trailing `/`. */
   readonly prefix: string;
+  /**
+   * The collection this location is in, when the host or route that placed the browser knows
+   * it. Then `prefix` is the folder inside that collection, and an upload goes there; without
+   * it the location is no destination and an upload is refused before any call.
+   */
+  readonly collection_id?: string;
 }
 
 /**

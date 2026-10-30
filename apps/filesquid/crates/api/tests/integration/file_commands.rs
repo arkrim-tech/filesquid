@@ -11,8 +11,8 @@ mod files_fixture;
 
 use axum::http::{Method, StatusCode};
 use files_fixture::{
-    command_body, operation_id, upload_body, upload_input, Answer, FilesRig, LIBRARY, MULTIPART,
-    OBJECT, UPLOAD_URI,
+    command_body, operation_id, upload_body, upload_input, Answer, FilesRig, HOME_COLLECTION,
+    LIBRARY, MULTIPART, OBJECT, UPLOAD_URI,
 };
 use filesquid_api::journal::Outcome;
 use serde_json::{json, Value};
@@ -68,7 +68,7 @@ async fn prepare(route: &str) -> (FilesRig, Case) {
     let object = Some(OBJECT.to_string());
     let case = match route {
         "upload" => Case {
-            operation: "files.upload",
+            operation: "file.upload",
             method: Method::PUT,
             uri: UPLOAD_URI,
             input: upload_input("new.txt", 3, json!({})),
@@ -87,15 +87,15 @@ async fn prepare(route: &str) -> (FilesRig, Case) {
         "copies" => {
             let file_id = uploaded(&rig, "source.txt").await;
             Case {
-                operation: "files.copy",
+                operation: "file.copy",
                 method: Method::POST,
                 uri: "/api/v1/files/copies",
-                input: json!({ "library_id": LIBRARY, "file_id": file_id }),
+                input: json!({ "library_id": LIBRARY, "file_id": file_id, "collection_id": HOME_COLLECTION }),
                 changes: None,
             }
         }
         "moves" => Case {
-            operation: "files.move",
+            operation: "file.move",
             method: Method::POST,
             uri: "/api/v1/files/moves",
             input: object_input(json!({ "from": "a.txt", "to": "c.txt" })),
@@ -379,7 +379,8 @@ async fn a_new_upload_names_revision_zero_and_a_copy_its_source_head() {
     let rename = json!({ "library_id": LIBRARY, "file_id": file_id, "display_name": "S.txt" });
     let renamed = rig.command("/api/v1/files/renames", rename).await;
     assert_eq!(renamed.json()["kind"], "committed", "{:?}", renamed.json());
-    let copy = json!({ "library_id": LIBRARY, "file_id": file_id });
+    let copy =
+        json!({ "library_id": LIBRARY, "file_id": file_id, "collection_id": HOME_COLLECTION });
     let operation = operation_id();
     let body = command_body(&copy, &operation, "v1");
     let answer = rig
@@ -409,7 +410,7 @@ async fn an_operation_id_of_an_upload_with_other_bytes_is_refused() {
         first.json(),
         "the same bytes replay the first answer"
     );
-    assert_eq!(successes(&rig, "files.upload"), 1);
+    assert_eq!(successes(&rig, "file.upload"), 1);
 }
 
 #[tokio::test]
@@ -428,5 +429,5 @@ async fn an_upload_without_its_file_or_input_part_is_refused() {
     let raw = format!("{UPLOAD_URI}?library_id={LIBRARY}&name=x.txt&size=3");
     let answer = rig.call(Method::PUT, &raw, &[], b"abc".to_vec()).await;
     assert_invalid(&answer);
-    assert_eq!(successes(&rig, "files.upload"), 0);
+    assert_eq!(successes(&rig, "file.upload"), 0);
 }
