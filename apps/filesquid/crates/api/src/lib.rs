@@ -60,6 +60,7 @@ pub mod events;
 pub mod files;
 pub mod health;
 pub mod history;
+pub mod home;
 pub mod host;
 pub mod imports;
 pub mod jobs;
@@ -85,7 +86,7 @@ pub use routes::{route_actions, routed_paths, router, Liveness};
 use std::sync::{Arc, OnceLock};
 
 /// Version of the FileSquid API contract. Bumped when the contract changes.
-pub const API_VERSION: &str = "0.32.0";
+pub const API_VERSION: &str = "0.33.0";
 
 /// URL prefix shared by every API route.
 pub const API_PREFIX: &str = "/api/v1";
@@ -152,6 +153,9 @@ pub struct ApiState {
     import_starter: Arc<OnceLock<Arc<dyn imports::ImportStarter>>>,
     /// The operation IDs of the import plan requests in flight, in memory only (API-S-036).
     import_flights: Arc<imports::InFlight>,
+    /// The host's home collections, installed once at startup (uploads and copies answer 503
+    /// until then; API-S-011, API-S-026).
+    home_collections: Arc<OnceLock<Arc<dyn home::HomeCollections>>>,
 }
 
 /// The installed job runners, by job kind.
@@ -187,6 +191,10 @@ impl std::fmt::Debug for ApiState {
             .field(
                 "import_starter_installed",
                 &self.import_starter.get().is_some(),
+            )
+            .field(
+                "home_collections_installed",
+                &self.home_collections.get().is_some(),
             )
             .finish()
     }
@@ -236,6 +244,7 @@ impl ApiState {
             job_runners: Arc::new(std::sync::Mutex::new(JobRunners::new())),
             import_starter: Arc::new(OnceLock::new()),
             import_flights: Arc::new(imports::InFlight::new()),
+            home_collections: Arc::new(OnceLock::new()),
         }
     }
 
@@ -416,6 +425,17 @@ impl ApiState {
     /// The installed import starter, if any.
     pub fn import_starter(&self) -> Option<Arc<dyn imports::ImportStarter>> {
         self.import_starter.get().cloned()
+    }
+
+    /// Install the host's home collections for the upload and copy routes. Returns false,
+    /// keeping the first, if one was already installed.
+    pub fn install_home_collections(&self, home: Arc<dyn home::HomeCollections>) -> bool {
+        self.home_collections.set(home).is_ok()
+    }
+
+    /// The installed home collections, if any.
+    pub fn home_collections(&self) -> Option<Arc<dyn home::HomeCollections>> {
+        self.home_collections.get().cloned()
     }
 
     /// The operation IDs of the import plan requests in flight.

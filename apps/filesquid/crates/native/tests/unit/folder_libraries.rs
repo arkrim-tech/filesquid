@@ -176,7 +176,7 @@ fn a_version_2_catalog_is_migrated_to_version_3_and_rebuilt_from_its_folder() {
         .query_row("PRAGMA user_version", [], |r| r.get(0))
         .expect("version");
     assert_eq!(version, CATALOG_SCHEMA_VERSION);
-    assert_eq!(CATALOG_SCHEMA_VERSION, 3);
+    assert_eq!(CATALOG_SCHEMA_VERSION, 4);
     let (path, object): (String, String) = conn
         .query_row(
             "SELECT path, object_id FROM files WHERE id = ?1",

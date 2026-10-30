@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "FileSquid API",
-    "version": "0.32.0",
+    "version": "0.33.0",
     "description": "The single FileSquid API served by every FileSquid host. See resources/architecture/030-filesquid-api-and-transports.md. Conventions: a command (mutation) sends a CommandEnvelope as the `envelope` member of its JSON request body (operation_id is the idempotency key, expected_revision the revision last read) and answers with a CommandOutcome; a query (list) takes the PageSize (`limit`, 1-1000) and Cursor (`cursor`) parameters; every failed request answers with an ApiError body (code, message, retryable). Router-wide fallbacks: any /api/v1/ path not in this contract answers 404 not_found, and a documented path called with a method it does not document answers 405 method_not_allowed; both carry the ApiError body. They are not listed per operation because no operation sends them. Authorisation is deny-by-default: every operation, including health, the contract and the event channel, requires the bearerAuth credential and is authorised before anything else runs, so a call without it answers 401 unauthorized and a call whose credential is not accepted or does not grant the operation answers 403 forbidden, before any 404 or 405; both carry the ApiError body with a DenialReason in `reason`. Each operation names the authorisation action it performs in x-filesquid-action. The one deliberate exception is GET /api/v1/health/live (x-filesquid-action public, security []), a liveness probe that answers only {\"status\":\"up\"} without a credential. The content route GET and HEAD /api/v1/content/{handle} (x-filesquid-action content.read, x-filesquid-credential content-handle, security []) is not public: its only credential is the content handle in its path, minted by POST /api/v1/content-handles for one file version (API-S-018); a Bearer token is not accepted there, and every unusable request under /api/v1/content/ (unknown, malformed, missing, expired, evicted or revoked handle, an extra path segment or another method) answers one identical 403 forbidden with reason invalid_credentials, never 401, 404 or 405. Paths marked x-filesquid-host-route are served by the hosts, not by the filesquid-api router."
   },
   "security": [
@@ -1499,7 +1499,7 @@
       "put": {
         "operationId": "uploadFile",
         "summary": "Upload one file as its own object, or new content for an existing file",
-        "description": "The body is `multipart/form-data` with exactly three parts: `envelope` (JSON), `input` (JSON, the upload's facts) and `file` (the bytes, at most 64 MiB). Without `file_id`, the upload creates the file's own OCFL object `files/<file-id>` (identifier `urn:uuid:<file-id>`, a new UUID v4) with the original at `original/<file-uuid>.<ext>` and its metadata record (the `filesquid-metadata` file record, API-S-026) beside it in v1, never at a logical path the client chooses. With `file_id`, it is a new version of that file's object: the new bytes at the same stored path and one more import entry; the display name and statements stay. The record holds the facts the client provides (name and its normalisation form, size, last-modified time, media type) and lists every other fact as unavailable (MD-S-013). The verified size is the size of the `file` part: a declared `size` that differs fails verification, is refused (400) and commits nothing. Publishes exactly one OCFL version through the filesquid-ocfl change model, or is refused without publishing (API-S-008). The version is journaled with opaque IDs only; a refusal is journaled once. Command (Task API-F2.13, API-S-002): the body carries a `CommandEnvelope` beside the input (schema version 1; an opaque operation_id of 1 to 128 letters, digits, `.`, `_`, `-` or `:`; scope `library:<library_id>`). The expected revision is the head version of the file's object for an upload with `file_id`, and `0` for a new file. A stale revision is answered 409 with a `conflict` outcome and changes nothing. A 200 answer is a `CommandOutcome` of the same operation_id (`committed`) whose `result` is what the command made. A repeated operation_id of the same command that changed something answers its first answer again, before the revision is checked, with no second change; the same operation_id with another route, library or input is refused (400). A refusal stores no receipt, so its retry is evaluated again. Receipts are kept in memory while the host runs, at most 10,000.",
+        "description": "The body is `multipart/form-data` with exactly three parts: `envelope` (JSON), `input` (JSON, the upload's facts) and `file` (the bytes, at most 64 MiB). Without `file_id`, the upload creates the file's own OCFL object `files/<file-id>` (identifier `urn:uuid:<file-id>`, a new UUID v4) with the original at `original/<file-uuid>.<ext>` and its metadata record (the `filesquid-metadata` file record, API-S-026) beside it in v1, never at a logical path the client chooses. With `file_id`, it is a new version of that file's object: the new bytes at the same stored path and one more import entry; the display name and statements stay. The record holds the facts the client provides (name and its normalisation form, size, last-modified time, media type) and lists every other fact as unavailable (MD-S-013). The verified size is the size of the `file` part: a declared `size` that differs fails verification, is refused (400) and commits nothing. Publishes exactly one OCFL version through the filesquid-ocfl change model, or is refused without publishing (API-S-008). The upload is journaled as `file.upload` with opaque IDs only; a refusal is journaled once. Command (Task API-F2.13, API-S-002): the body carries a `CommandEnvelope` beside the input (schema version 1; an opaque operation_id of 1 to 128 letters, digits, `.`, `_`, `-` or `:`; scope `library:<library_id>`). The expected revision is the head version of the file's object for an upload with `file_id`, and `0` for a new file. A stale revision is answered 409 with a `conflict` outcome and changes nothing. A 200 answer is a `CommandOutcome` of the same operation_id (`committed`) whose `result` is what the command made. A repeated operation_id of the same command that changed something answers its first answer again, before the revision is checked, with no second change; the same operation_id with another route, library or input is refused (400). A refusal stores no receipt, so its retry is evaluated again. Receipts are kept in memory while the host runs, at most 10,000. Destination and home (an upload with `file_id` keeps its home) (Task API-F2.14, API-S-011, API-S-026): the input names `collection_id` (required) and optionally `folder`; without a collection the request is refused 400 invalid_request (`destination_required`) and an unknown or foreign collection 404 not_found (`collection_not_found`), each before any byte is staged and journaled once. After the file's object is committed, the file is registered in the collection snapshot with its home collection, its logical path `<folder>/<name>` and its object, under the request's operation ID, as one snapshot version journaled `library.files.register`; the answer's `collection_id` and `path` name where it went. A path already taken in the collection, a recoverably deleted file's included, is never refused or overwritten: the new file takes the first free number beside it (`photo-1.jpg`, `archive-1.tar.gz`, `report-1`, `.env-1`, `.config-1.json`); after 9,999 numbers the request is refused 409 conflict (`path_suffix_exhausted`) and a numbered name over 255 bytes 400 invalid_request (`name_too_long`), with no change. A crash between the file's object and its registration leaves the operation's reserved file ID; a retry under the same operation ID completes that file once. Each success publishes `navigation.change` for the folder that holds the file. A host without home collections answers 503.",
         "x-filesquid-action": "files.write",
         "requestBody": {
           "required": true,
@@ -3472,7 +3472,7 @@
       "post": {
         "operationId": "copyFile",
         "summary": "Copy a file into a new file",
-        "description": "Copy the file `file_id` at its head into a new file (API-S-011, SRS-F-062): a new FileId and stored name `original/<new-uuid>.<ext>` in the new file's own object `files/<new-id>`, published as its version v1. The copy keeps the display name, the original name, the media type and every statement; its one import entry is the source's latest entry rebound to the copy, and its record names the source as the asserted statement `dcterms:source` = `urn:uuid:<source-id>@vN`. The source never changes, and the copy gets no second home collection for the same bytes: it is a new file. A source over 67,108,864 bytes is refused (400) until a streamed copy exists. The copy is journaled as `files.copy` with opaque IDs only; a refusal is journaled once. Command (Task API-F2.13, API-S-002): the body carries a `CommandEnvelope` beside the input (schema version 1; an opaque operation_id of 1 to 128 letters, digits, `.`, `_`, `-` or `:`; scope `library:<library_id>`). The expected revision is the head version of the source file's object `urn:uuid:<file_id>` that the caller read; the copy's own object is new. A stale revision is answered 409 with a `conflict` outcome and changes nothing. A 200 answer is a `CommandOutcome` of the same operation_id (`committed`) whose `result` is what the command made. A repeated operation_id of the same command that changed something answers its first answer again, before the revision is checked, with no second change; the same operation_id with another route, library or input is refused (400). A refusal stores no receipt, so its retry is evaluated again. Receipts are kept in memory while the host runs, at most 10,000.",
+        "description": "Copy the file `file_id` at its head into a new file (API-S-011, SRS-F-062): a new FileId and stored name `original/<new-uuid>.<ext>` in the new file's own object `files/<new-id>`, published as its version v1. The copy keeps the display name, the original name, the media type and every statement; its one import entry is the source's latest entry rebound to the copy, and its record names the source as the asserted statement `dcterms:source` = `urn:uuid:<source-id>@vN`. The source never changes, and the copy is a new file with its own home collection (its display name is the source's). A source over 67,108,864 bytes is refused (400) until a streamed copy exists. The copy is journaled as `file.copy` with opaque IDs only; a refusal is journaled once. Command (Task API-F2.13, API-S-002): the body carries a `CommandEnvelope` beside the input (schema version 1; an opaque operation_id of 1 to 128 letters, digits, `.`, `_`, `-` or `:`; scope `library:<library_id>`). The expected revision is the head version of the source file's object `urn:uuid:<file_id>` that the caller read; the copy's own object is new. A stale revision is answered 409 with a `conflict` outcome and changes nothing. A 200 answer is a `CommandOutcome` of the same operation_id (`committed`) whose `result` is what the command made. A repeated operation_id of the same command that changed something answers its first answer again, before the revision is checked, with no second change; the same operation_id with another route, library or input is refused (400). A refusal stores no receipt, so its retry is evaluated again. Receipts are kept in memory while the host runs, at most 10,000. Destination and home (Task API-F2.14, API-S-011, API-S-026): the input names `collection_id` (required) and optionally `folder`; without a collection the request is refused 400 invalid_request (`destination_required`) and an unknown or foreign collection 404 not_found (`collection_not_found`), each before any byte is staged and journaled once. After the file's object is committed, the file is registered in the collection snapshot with its home collection, its logical path `<folder>/<name>` and its object, under the request's operation ID, as one snapshot version journaled `library.files.register`; the answer's `collection_id` and `path` name where it went. A path already taken in the collection, a recoverably deleted file's included, is never refused or overwritten: the new file takes the first free number beside it (`photo-1.jpg`, `archive-1.tar.gz`, `report-1`, `.env-1`, `.config-1.json`); after 9,999 numbers the request is refused 409 conflict (`path_suffix_exhausted`) and a numbered name over 255 bytes 400 invalid_request (`name_too_long`), with no change. A crash between the file's object and its registration leaves the operation's reserved file ID; a retry under the same operation ID completes that file once. Each success publishes `navigation.change` for the folder that holds the file. A host without home collections answers 503.",
         "x-filesquid-action": "files.write",
         "requestBody": {
           "required": true,
@@ -7259,6 +7259,14 @@
           "created": {
             "type": "string",
             "description": "When it was created, RFC 3339 UTC."
+          },
+          "collection_id": {
+            "type": "string",
+            "description": "The file's home collection."
+          },
+          "path": {
+            "type": "string",
+            "description": "The file's collection logical path: `<folder>/<name>` as asked, or the numbered path beside a taken one that it got (API-S-011 Same logical path: `photo-1.jpg`, `archive-1.tar.gz`, `report-1`, `.env-1`); the default UI lists the file under this name."
           }
         },
         "additionalProperties": false
@@ -7977,7 +7985,8 @@
         "description": "Copy one file at its head.",
         "required": [
           "library_id",
-          "file_id"
+          "file_id",
+          "collection_id"
         ],
         "additionalProperties": false,
         "properties": {
@@ -7994,6 +8003,17 @@
             "minLength": 1,
             "maxLength": 1024,
             "description": "Optional version message of the copy's first version."
+          },
+          "collection_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The destination collection, a collection of the library (API-S-011 Destination; owner decision 2026-10-22, \"Must choose\", ADR 041). Required: a request without it is refused 400 invalid_request with the journal code `destination_required` before any byte is staged, so nothing goes to a library's top level and no default collection is chosen; an unknown collection, one of another library or one the caller may not read is refused 404 not_found (`collection_not_found`). The new file is registered in this collection's snapshot under the request's operation ID."
+          },
+          "folder": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024,
+            "description": "The destination folder inside the collection: a collection logical path (1 to 1,024 UTF-8 bytes in NFC, `/`-separated segments of 1 to 255 bytes without `\\`, NUL or control characters, never `.` or `..`), not inside the reserved `provenance` or `.filesquid` folders; the collection's root when absent. A folder outside the rule is refused 400 invalid_request (`invalid_path`)."
           }
         }
       },
@@ -8034,6 +8054,14 @@
           "source": {
             "type": "string",
             "description": "The source's object version, `urn:uuid:<file-id>@vN`: the copy's `dcterms:source`."
+          },
+          "collection_id": {
+            "type": "string",
+            "description": "The file's home collection."
+          },
+          "path": {
+            "type": "string",
+            "description": "The file's collection logical path: `<folder>/<name>` as asked, or the numbered path beside a taken one that it got (API-S-011 Same logical path: `photo-1.jpg`, `archive-1.tar.gz`, `report-1`, `.env-1`); the default UI lists the file under this name."
           }
         }
       },
@@ -8850,7 +8878,8 @@
         "required": [
           "library_id",
           "name",
-          "size"
+          "size",
+          "collection_id"
         ],
         "additionalProperties": false,
         "properties": {
@@ -8933,6 +8962,31 @@
               }
             ],
             "description": "The version message, 1 to 1,024 bytes and not blank."
+          },
+          "collection_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The destination collection, a collection of the library (API-S-011 Destination; owner decision 2026-10-22, \"Must choose\", ADR 041). Required: a request without it is refused 400 invalid_request with the journal code `destination_required` before any byte is staged, so nothing goes to a library's top level and no default collection is chosen; an unknown collection, one of another library or one the caller may not read is refused 404 not_found (`collection_not_found`). The new file is registered in this collection's snapshot under the request's operation ID."
+          },
+          "folder": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1024
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The destination folder inside the collection: a collection logical path (1 to 1,024 UTF-8 bytes in NFC, `/`-separated segments of 1 to 255 bytes without `\\`, NUL or control characters, never `.` or `..`), not inside the reserved `provenance` or `.filesquid` folders; the collection's root when absent. A folder outside the rule is refused 400 invalid_request (`invalid_path`)."
           }
         }
       },

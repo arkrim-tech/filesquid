@@ -633,6 +633,22 @@ pub fn install_file_scopes(
     Ok(())
 }
 
+/// Install `catalog` as the home collections the upload and copy routes register their new
+/// files in (API-F2.14, API-S-011, API-S-026): the same registration, numbering and snapshot
+/// version as an import. Pure.
+///
+/// # Errors
+/// Home collections are already installed.
+pub fn install_home_collections(
+    state: &ApiState,
+    catalog: &Arc<SqliteCatalog>,
+) -> Result<(), String> {
+    match state.install_home_collections(catalog.clone()) {
+        true => Ok(()),
+        false => Err("the home collections were already installed".to_string()),
+    }
+}
+
 /// Install the folder choice of the library routes (`POST /api/v1/libraries/location-choices`)
 /// in `state`: `dialog` shows the native folder dialog and the picked folder is registered in
 /// `locations` ([`folder_choice::DesktopChooser`]). Pure.
@@ -914,6 +930,7 @@ fn install_library_services(
     let files = app.state::<DesktopFiles>().0.clone();
     install_file_provenance(&files, host, installation)?;
     install_file_scopes(&files, &catalog)?;
+    install_home_collections(&state, &catalog)?;
     install_host_preferences(&state, data_dir)?;
     let serving = LibraryServing {
         files,

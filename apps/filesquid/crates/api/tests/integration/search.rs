@@ -11,7 +11,7 @@ mod drive_catalog;
 
 use axum::http::{Method, StatusCode};
 use drive_catalog::DriveCatalog;
-use files_fixture::{encode, upload_facts, Answer, FilesRig, LIBRARY};
+use files_fixture::{encode, upload_facts, Answer, FilesRig, HOME_COLLECTION, LIBRARY};
 use filesquid_api::auth::Principal;
 use filesquid_api::navigation::{NavigationAccess, NodeRef};
 use serde_json::{json, Value};
@@ -145,7 +145,7 @@ async fn every_answered_operator_narrows_the_results() {
     let copy = rig
         .command(
             "/api/v1/files/copies",
-            json!({ "library_id": LIBRARY, "file_id": photo }),
+            json!({ "library_id": LIBRARY, "file_id": photo, "collection_id": HOME_COLLECTION }),
         )
         .await
         .result();
@@ -311,9 +311,11 @@ impl NavigationAccess for Nothing {
 #[tokio::test]
 async fn a_caller_who_may_not_read_the_repository_cannot_search_it() {
     let (rig, drive) = rig_with(DriveCatalog::with_access(LIBRARY, Arc::new(Nothing))).await;
-    let uri = upload_facts("budget.pdf", 3, "media_type=application%2Fpdf");
-    let answer = rig.upload(uri, b"abc").await;
-    drive.file_in_collection(answer.result()["file_id"].as_str().expect("id"));
+    let facts = upload_facts("budget.pdf", 3, "media_type=application%2Fpdf");
+    let query = serde_json::from_value(facts).expect("upload facts");
+    let new_file = filesquid_api::files::NEW_FILE_REVISION;
+    let upload = rig.service.upload(query, b"abc", "owner", new_file).await;
+    drive.file_in_collection(&upload.expect("committed directly").file_id);
     assert_refused(&search(&rig, "budget", "").await, 404, "not_found");
 }
 

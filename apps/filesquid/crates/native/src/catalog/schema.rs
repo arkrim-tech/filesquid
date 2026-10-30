@@ -128,8 +128,24 @@ CREATE INDEX files_dir ON files(home_collection_id, dir_key, name, id)
     WHERE path IS NOT NULL AND hidden = 0 AND deleted_at_ms IS NULL;
 ";
 
+/// Version 4 (Task API-F2.14): the file ID each unfinished upload or copy reserved, by its
+/// operation ID, so a retry after a crash between the file's object and its registration
+/// completes the same file once. A registration removes its reservation; a rebuild keeps them,
+/// since they are not derived from the snapshot.
+const SCHEMA_V4: &str = "
+CREATE TABLE IF NOT EXISTS reserved_files (
+    operation_id TEXT PRIMARY KEY,
+    file_id TEXT NOT NULL
+);
+";
+
 /// Every migration, by the schema version it produces, applied in order in one transaction.
-const MIGRATIONS: [(i64, &str); 3] = [(1, SCHEMA_V1), (2, SCHEMA_V2), (3, SCHEMA_V3)];
+const MIGRATIONS: [(i64, &str); 4] = [
+    (1, SCHEMA_V1),
+    (2, SCHEMA_V2),
+    (3, SCHEMA_V3),
+    (4, SCHEMA_V4),
+];
 
 /// The catalog file name of `library_id`: `<uuid>.sqlite`, or `None` when the identifier is
 /// not a canonical UUID v4 (ADR 021), so no identifier can name a path outside the catalog

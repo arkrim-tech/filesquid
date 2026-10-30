@@ -27,7 +27,7 @@ Feature: File operation routes
     When the owner uploads a new file named "c.jpg"
     Then the upload should create the file's own object at its first version
     And the object should have exactly 0 new versions
-    And the activity journal should record one "files.upload" entry with opaque identifiers only
+    And the activity journal should record one "file.upload" entry with opaque identifiers only
 
   Scenario: A move and a restore each publish one version
     When the owner moves "photos" to "pictures"

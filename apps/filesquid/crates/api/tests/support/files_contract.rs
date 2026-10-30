@@ -74,6 +74,11 @@ pub async fn install(state: &ApiState, monitor: &Monitor) {
     );
     assert!(opened);
     assert!(state.install_files(Arc::new(service)));
+    let home = Arc::new(filesquid_api::home::MemoryHomeCollections::new());
+    let collection =
+        filesquid_core::CollectionId::new(crate::drive_catalog::COLLECTION).expect("collection");
+    home.add_collection(&library, &collection);
+    assert!(state.install_home_collections(home));
 }
 
 /// Commit the sample object's two versions through the engine.
@@ -196,7 +201,13 @@ pub fn sample(
             format!("{path}?collection_id={}", crate::drive_catalog::COLLECTION),
             None,
         ),
-        ("POST", "/api/v1/files/copies") => (path.into(), file_command(path, json!({}))),
+        ("POST", "/api/v1/files/copies") => (
+            path.into(),
+            file_command(
+                path,
+                json!({ "collection_id": crate::drive_catalog::COLLECTION }),
+            ),
+        ),
         ("GET" | "HEAD", "/api/v1/files/content")
         | ("GET", "/api/v1/files/download")
         | ("GET", "/api/v1/files/details")
@@ -553,7 +564,10 @@ fn file_command(route: &str, fields: Value) -> Option<(&'static str, Vec<u8>)> {
 /// The multipart body of the sample upload of a new file, `new.txt`.
 fn upload_command(route: &str) -> Option<(&'static str, Vec<u8>)> {
     let envelope = sample_envelope(route, "0");
-    let input = json!({ "library_id": LIBRARY, "name": "new.txt", "size": 3 });
+    let input = json!({
+        "library_id": LIBRARY, "name": "new.txt", "size": 3,
+        "collection_id": crate::drive_catalog::COLLECTION
+    });
     let mut body = Vec::new();
     for (name, value) in [("envelope", envelope), ("input", input)] {
         let head = format!(
@@ -607,6 +621,8 @@ fn command_samples() -> Vec<(&'static str, Vec<Value>)> {
         object_id: format!("urn:uuid:{FILE}"),
         version: "v1".into(),
         created: "2026-10-18T00:00:00Z".into(),
+        collection_id: Some("c0ffee00-1234-4abc-8def-0123456789ab".into()),
+        path: Some("Holidays/Été.txt".into()),
     };
     let copy = CopyView {
         library_id: LIBRARY.into(),
@@ -615,6 +631,8 @@ fn command_samples() -> Vec<(&'static str, Vec<Value>)> {
         version: "v1".into(),
         created: "2026-10-20T00:00:00Z".into(),
         source: format!("urn:uuid:{FILE}@v2"),
+        collection_id: Some("c0ffee00-1234-4abc-8def-0123456789ab".into()),
+        path: Some("Holidays/Été à Nice-1.jpg".into()),
     };
     let metadata = MetadataCommitView {
         library_id: LIBRARY.into(),
@@ -642,6 +660,9 @@ fn command_samples() -> Vec<(&'static str, Vec<Value>)> {
         last_modified: name.map(|_| "2026-10-18T00:00:00Z".to_string()),
         name_normalization: name.map(|_| filesquid_metadata::import::NameForm::Nfc),
         message: name.map(str::to_string),
+        collection_id: Some("c0ffee00-1234-4abc-8def-0123456789ab".into()),
+        folder: name.map(|_| "Holidays".to_string()),
+        reserved_file_id: None,
     };
     let requests = request_samples();
     let request = |name: &str| {
@@ -660,6 +681,9 @@ fn command_samples() -> Vec<(&'static str, Vec<Value>)> {
         library_id: LIBRARY.into(),
         file_id: FILE.into(),
         message: None,
+        collection_id: Some("c0ffee00-1234-4abc-8def-0123456789ab".into()),
+        folder: None,
+        reserved_file_id: None,
     };
     vec![
         ("FileCommitOutcome", vec![answer(commit)]),
@@ -697,6 +721,9 @@ fn drive_samples() -> Vec<(&'static str, Vec<Value>)> {
         library_id: LIBRARY.into(),
         file_id: FILE.into(),
         message: Some("Copy for the album".into()),
+        collection_id: Some("c0ffee00-1234-4abc-8def-0123456789ab".into()),
+        folder: Some("Holidays".into()),
+        reserved_file_id: None,
     };
     let copy = CopyView {
         library_id: LIBRARY.into(),
@@ -705,6 +732,8 @@ fn drive_samples() -> Vec<(&'static str, Vec<Value>)> {
         version: "v1".into(),
         created: "2026-10-20T00:00:00Z".into(),
         source: format!("urn:uuid:{FILE}@v2"),
+        collection_id: Some("c0ffee00-1234-4abc-8def-0123456789ab".into()),
+        path: Some("Holidays/Été à Nice-1.jpg".into()),
     };
     let folder = FolderRow {
         node: "n1.abc".into(),
@@ -844,6 +873,8 @@ fn answer_samples() -> Vec<(&'static str, Vec<Value>)> {
         object_id: "urn:uuid:7d1c2b9e-4f3a-4e61-8a0b-2c9d5e6f7a80".into(),
         version: "v1".into(),
         created: "2026-10-18T00:00:00Z".into(),
+        collection_id: Some("c0ffee00-1234-4abc-8def-0123456789ab".into()),
+        path: Some("Holidays/Été.txt".into()),
     };
     let handle = MintView {
         handle: "A".repeat(43),

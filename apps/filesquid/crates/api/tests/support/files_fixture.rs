@@ -16,6 +16,7 @@ use filesquid_api::auth::{
     Action, Authenticator, Authoriser, LaunchToken, Policy, Principal, Resource,
 };
 use filesquid_api::files::{FileLibrary, FileService};
+use filesquid_api::home::MemoryHomeCollections;
 use filesquid_api::journal::{JournalEntry, JournalQuery, JournalStore, MemoryJournal, MAX_PAGE};
 use filesquid_api::local_library::{LocalLibraryService, MemoryRepairLedger};
 use filesquid_api::monitor::{Monitor, MonitorConfig, StaticHostChecks};
@@ -360,6 +361,9 @@ pub struct FilesRig {
     pub journal: Arc<MemoryJournal>,
     /// The running monitor.
     pub monitor: Monitor,
+    /// The home collections uploads and copies register their files in; it holds
+    /// [`HOME_COLLECTION`] of the rig's library.
+    pub home: Arc<MemoryHomeCollections>,
 }
 
 impl Drop for FilesRig {
@@ -438,6 +442,10 @@ impl FilesRig {
         );
         assert!(opened, "the library opens once");
         assert!(state.install_files(Arc::new(service.clone())));
+        let home = Arc::new(MemoryHomeCollections::new());
+        let collection = filesquid_core::CollectionId::new(HOME_COLLECTION).expect("collection");
+        home.add_collection(&library(), &collection);
+        assert!(state.install_home_collections(home.clone()));
         Self {
             dir,
             root,
@@ -449,6 +457,7 @@ impl FilesRig {
             token,
             journal,
             monitor,
+            home,
         }
     }
 
@@ -643,10 +652,16 @@ pub fn query(rest: &str) -> String {
 /// The upload route.
 pub const UPLOAD_URI: &str = "/api/v1/files/upload";
 
+/// The collection of the rig's library that uploads and copies go to (the drive catalog's
+/// collection, so a rig that also installs navigation over it agrees).
+pub const HOME_COLLECTION: &str = "2c0d1e2f-3a4b-4c5d-8e6f-7a8b9c0d1e2f";
+
 /// The upload facts of a new file named `name` declaring `size` bytes in the rig's library,
 /// plus the fields of `rest` (a JSON object).
 pub fn upload_input(name: &str, size: usize, rest: serde_json::Value) -> serde_json::Value {
-    let mut input = serde_json::json!({ "library_id": LIBRARY, "name": name, "size": size });
+    let mut input = serde_json::json!({
+        "library_id": LIBRARY, "name": name, "size": size, "collection_id": HOME_COLLECTION
+    });
     for (key, value) in rest.as_object().expect("an object of fields") {
         input[key] = value.clone();
     }

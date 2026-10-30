@@ -5,6 +5,7 @@
 
 use super::command::{self, version_entry, Checked, CommandInput, Done, FileCommand};
 use super::error::FileError;
+use super::homing;
 use super::names::{content_disposition, Disposition};
 use super::nodes::{listing_query, Listing};
 use super::range::{RangePlan, RangeRequest};
@@ -22,6 +23,7 @@ use super::{
 };
 use crate::auth::{journal_entry, Action, Principal};
 use crate::error::ErrorCode;
+use crate::home::Destination;
 use crate::journal::{JournalEntry, Level, Outcome};
 use crate::operation::CommandEnvelope;
 use crate::routes::Route;
@@ -303,16 +305,29 @@ async fn upload(
         Ok((command, bytes)) => (Ok(command), bytes),
         Err(err) => (Err(err), Bytes::new()),
     };
-    let principal = &principal;
+    let (state, principal) = (&state, &principal);
     command::run(
-        &state,
+        state,
         principal,
         UPLOAD_OPERATION,
         command,
         |files, c, actor| async move {
-            let upload = files
-                .upload(c.input.facts, bytes, actor, c.expected)
-                .await?;
+            let operation_id = c.operation_id.as_str().to_string();
+            let mut facts = c.input.facts;
+            let destination = Destination {
+                collection_id: facts.collection_id.clone(),
+                folder: facts.folder.clone(),
+            };
+            let new_file = facts.file_id.is_none();
+            let place = (facts.library_id.as_str(), &destination);
+            let ids = (operation_id.as_str(), new_file);
+            let prepared = homing::prepare_home(state, principal, place, &facts.name, ids).await?;
+            facts.reserved_file_id = prepared.reserved.as_ref().map(|id| id.as_str().to_string());
+            let mut upload = files.upload(facts, bytes, actor, c.expected).await?;
+            let (collection, path) =
+                homing::settle_home(state, prepared, &operation_id, &upload.file_id).await?;
+            upload.collection_id = Some(collection);
+            upload.path = Some(path);
             let ids = (
                 upload.library_id.as_str(),
                 upload.object_id.as_str(),

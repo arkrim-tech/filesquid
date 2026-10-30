@@ -12,7 +12,8 @@
 use super::error::FileError;
 use super::service::{change_model, read, FileService};
 use super::statements::metadata_error;
-use super::upload::{canonical_error, mint_file_id, parse_file_id};
+use super::upload::{canonical_error, committed_before, mint_file_id, parse_file_id};
+use super::view::UploadView;
 use crate::canonical::{
     commit_file_original, copy_record, file_object_id, file_object_root, read_file_original,
     source_reference, CanonicalError, CopyInput, OwnerReadable, SOURCE_TERM,
@@ -41,6 +42,18 @@ pub struct CopyRequest {
     /// Optional version message of the copy's first version.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
+    /// The destination collection, a collection of the library (API-S-011 **Destination**).
+    /// Required: a copy without it is refused (`destination_required`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub collection_id: Option<String>,
+    /// The destination folder inside the collection, a collection logical path; the
+    /// collection's root when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub folder: Option<String>,
+    /// The file ID the copy's operation reserved, so a retry after a crash completes the same
+    /// copy once. Set by the route, never read from or written to the wire.
+    #[serde(skip)]
+    pub reserved_file_id: Option<String>,
 }
 
 /// The copy a copy request made.
@@ -58,6 +71,13 @@ pub struct CopyView {
     pub created: String,
     /// The source's object version, `urn:uuid:<file-id>@vN`: the record's `dcterms:source`.
     pub source: String,
+    /// The copy's home collection.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub collection_id: Option<String>,
+    /// The copy's collection logical path: the one asked for, or the numbered path beside a
+    /// taken one that it got (API-S-011 **Same logical path**).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
 }
 
 /// The source of one copy: its head record and bytes.
@@ -74,6 +94,23 @@ where
     R: VersionReservations,
     S: StorageBackend,
 {
+    /// The display name a copy of the file `file_id` of `library_id` takes: its head
+    /// record's. Storage I/O.
+    ///
+    /// # Errors
+    /// `invalid_request` for a malformed file ID; `not_found` for an unknown library or file;
+    /// a storage failure otherwise.
+    pub async fn copy_name(&self, library_id: &str, file_id: &str) -> Result<String, FileError> {
+        let file_id = parse_file_id(file_id)?;
+        let library = self.library(library_id)?;
+        let backend = library.files.backend.as_ref();
+        let original = read_file_original(backend, &OwnerReadable, &file_id)
+            .await
+            .map_err(copy_error)?
+            .ok_or_else(FileError::not_found)?;
+        Ok(original.record.display_name().to_string())
+    }
+
     /// Copy the file `request.file_id` at its head by `actor` into a new file.
     ///
     /// # Errors
@@ -96,8 +133,20 @@ where
         let _writing = library.writes.lock().await;
         let backend = library.files.backend.as_ref();
         let source = read_source(backend, source_id, expected).await?;
-        let file_id = mint_file_id()?;
         let reference = source_reference(&source.file_id, &source.version);
+        let reserved = match &request.reserved_file_id {
+            Some(id) => Some(parse_file_id(id)?),
+            None => None,
+        };
+        if let Some(done) =
+            committed_before(backend, &request.library_id, reserved.as_ref()).await?
+        {
+            return Ok(resumed_copy(done, reference));
+        }
+        let file_id = match reserved {
+            Some(id) => id,
+            None => mint_file_id()?,
+        };
         let started = self.created();
         let input = CopyInput {
             source: &source.record,
@@ -136,6 +185,8 @@ where
             version: receipt.version.to_string(),
             created: receipt.created,
             source: reference,
+            collection_id: None,
+            path: None,
         })
     }
 }
@@ -188,5 +239,20 @@ fn copy_error(err: CanonicalError) -> FileError {
             FileError::invalid(format!("The copy was refused: {reason}."))
         }
         other => canonical_error(other),
+    }
+}
+
+/// The answer of a copy an earlier, unfinished run of the same operation already committed:
+/// its object's head, citing `source`. Pure.
+fn resumed_copy(done: UploadView, source: String) -> CopyView {
+    CopyView {
+        library_id: done.library_id,
+        file_id: done.file_id,
+        object_id: done.object_id,
+        version: done.version,
+        created: done.created,
+        source,
+        collection_id: None,
+        path: None,
     }
 }
