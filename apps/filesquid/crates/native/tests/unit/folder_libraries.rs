@@ -397,7 +397,7 @@ fn a_registered_file_names_its_path_and_object_in_the_snapshot_and_the_index() {
 fn the_catalog_is_the_home_collections_of_uploads_and_copies() {
     use filesquid_api::canonical::collection_path::ItemKind;
     use filesquid_api::home::{register_entry, HomeCollections, HomeRequest, Placed, Reserved};
-    let fx = Fixture::new("api-f2.14-home");
+    let fx = Fixture::new("api-f214-home");
     let lib = fx.create_library("Family archive");
     let trips = fx.create_collection(&lib, "Trips");
     let home: &dyn HomeCollections = fx.catalog.as_ref();
@@ -470,6 +470,73 @@ fn the_catalog_is_the_home_collections_of_uploads_and_copies() {
             path: "Summer/beach-1.jpg".into()
         }
     );
+}
+
+#[test]
+fn a_registered_file_is_relocated_in_one_version_and_its_own_path_never_takes_it() {
+    use filesquid_api::home::{place_entry, HomeCollections, HomeRequest, Placed};
+    let fx = Fixture::new("api-f214-relocate");
+    let lib = fx.create_library("Family archive");
+    let trips = fx.create_collection(&lib, "Trips");
+    let home: &dyn HomeCollections = fx.catalog.as_ref();
+    let file = new_file();
+    path_of(register(&fx, &lib, &trips, &file, "a/photo.jpg", "op-1"));
+    path_of(register(
+        &fx,
+        &lib,
+        &trips,
+        &new_file(),
+        "a/harbour.jpg",
+        "op-2",
+    ));
+    let to = |path: &str| HomeRequest {
+        file_id: file.clone(),
+        collection_id: trips.clone(),
+        path: path.into(),
+    };
+    let same = home
+        .relocate(&lib, &to("a/photo.jpg"), place_entry("op-3"))
+        .expect("same");
+    assert_eq!(
+        same,
+        Placed::AlreadyRegistered {
+            collection_id: trips.clone(),
+            path: "a/photo.jpg".into()
+        }
+    );
+    let before = snapshot_of(&fx, &lib).version;
+    let moved = home
+        .relocate(&lib, &to("a/harbour.jpg"), place_entry("op-4"))
+        .expect("move");
+    assert_eq!(
+        moved,
+        Placed::Registered {
+            path: "a/harbour-1.jpg".into()
+        }
+    );
+    let after = snapshot_of(&fx, &lib);
+    assert_eq!(
+        after.version.to_string(),
+        next_version(&before.to_string()),
+        "exactly one snapshot version"
+    );
+    let operation = after.operations.last().expect("operation");
+    assert!(
+        format!("{operation:?}").contains("op-4"),
+        "under the operation ID"
+    );
+    assert_eq!(
+        home.placement(&lib, &file).expect("read"),
+        Some((trips.clone(), "a/harbour-1.jpg".into()))
+    );
+    let stranger = HomeRequest {
+        file_id: new_file(),
+        ..to("b.jpg")
+    };
+    let refused = home
+        .relocate(&lib, &stranger, place_entry("op-5"))
+        .expect("refused");
+    assert_eq!(refused, Placed::Refused("not_found"));
 }
 
 #[test]
@@ -1004,4 +1071,106 @@ fn copy_dir(from: &Path, to: &Path) {
             std::fs::copy(entry.path(), target).expect("copy");
         }
     }
+}
+
+#[test]
+fn a_relocated_file_s_own_path_never_takes_its_target_at_it_below_it_or_above_it() {
+    use filesquid_api::home::{place_entry, HomeCollections, HomeRequest, Placed};
+    let fx = Fixture::new("api-f214-own-path");
+    let lib = fx.create_library("Family archive");
+    let trips = fx.create_collection(&lib, "Trips");
+    let home: &dyn HomeCollections = fx.catalog.as_ref();
+    let numbered = new_file();
+    path_of(register(
+        &fx,
+        &lib,
+        &trips,
+        &new_file(),
+        "a/photo.jpg",
+        "op-1",
+    ));
+    path_of(register(
+        &fx,
+        &lib,
+        &trips,
+        &numbered,
+        "a/photo-1.jpg",
+        "op-2",
+    ));
+    let to = |file: &FileId, path: &str| HomeRequest {
+        file_id: file.clone(),
+        collection_id: trips.clone(),
+        path: path.into(),
+    };
+    let back = home
+        .relocate(&lib, &to(&numbered, "b/photo.jpg"), place_entry("op-3"))
+        .expect("away");
+    assert_eq!(
+        back,
+        Placed::Registered {
+            path: "b/photo.jpg".into()
+        }
+    );
+    let notes = new_file();
+    path_of(register(&fx, &lib, &trips, &notes, "notes", "op-4"));
+    let below = home
+        .relocate(&lib, &to(&notes, "notes/notes"), place_entry("op-5"))
+        .expect("below its own path");
+    assert_eq!(
+        below,
+        Placed::Registered {
+            path: "notes/notes".into()
+        },
+        "the file's own path is no ancestor of its target"
+    );
+    let above = home
+        .relocate(&lib, &to(&notes, "notes"), place_entry("op-6"))
+        .expect("above its own path");
+    assert_eq!(
+        above,
+        Placed::Registered {
+            path: "notes".into()
+        },
+        "the file's own path is no descendant of its target"
+    );
+}
+
+#[test]
+fn a_relocation_into_a_removed_collection_is_collection_not_found_even_at_its_own_path() {
+    use filesquid_api::home::{place_entry, HomeCollections, HomeRequest, Placed};
+    let fx = Fixture::new("api-f214-removed-home");
+    let lib = fx.create_library("Family archive");
+    let trips = fx.create_collection(&lib, "Trips");
+    let file = new_file();
+    path_of(register(&fx, &lib, &trips, &file, "a.jpg", "op-1"));
+    let deletion = filesquid_api::library::Deletion {
+        deleted_at_ms: 1_000,
+        purge_after_ms: 2_000,
+    };
+    let removal = CatalogCommit {
+        operation_id: fx.op(),
+        library_id: lib.clone(),
+        expected_revision: ExpectedRevision::new(fx.revision(&lib)).expect("revision"),
+        changes: vec![
+            CatalogChange::DeleteCollectionFiles {
+                collection_id: trips.clone(),
+                deletion,
+            },
+            CatalogChange::RemoveCollection(trips.clone()),
+        ],
+        journal: JournalEntry::new("library.collection.delete", Outcome::Succeeded),
+        created_id: None,
+        deletion: Some(deletion),
+    };
+    fx.catalog.commit(removal).expect("removed");
+    let home: &dyn HomeCollections = fx.catalog.as_ref();
+    let request = HomeRequest {
+        file_id: file,
+        collection_id: trips,
+        path: "a.jpg".into(),
+    };
+    let refused = home
+        .relocate(&lib, &request, place_entry("op-2"))
+        .expect("refused");
+    assert_eq!(refused, Placed::Refused("collection_not_found"));
 }

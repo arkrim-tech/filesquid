@@ -5,6 +5,8 @@
 
 use super::command::{self, FileCommand};
 use super::error::FileError;
+use super::handle::FileOperations;
+use super::homing;
 use super::provenance::{Caller, Committed};
 use super::routes::{body, files, query, read_answer, recorded, refuse};
 use super::statements::{
@@ -150,18 +152,63 @@ async fn rename(
     request: Result<Json<FileCommand<RenameRequest>>, JsonRejection>,
 ) -> Response {
     let command = body(request).and_then(|c| command::check(c.envelope, c.input));
-    let principal = &principal;
+    let (state, principal) = (&state, &principal);
     command::run(
-        &state,
+        state,
         principal,
         RENAME_OPERATION,
         command,
         |files, c, actor| async move {
+            let operation_id = c.operation_id.as_str().to_string();
+            let input = &c.input;
+            let renaming = homing::prepare_rename(
+                state,
+                &input.library_id,
+                &input.file_id,
+                &input.display_name,
+            )
+            .await?;
+            let renaming =
+                settle_committed_name(state, files.as_ref(), input, renaming, &operation_id)
+                    .await?;
             let caller = Caller::new(actor).with_operation(c.operation_id);
-            Ok(recorded(files.rename(c.input, caller, c.expected).await?))
+            let mut renamed = files.rename(c.input, caller, c.expected).await?;
+            if let Some(renaming) = renaming {
+                let path = homing::settle_rename(state, renaming, &operation_id).await?;
+                renamed.view.path = Some(path);
+            }
+            Ok(recorded(renamed))
         },
     )
     .await
+}
+
+/// Complete the relocation of a rename whose name an earlier attempt already committed: when
+/// the file's head already carries the asked-for name but its collection path does not, the
+/// path is moved now (one snapshot version under `operation_id`) and `None` is answered, so
+/// the name commit that follows refuses as it would and nothing stays half done. Any other
+/// rename keeps its `renaming`. Reads the file's head; writes the catalog when it heals.
+///
+/// # Errors
+/// A read or relocation failure.
+async fn settle_committed_name(
+    state: &ApiState,
+    files: &dyn FileOperations,
+    input: &RenameRequest,
+    renaming: Option<homing::Renaming>,
+    operation_id: &str,
+) -> Result<Option<homing::Renaming>, FileError> {
+    let Some(renaming) = renaming else {
+        return Ok(None);
+    };
+    let head_name = files
+        .copy_name(input.library_id.clone(), input.file_id.clone())
+        .await?;
+    if head_name != input.display_name {
+        return Ok(Some(renaming));
+    }
+    homing::settle_rename(state, renaming, operation_id).await?;
+    Ok(None)
 }
 
 /// Answer a metadata edit: journal its version with opaque IDs only, or the refusal.

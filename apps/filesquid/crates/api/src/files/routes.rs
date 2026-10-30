@@ -12,8 +12,9 @@ use super::provenance::{Caller, Committed};
 use super::range::{RangePlan, RangeRequest};
 use super::service::{ContentAnswer, ContentRequest};
 use super::view::{
-    ContentQuery, FileQuery, FolderRequest, HistoryQuery, LabelRequest, LibraryQuery,
-    ListingRequest, MoveRequest, ObjectQuery, RemoveRequest, RestoreRequest, UploadQuery,
+    CollectionMoveView, ContentQuery, FileQuery, FolderInput, HistoryQuery, LabelRequest,
+    LibraryQuery, ListingRequest, MoveInput, ObjectQuery, RemoveRequest, RestoreRequest,
+    UploadQuery,
 };
 use super::{
     DETAILS_OPERATION, DOWNLOAD_OPERATION, FOLDER_OPERATION, HISTORY_OPERATION,
@@ -475,18 +476,26 @@ fn json_command<T: CommandInput>(
 async fn create_folder(
     State(state): State<ApiState>,
     Extension(principal): Extension<Principal>,
-    request: Result<Json<FileCommand<FolderRequest>>, JsonRejection>,
+    request: Result<Json<FileCommand<FolderInput>>, JsonRejection>,
 ) -> Response {
     let command = json_command(request);
+    let (state, principal) = (&state, &principal);
     command::run(
-        &state,
-        &principal,
+        state,
+        principal,
         FOLDER_OPERATION,
         command,
         |files, c, _| async move {
-            let folder = files.create_folder(c.input, c.expected).await?;
+            let view = match c.input {
+                FolderInput::InObject(input) => {
+                    serde_json::to_value(files.create_folder(input, c.expected).await?)
+                }
+                FolderInput::Collection(input) => {
+                    serde_json::to_value(homing::plan_folder(state, principal, input).await?)
+                }
+            };
             Ok(Done {
-                view: folder,
+                view: view.map_err(|_| FileError::internal("a folder answer did not encode"))?,
                 entries: Vec::new(),
                 changed: false,
             })
@@ -499,23 +508,60 @@ async fn create_folder(
 async fn move_path(
     State(state): State<ApiState>,
     Extension(principal): Extension<Principal>,
-    request: Result<Json<FileCommand<MoveRequest>>, JsonRejection>,
+    request: Result<Json<FileCommand<MoveInput>>, JsonRejection>,
 ) -> Response {
     let command = json_command(request);
-    let principal = &principal;
+    let (state, principal) = (&state, &principal);
     command::run(
-        &state,
+        state,
         principal,
         MOVE_OPERATION,
         command,
         |files, c, actor| async move {
-            let caller = Caller::new(actor).with_operation(c.operation_id);
-            Ok(recorded(
-                files.move_path(c.input, caller, c.expected).await?,
-            ))
+            match c.input {
+                MoveInput::InObject(input) => {
+                    let caller = Caller::new(actor).with_operation(c.operation_id);
+                    let moved = files.move_path(input, caller, c.expected).await?;
+                    Ok(as_value(recorded(moved)))
+                }
+                MoveInput::Collection(input) => {
+                    let operation_id = c.operation_id.as_str();
+                    let (view, changed) =
+                        homing::move_to_destination(state, principal, input, operation_id).await?;
+                    Ok(as_value(collection_moved(principal, view, changed)))
+                }
+            }
         },
     )
     .await
+}
+
+/// `done` with its view as JSON, so the two kinds of move answer through one route. Pure.
+fn as_value<V: Serialize>(done: Done<V>) -> Done<serde_json::Value> {
+    Done {
+        view: serde_json::to_value(done.view).unwrap_or(serde_json::Value::Null),
+        entries: done.entries,
+        changed: done.changed,
+    }
+}
+
+/// The outcome of a collection move: journaled once as `file.move` with the library, the file
+/// and its collection (never a path or a name).
+fn collection_moved(
+    principal: &Principal,
+    view: CollectionMoveView,
+    changed: bool,
+) -> Done<CollectionMoveView> {
+    let entry = JournalEntry::new(MOVE_OPERATION, Outcome::Succeeded)
+        .actor(principal.actor())
+        .target(view.library_id.as_str())
+        .target(view.file_id.as_str())
+        .target(view.collection_id.as_str());
+    Done {
+        view,
+        entries: vec![entry],
+        changed,
+    }
 }
 
 /// `POST /api/v1/files/removals`.

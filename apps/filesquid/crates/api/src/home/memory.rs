@@ -29,6 +29,8 @@ struct State {
     /// Whether the next registration fails as the store being unreachable (a crash between a
     /// file's object and its registration, as tests stage it).
     fail_next: bool,
+    /// Whether the next relocation fails as an unreachable store (only a relocation clears it).
+    fail_next_relocation: bool,
 }
 
 /// Home collections held in memory.
@@ -73,6 +75,12 @@ impl MemoryHomeCollections {
     /// unregistered and its reservation in place, as a crash between the two would.
     pub fn fail_next_registration(&self) {
         self.lock().fail_next = true;
+    }
+
+    /// Make the next relocation fail as an unreachable store, as a crash between a rename's
+    /// name commit and its relocation would.
+    pub fn fail_next_relocation(&self) {
+        self.lock().fail_next_relocation = true;
     }
 
     /// The number of unfinished reservations.
@@ -194,6 +202,82 @@ impl HomeCollections for MemoryHomeCollections {
         }
         Ok(placed)
     }
+
+    fn placement(
+        &self,
+        library_id: &LibraryId,
+        file_id: &FileId,
+    ) -> Result<Option<(CollectionId, String)>, CatalogError> {
+        let state = self.lock();
+        Ok(match state.files.get(file_id) {
+            Some((library, collection, path)) if library == library_id => {
+                Some((collection.clone(), path.clone()))
+            }
+            _ => None,
+        })
+    }
+
+    fn relocate(
+        &self,
+        library_id: &LibraryId,
+        request: &HomeRequest,
+        journal: JournalEntry,
+    ) -> Result<Placed, CatalogError> {
+        let mut state = self.lock();
+        if std::mem::take(&mut state.fail_next_relocation) {
+            return Err(CatalogError::Unavailable("staged crash".into()));
+        }
+        let placed = relocate_in(&mut state, library_id, request);
+        if let Placed::Registered { .. } = placed {
+            let entry = journal
+                .target(request.file_id.as_str())
+                .target(request.collection_id.as_str());
+            state.journal.push(entry);
+        }
+        Ok(placed)
+    }
+}
+
+/// Relocate `request`'s registered file of `library_id` in `state` as
+/// [`HomeCollections::relocate`] says: its own path never takes it.
+fn relocate_in(state: &mut State, library_id: &LibraryId, request: &HomeRequest) -> Placed {
+    let current = match state.files.get(&request.file_id) {
+        Some(place) if &place.0 == library_id => place.clone(),
+        _ => return Placed::Refused("not_found"),
+    };
+    let key = (library_id.clone(), request.collection_id.clone());
+    if !state.collections.contains(&key) {
+        return Placed::Refused("collection_not_found");
+    }
+    if (&current.1, &current.2) == (&request.collection_id, &request.path) {
+        return Placed::AlreadyRegistered {
+            collection_id: current.1,
+            path: current.2,
+        };
+    }
+    // The file leaves its path, so it is set aside while the free path is found: it never
+    // takes its own target, at it, below it or above it (as the SQLite catalog).
+    state.files.remove(&request.file_id);
+    let found = state.free(
+        library_id,
+        &request.collection_id,
+        &request.path,
+        ItemKind::File,
+    );
+    let path = match found {
+        Ok(path) => path,
+        Err(refused) => {
+            state.files.insert(request.file_id.clone(), current);
+            return Placed::Refused(refused.error_code());
+        }
+    };
+    let place = (
+        library_id.clone(),
+        request.collection_id.clone(),
+        path.clone(),
+    );
+    state.files.insert(request.file_id.clone(), place);
+    Placed::Registered { path }
 }
 
 /// Place `request`'s file in `state`: a file already placed in `library_id` is answered with
