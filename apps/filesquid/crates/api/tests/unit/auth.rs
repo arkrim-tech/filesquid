@@ -375,7 +375,10 @@ fn every_routed_path_declares_its_action() {
             | "/api/v1/files/renames"
             | "/api/v1/files/copies"
             | "/api/v1/files/metadata/registrations"
-            | "/api/v1/imports" => Action::WriteFiles,
+            | "/api/v1/imports"
+            | "/api/v1/imports/{plan_id}"
+            | "/api/v1/imports/{plan_id}/items"
+            | "/api/v1/imports/{plan_id}/start" => Action::WriteFiles,
             "/api/v1/content/{handle}" => Action::ReadContent,
             "/api/v1/history" => Action::ReadHistory,
             "/api/v1/libraries"
@@ -391,10 +394,12 @@ fn every_routed_path_declares_its_action() {
             "/api/v1/navigation" => Action::ReadNavigation,
             "/api/v1/preferences" => Action::ManagePreferences,
             "/api/v1/client-events" => Action::RecordClientEvents,
-            "/api/v1/jobs" | "/api/v1/jobs/{job}" => Action::ReadJobs,
+            "/api/v1/jobs" | "/api/v1/jobs/{job}" | "/api/v1/jobs/{job}/items" => Action::ReadJobs,
             "/api/v1/jobs/{job}/pause"
             | "/api/v1/jobs/{job}/resume"
-            | "/api/v1/jobs/{job}/cancel" => Action::ManageJobs,
+            | "/api/v1/jobs/{job}/cancel"
+            | "/api/v1/jobs/{job}/items/{item}/retry"
+            | "/api/v1/jobs/{job}/retry-failed" => Action::ManageJobs,
             file if file.starts_with("/api/v1/files/") => Action::ReadHistory,
             other => panic!("{other} has no expected action in this test"),
         };

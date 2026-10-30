@@ -7,7 +7,7 @@
 use super::import_rig::{fresh_dir, holiday_folder, ImportRig, LIBRARY, UNOPENED_LIBRARY};
 use super::DesktopWorld;
 use cucumber::{given, then, when};
-use filesquid_api::imports::IMPORT_START_OPERATION;
+use filesquid_api::imports::IMPORT_PLAN_OPERATION;
 use filesquid_api::navigation::{FolderScope, NodeRef};
 use filesquid_core::CollectionId;
 use serde_json::{json, Value};
@@ -174,7 +174,7 @@ fn one_request(world: &mut DesktopWorld) {
     let starts: Vec<_> = rig
         .journal()
         .into_iter()
-        .filter(|e| e.operation == IMPORT_START_OPERATION)
+        .filter(|e| e.operation == IMPORT_PLAN_OPERATION)
         .collect();
     assert_eq!(starts.len(), 1);
     assert_eq!(
