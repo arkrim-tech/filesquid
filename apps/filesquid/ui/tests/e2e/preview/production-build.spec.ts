@@ -32,6 +32,8 @@ const ELEMENTS = [
   "fs-file-preview",
   "fs-host-indicator",
   "fs-monitor",
+  "fs-search-bar",
+  "fs-drive-view",
 ];
 
 test.beforeEach(async ({ page }) => {
@@ -102,7 +104,7 @@ test("sidebar, header and Settings words come from the active label table (UI-S-
     "placeholder",
     label(labels, "fileFilterView"),
   );
-  await expect(shell.locator("header input.search")).toHaveAttribute(
+  await expect(shell.locator("fs-search-bar input.text")).toHaveAttribute(
     "placeholder",
     label(labels, "searchPlaceholder"),
   );

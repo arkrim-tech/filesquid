@@ -703,7 +703,7 @@ describe("<fs-navigation-view> with the file view", () => {
       seen((e as CustomEvent).detail),
     );
     await mountView("c1");
-    expect(seen).toHaveBeenLastCalledWith({ node: "c1", kind: "collection" });
+    expect(seen).toHaveBeenLastCalledWith({ node: "c1", kind: "collection", name: "Photos" });
   });
 
   it("keeps the files note for a folder, which the view operation does not list", async () => {

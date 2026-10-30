@@ -305,7 +305,9 @@ export class ClientFileSource implements FileSource {
   /**
    * Upload one file with `PUT /api/v1/files/upload` (API-S-026, API-S-035, API-F2.13): the
    * envelope, the facts as the `input` part with the declared size from the body, and the
-   * bytes; no logical path. Network I/O; commits one version in the file's own object.
+   * bytes. The destination is the `collection_id` and, inside a folder, the `folder` (a logical
+   * path within that collection); the API answers the file's own logical path, and the request
+   * carries none for the file itself. Network I/O; commits one version in the file's own object.
    *
    * @param target The library, the destination collection and the folder inside it, if any
    *   (API-S-011 **Destination**): the API refuses an upload without a collection.

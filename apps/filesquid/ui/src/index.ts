@@ -7,6 +7,7 @@ import { FsBreadcrumb } from "./components/fs-breadcrumb";
 import { FsDestinationPicker } from "./components/fs-destination-picker";
 import { FsNewMenu } from "./components/fs-new-menu";
 import { FsDriveView } from "./components/fs-drive-view";
+import { FsSearchBar } from "./components/fs-search-bar";
 import { FsFileBrowser } from "./components/fs-file-browser";
 import { FsFilePreview } from "./components/fs-file-preview";
 import { FsDetailsPanel } from "./components/fs-details-panel";
@@ -244,7 +245,37 @@ export {
 } from "./navigation/store";
 export { MemoryNavigationSource, type FixtureNode } from "./navigation/source";
 export { ClientNavigationSource, type NavigationClient } from "./navigation/client-source";
-export { FsDriveView, type DriveViewOptions, type ZipDownload } from "./components/fs-drive-view";
+export {
+  FsDriveView,
+  type DriveViewOptions,
+  type SearchRequest,
+  type ZipDownload,
+} from "./components/fs-drive-view";
+export { FsSearchBar, type SearchBarOptions, type SearchFolder } from "./components/fs-search-bar";
+export {
+  MAX_CHIPS,
+  MAX_QUERY_BYTES,
+  MAX_QUERY_TERMS,
+  OPERATORS_ON_HOST,
+  SUGGESTED_FILES,
+  addChip,
+  chipLabel,
+  composeQuery,
+  parseQuery,
+  refusalOf,
+  removeChip,
+  zoneOf,
+  type SearchChip,
+  type SearchRefusal,
+} from "./search/model";
+export { ClientSearchSource, type SearchQuery, type SearchSource } from "./search/source";
+export { MemorySearchSource } from "./search/memory-source";
+export {
+  cachedLibraryScope,
+  firstLibraryScope,
+  type LibraryScope,
+} from "./navigation/library-scope";
+export { SEARCH_ROUTE_PREFIX, parseSearchHash, searchHash } from "./app/routes";
 export {
   FsDestinationPicker,
   type DestinationChoice,
@@ -411,6 +442,7 @@ export function defineElements(): void {
   }
   if (!customElements.get("fs-drive-view")) customElements.define("fs-drive-view", FsDriveView);
   if (!customElements.get("fs-new-menu")) customElements.define("fs-new-menu", FsNewMenu);
+  if (!customElements.get("fs-search-bar")) customElements.define("fs-search-bar", FsSearchBar);
   if (!customElements.get("fs-details-panel")) {
     customElements.define("fs-details-panel", FsDetailsPanel);
   }
