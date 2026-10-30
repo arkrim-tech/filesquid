@@ -15,7 +15,7 @@ mod journal;
 #[allow(dead_code)]
 mod import_rig;
 
-use filesquid_api::imports::{DESTINATION_REQUIRED, IMPORT_START_OPERATION};
+use filesquid_api::imports::{DESTINATION_REQUIRED, IMPORT_PLAN_OPERATION};
 use filesquid_api::navigation::{FolderScope, NodeRef};
 use filesquid_core::CollectionId;
 use import_rig::{fresh_dir, holiday_folder, ImportRig, LIBRARY, UNOPENED_LIBRARY};
@@ -74,12 +74,12 @@ fn a_cancelled_dialog_or_an_unopened_library_makes_no_job() {
         "no dialog for the library that is not open"
     );
     rig.stop_worker();
-    let starts = rig
+    let plans = rig
         .journal()
         .into_iter()
-        .filter(|e| e.operation == IMPORT_START_OPERATION)
+        .filter(|e| e.operation == IMPORT_PLAN_OPERATION)
         .count();
-    assert_eq!(starts, 2, "each request journaled once");
+    assert_eq!(plans, 2, "each request journaled once (import.plan)");
     assert_eq!(rig.file_objects(), 0, "nothing imported");
 }
 
@@ -121,7 +121,7 @@ fn an_import_without_a_destination_is_refused_before_any_dialog() {
     let refusals: Vec<_> = rig
         .journal()
         .into_iter()
-        .filter(|e| e.operation == IMPORT_START_OPERATION)
+        .filter(|e| e.operation == IMPORT_PLAN_OPERATION)
         .collect();
     assert_eq!(refusals.len(), 1, "journaled once");
     assert_eq!(

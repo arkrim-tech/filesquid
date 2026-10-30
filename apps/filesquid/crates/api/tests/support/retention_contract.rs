@@ -8,13 +8,17 @@ const REMOVAL_WORDS: [&str; 8] = [
     "delet", "remov", "expir", "thin", "prun", "purg", "discard", "drop",
 ];
 
+/// The `DELETE` operations that remove no library content: an import plan holds no file and
+/// made no version, so discarding it (API-S-036 **Review**) is not a version removal.
+const CONTENT_FREE_DELETES: [&str; 1] = ["/api/v1/imports/{plan_id}"];
+
 /// Every operation of `doc` that could take versions away: a `DELETE`, a path naming
 /// expiry, thinning, pruning or purging, or an operation whose ID or summary names both a
 /// removal and a version. Pure.
 pub fn version_removals(doc: &Value) -> Vec<String> {
     let mut found = Vec::new();
     for (path, item) in doc["paths"].as_object().expect("paths") {
-        if item.get("delete").is_some() {
+        if item.get("delete").is_some() && !CONTENT_FREE_DELETES.contains(&path.as_str()) {
             found.push(format!("DELETE {path}"));
         }
         let lower = path.to_lowercase();

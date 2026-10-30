@@ -24,7 +24,11 @@
 //!   [`JobClass`] is held to its cap ([`JobLimits`]); every stored change publishes one
 //!   `job.update` event carrying the [`JobView`]. The job routes (`routes`) report and
 //!   control jobs, and hand a resumed job to the host's [`JobRunner`] for its kind.
+//! - Per-file progress (API-S-037, Task API-F2.16): the [`JobItems`] port answers an upload
+//!   job's destination and its files, and [`Jobs::retry`] puts failed files back to queued,
+//!   journaling each as `job.item_retried`; [`MemoryJobItems`] is the reference port.
 
+mod items;
 mod model;
 pub(crate) mod routes;
 pub mod rules;
@@ -34,6 +38,10 @@ mod slots;
 mod store;
 mod view;
 
+pub use items::{
+    display_name, named_page, page_of as page_of_items, requeue, JobDestination, JobItem,
+    JobItemPage, JobItemState, JobItems, MemoryJobItems, MAX_LISTED_ITEMS,
+};
 pub use model::{Job, JobControl, JobError, JobSpec, JobState, Lease};
 pub use runner::JobRunner;
 pub use service::{mint_job_id, Halt, Jobs, RunningJob};
@@ -78,3 +86,6 @@ pub const JOB_PAUSED: &str = "job.paused";
 pub const JOB_RESUMED: &str = "job.resumed";
 /// Journal operation of a cancel asked of a running job (API-S-037).
 pub const JOB_CANCEL_REQUESTED: &str = "job.cancel_requested";
+/// Journal operation of one failed file of an upload job put back to queued by a retry
+/// (API-S-037 **Per-file progress**); its targets are the job and the item.
+pub const JOB_ITEM_RETRIED: &str = "job.item_retried";

@@ -1,6 +1,7 @@
 //! [`JobView`]: what the job routes and the `job.update` event show of a job (API-S-037):
 //! never its source identity, checkpoint, lease holder or fencing number.
 
+use super::items::JobDestination;
 use super::model::{Job, JobControl, JobState};
 use crate::journal::format_rfc3339_ms;
 use serde::{Deserialize, Serialize};
@@ -14,6 +15,10 @@ pub struct JobView {
     pub kind: String,
     /// The job's operation ID.
     pub operation_id: String,
+    /// Where an upload job's files go (API-S-037 **Per-file progress**); absent for a kind
+    /// without a destination or on a host that keeps no per-file progress.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub destination: Option<JobDestination>,
     /// Where it stands.
     pub state: JobState,
     /// Whether it waits under a pause.
@@ -48,6 +53,7 @@ impl JobView {
             id: job.id.clone(),
             kind: job.kind.clone(),
             operation_id: job.operation_id.clone(),
+            destination: None,
             state: job.state,
             paused: job.is_paused(),
             control: job.control,
@@ -63,6 +69,13 @@ impl JobView {
 }
 
 impl JobView {
+    /// This view with `destination` as where the job's files go. Pure.
+    #[must_use]
+    pub fn with_destination(mut self, destination: Option<JobDestination>) -> Self {
+        self.destination = destination;
+        self
+    }
+
     /// The view of `job` without its result (`null`): what the job listing and the
     /// `job.update` event carry, so neither grows with a completed job's report; the result
     /// is answered by `GET /api/v1/jobs/{job}` ([`JobView::of`]). Pure.
