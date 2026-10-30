@@ -5,7 +5,7 @@ Branch: `feat/de-1.2-file-folder-import` (part of global [Task 1.2](../../../../
 ## What changed
 
 - **`filesquid-api`**:
-  - `POST /api/v1/imports` (`files.write`; [`imports.rs`](../../../api/src/imports.rs), API-S-036):
+  - `POST /api/v1/imports` (`files.write`; [`imports.rs`](../../../api/src/imports/mod.rs), API-S-036):
     - the body is a `CommandEnvelope` of schema version 1 (operation ID = idempotency key, scope `library:<id>`), the library (non-empty) and the `source` (`files` or `folder`);
     - the reserved `collection_id` is refused with `400 invalid_request` and the journal code `collection_not_supported`, before any dialog, so no caller believes its files were filed;
     - the host port `ImportStarter`, installed with `ApiState::install_import_starter`;

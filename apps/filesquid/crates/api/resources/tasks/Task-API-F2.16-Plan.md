@@ -1,6 +1,6 @@
 # Task API-F2.16 Plan: Upload review step and per-file job progress
 
-Branch `feat/api-f2.16-upload-review`. Sources: the [plan row](../plan.md), [API-S-036](../srs.md), [API-S-037](../srs.md), [UI-S-028](../../../ui/resources/srs.md), mockups `resources/ui-mockups/v3/18-import-review.svg` and `19-import-progress.svg`.
+Branch `feat/api-f2.16-upload-review`. Sources: the [plan row](../plan.md), [API-S-036](../srs.md), [API-S-037](../srs.md), [UI-S-028](../../../../ui/resources/srs.md), mockups `resources/ui-mockups/v3/18-import-review.svg` and `19-import-progress.svg`.
 
 ## Constraints copied from the SRS
 
