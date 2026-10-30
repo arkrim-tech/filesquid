@@ -172,7 +172,11 @@ async fn journaled_opaque(w: &mut MonitorWorld, operation: String) {
     // The new version is named by the object reference (API-S-028).
     let reference = format!("{object}@{version}");
     assert_eq!(entry.object_ref.as_deref(), Some(reference.as_str()));
-    assert!(entry.operation_id.is_some(), "the operation it belongs to");
+    assert_eq!(
+        entry.operation_id.as_deref(),
+        w.files.last().json()["operation_id"].as_str(),
+        "the envelope's operation"
+    );
     assert!(entry
         .target_ids
         .iter()

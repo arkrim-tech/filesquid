@@ -42,7 +42,8 @@ pub struct CopyRequest {
     pub library_id: String,
     /// The file to copy, at its head.
     pub file_id: String,
-    /// Optional version label of the copy's first version, as the move's `message`.
+    /// Optional version label of the copy's first version, 1 to [`super::MAX_MESSAGE_BYTES`]
+    /// bytes, not blank, without control characters.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
 }

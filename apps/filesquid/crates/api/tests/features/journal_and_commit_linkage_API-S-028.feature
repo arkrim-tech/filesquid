@@ -14,18 +14,19 @@ Feature: Journal and commit linkage of the file and metadata routes
   Scenario Outline: Each file and metadata route commit is linked to the journal
     When the owner <operation> with a new operation ID
     Then exactly one "ocfl.commit" entry should name that operation ID and the new object version
+    And exactly one "<entry>" entry should name that operation ID and the new object version
     And the new version's user should be the installation and its message should name the operation ID and the kind "<kind>"
     And the new version should hold its PROV-O record
 
     Examples:
-      | operation                                 | kind          |
-      | uploads a new version of the uploaded file | upload        |
-      | copies the uploaded file                  | copy          |
-      | renames the uploaded file                 | rename        |
-      | moves the edited file                     | move          |
-      | removes the edited file                   | delete        |
-      | restores the edited file's first version  | reinstate     |
-      | sets a statement on the uploaded file     | metadata.edit |
+      | operation                                  | entry              | kind          |
+      | uploads a new version of the uploaded file | files.upload       | upload        |
+      | copies the uploaded file                   | files.copy         | copy          |
+      | renames the uploaded file                  | files.rename       | rename        |
+      | moves the edited file                      | files.move         | move          |
+      | removes the edited file                    | files.remove       | delete        |
+      | restores the edited file's first version   | files.restore      | reinstate     |
+      | sets a statement on the uploaded file      | files.metadata.set | metadata.edit |
 
   Scenario: Every metadata write is journaled as metadata.edit without its value
     When the owner sets a statement on the uploaded file with a new operation ID

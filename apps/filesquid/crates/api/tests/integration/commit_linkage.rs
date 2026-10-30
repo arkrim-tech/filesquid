@@ -3,10 +3,10 @@
 //! real OCFL storage root on the local filesystem.
 //!
 //! Every commit a file route (upload, move, remove, copy, rename, restore, label) or a
-//! metadata route (set or remove a statement, register a namespace) publishes sets the
-//! installation `user`, writes the `filesquid.operation.v1` message with the operation ID and
-//! kind, and is journaled with exactly one `ocfl.commit` entry naming the operation ID and
-//! the object version. Every metadata write is also journaled as `metadata.edit`. A refused
+//! metadata route (set or remove a statement, register a namespace) publishes writes the
+//! `filesquid.operation.v1` message with the operation ID and kind and is journaled with
+//! exactly one `ocfl.commit` entry naming the operation ID and the object version. With
+//! provenance installed its version `user` is the installation; without, the caller. Every metadata write is also journaled as `metadata.edit`. A refused
 //! attempt is journaled as before and never reaches the version history.
 
 #[path = "../support/files_fixture.rs"]
@@ -213,6 +213,18 @@ async fn a_copy_and_a_rename_are_each_one_linked_commit() {
         "rename",
     )
     .await;
+    for (answer, operation) in [(&copied, "files.copy"), (&renamed, "files.rename")] {
+        let result = committed(answer);
+        let own = rig.journaled(operation);
+        assert_eq!(own.len(), 1, "{own:?}");
+        let reference = format!(
+            "{}@{}",
+            result["object_id"].as_str().expect("object"),
+            result["version"].as_str().expect("version")
+        );
+        assert_eq!(own[0].object_ref.as_deref(), Some(reference.as_str()));
+        assert_eq!(own[0].operation_id, Some(operation_of(answer)));
+    }
     let edits = rig.journaled("metadata.edit");
     assert_eq!(edits.len(), 1, "a rename writes the metadata record");
     assert_eq!(edits[0].operation_id, Some(operation_of(&renamed)));
@@ -258,7 +270,10 @@ async fn without_provenance_every_commit_still_journals_one_ocfl_commit() {
     assert_eq!(commits.len(), 1, "{commits:?}");
     let reference = format!("{OBJECT}@{}", result["version"].as_str().expect("version"));
     assert_eq!(commits[0].object_ref.as_deref(), Some(reference.as_str()));
-    let (_, message, _) = version_facts(&rig, OBJECT, "v2").await;
+    let (user, message, _) = version_facts(&rig, OBJECT, "v2").await;
+    let user = user.expect("a version user");
+    assert_eq!(user.name, "owner", "without provenance the caller");
+    assert_eq!(user.address, None);
     assert!(message.contains("\"kind\":\"move\""), "{message}");
     let id = operation_of(&moved);
     assert!(
@@ -290,6 +305,13 @@ async fn the_callers_message_is_the_version_label() {
         "{:?}",
         refused.json()
     );
+    for message in ["   ", "line one\nline two"] {
+        let removal = json!({
+            "library_id": LIBRARY, "object_id": OBJECT, "path": "b.txt", "message": message
+        });
+        let refused = rig.command("/api/v1/files/removals", removal).await;
+        assert_eq!(refused.status, StatusCode::BAD_REQUEST, "{message:?}");
+    }
     assert_eq!(rig.head().await, "v2", "nothing published");
 }
 
@@ -388,4 +410,88 @@ async fn a_refused_metadata_edit_is_journaled_as_before_without_a_commit() {
     assert_eq!(refusals[0].outcome, Outcome::Failed);
     assert!(rig.journaled("metadata.edit").is_empty());
     assert_eq!(rig.journaled("ocfl.commit").len(), 1, "the upload's only");
+}
+
+#[tokio::test]
+async fn a_lease_takeover_is_bound_into_the_version_with_its_commit() {
+    use filesquid_ocfl::write::VersionReservations;
+    let rig = FilesRig::with_files(&[("a.txt", b"alpha")]).await;
+    with_provenance(&rig);
+    let next = filesquid_ocfl::inventory::VersionNum::parse("v2").expect("v2");
+    rig.leases
+        .reserve(OBJECT, &next, "stalled")
+        .await
+        .expect("a stalled writer holds v2");
+    rig.clock.advance(5 * 60_000);
+    let moving =
+        json!({ "library_id": LIBRARY, "object_id": OBJECT, "from": "a.txt", "to": "c.txt" });
+    let moved = rig.command("/api/v1/files/moves", moving).await;
+    let result = committed(&moved);
+    let id = operation_of(&moved);
+    let takeovers: Vec<JournalEntry> = rig
+        .journaled("ocfl.lease.takeover")
+        .into_iter()
+        .filter(|entry| entry.operation_id.as_deref() == Some(id.as_str()))
+        .collect();
+    assert_eq!(takeovers.len(), 1, "{takeovers:?}");
+    let version = result["version"].as_str().expect("version");
+    let object = Object::open(rig.root.as_ref(), OBJECT_ROOT)
+        .await
+        .expect("object");
+    let path = format!("provenance/{version}.journal.jsonl");
+    let size = filesquid_ocfl::view::file_details(&object, object.head(), &path)
+        .await
+        .expect("journal file")
+        .size;
+    let bytes = filesquid_ocfl::view::read_range(&object, object.head(), &path, 0, size)
+        .await
+        .expect("journal bytes");
+    let text = String::from_utf8(bytes).expect("utf-8");
+    assert!(text.contains("ocfl.lease.takeover"), "{text}");
+    let bound_id = takeovers[0].id.expect("an id allocated before the commit");
+    assert!(text.contains(&format!("\"id\":{bound_id}")), "{text}");
+}
+
+#[tokio::test]
+async fn a_stale_empty_staging_index_never_gives_a_move_an_older_base() {
+    use filesquid_ocfl::change::{ChangeModel, StagingArea};
+    let rig = FilesRig::with_files(&[("a.txt", b"alpha")]).await;
+    with_provenance(&rig);
+    let backend = filesquid_ocfl::storage::FsBackend::new(
+        rig.dir.join("api-staging"),
+        rig.dir.join("api-staging-parts"),
+    )
+    .expect("staging backend");
+    let prefix = filesquid_api::files::staging_prefix("api", OBJECT);
+    let staging = StagingArea::new(&backend, &prefix).expect("staging area");
+    let model = ChangeModel::new(
+        rig.root.as_ref(),
+        rig.leases.as_ref(),
+        "stale",
+        OBJECT_ROOT,
+        OBJECT,
+        staging,
+    );
+    // A rename and its undo leave an index with no changes on the base v1.
+    model.stage_rename("a.txt", "z.txt").await.expect("stage");
+    model.stage_rename("z.txt", "a.txt").await.expect("undo");
+    assert!(model.status().await.expect("status").changes.is_empty());
+    rig.commit(&[("a.txt", b"bravo!")]).await;
+    let moving =
+        json!({ "library_id": LIBRARY, "object_id": OBJECT, "from": "a.txt", "to": "c.txt" });
+    let moved = rig.command("/api/v1/files/moves", moving).await;
+    let result = committed(&moved);
+    let object = Object::open(rig.root.as_ref(), OBJECT_ROOT)
+        .await
+        .expect("object");
+    let version =
+        filesquid_ocfl::inventory::VersionNum::parse(result["version"].as_str().expect("v"))
+            .expect("version");
+    let state = object.state(&version).expect("state");
+    let moved_file = state.get("c.txt").expect("the moved file");
+    assert_eq!(
+        moved_file.digest,
+        files_fixture::digest(b"bravo!"),
+        "the head's content"
+    );
 }

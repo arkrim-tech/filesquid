@@ -24,7 +24,10 @@
 //!   and a file object's stored original never moves. Each one
 //!   publishes exactly one version through the `filesquid-ocfl` change model, or is refused
 //!   without publishing (nothing would change, another change is staged, the head is
-//!   incomplete); there is no second write path (API-S-008). An upload creates the file's own
+//!   incomplete); there is no second write path (API-S-008). Move and remove stage their
+//!   renames and removals on the change model themselves rather than through
+//!   `filesquid_ocfl::view`, because their commit writes version-bound files (the PROV-O
+//!   record and journal entries of API-S-028), which the view writes do not take. An upload creates the file's own
 //!   object `files/<file-id>` with its original and metadata record, or a new version of it
 //!   (Task API-F1.4, API-S-026). Creating a folder writes nothing: OCFL stores no empty folder, so a new
 //!   folder stays pending in the client until a file is added beneath it.
@@ -49,8 +52,9 @@
 //!   and per library. No route deletes, expires or thins a version.
 //! - **Journal.** Every refusal is journaled once (an authorisation refusal as
 //!   `api.auth.denied`, any other as the operation with outcome `failed` and its code), and
-//!   every published version as the operation with opaque IDs only; successful reads are not
-//!   journaled (API-S-017).
+//!   every published version as `ocfl.commit` and the operation with opaque IDs only, plus
+//!   `metadata.edit` for a write of a metadata record (API-S-028, [`Committed`]); successful
+//!   reads are not journaled (API-S-017).
 //!
 //! The host injects each library's storage root, reservations and staging backend
 //! ([`FileLibrary`]) into a [`FileService`]; this module does no storage I/O of its own

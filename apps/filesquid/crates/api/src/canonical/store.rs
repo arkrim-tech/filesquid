@@ -331,7 +331,8 @@ fn published(result: Result<CommitReceipt, ChangeError>) -> Result<CommitReceipt
 /// record must extend it and add the import entries that cite these bytes
 /// ([`check_new_original`]). Committing the head's original and record again writes no
 /// version and answers `None`, as [`commit_snapshot`] does for an unchanged state. `meta`
-/// may bind files to the version ([`BoundMeta`]), written in that same version.
+/// may bind files to the version ([`BoundMeta`]), written in that same version after the
+/// journal-file checks and through `transform`, as [`commit_snapshot_with`] does.
 ///
 /// # Errors
 /// As [`commit_snapshot`]; [`CanonicalError::InvalidIdentifier`] for a file identifier that
@@ -364,7 +365,9 @@ where
     let sealed = transform.seal(&companion, encode_record(record))?;
     model.stage_bytes(&companion, &sealed).await?;
     let span = super::message::commit_span(meta.message.as_deref());
-    match model.commit_with(meta, bound).instrument(span).await {
+    let sealed = bound.map(|inner| Sealed { inner, transform });
+    let sealed = sealed.as_ref().map(|s| s as &dyn VersionBoundFiles);
+    match model.commit_with(meta, sealed).instrument(span).await {
         Err(ChangeError::NothingToCommit) => Ok(None),
         result => published(result).map(Some),
     }

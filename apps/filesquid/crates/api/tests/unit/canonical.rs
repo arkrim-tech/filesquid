@@ -7,9 +7,9 @@ use filesquid_api::canonical::{
     commit_file_original, commit_snapshot, copy_record, create_storage_root, file_object_id,
     file_object_root, new_upload_record, operation_message, outgoing_name, parse_operation_message,
     read_file_original, read_snapshot, reupload_record, snapshot_object_id, source_reference,
-    touched, CanonicalError, CopyInput, FileOriginal, LibraryHead, OperationRecord, OutgoingNames,
-    OwnerReadable, SnapshotDelta, SnapshotEntity, SnapshotFile, SnapshotKey, UploadInput,
-    VirtualEntry, SNAPSHOT_ROOT,
+    touched, BoundMeta, CanonicalError, CopyInput, FileOriginal, LibraryHead, OperationRecord,
+    OutgoingNames, OwnerReadable, SnapshotDelta, SnapshotEntity, SnapshotFile, SnapshotKey,
+    UploadInput, VirtualEntry, MAX_JOURNAL_LINES, SNAPSHOT_ROOT,
 };
 use filesquid_api::library::{CatalogChange, CatalogError, FileState, LibraryRecord};
 use filesquid_core::{
@@ -21,7 +21,9 @@ use filesquid_metadata::import::NameForm;
 use filesquid_ocfl::change::{ChangeModel, StagingArea, VersionMeta};
 use filesquid_ocfl::read::Object;
 use filesquid_ocfl::storage::{complete_immediately, MemoryBackend};
-use filesquid_ocfl::write::{LeaseConfig, LeaseStore, SystemClock};
+use filesquid_ocfl::write::{
+    BoundContext, LeaseConfig, LeaseStore, SystemClock, VersionBoundFiles,
+};
 
 const LIB: &str = "0b0f8a52-3f0e-4c4b-9a59-5b3c0e7d1a01";
 const CREATED: &str = "2026-10-19T00:00:00.000Z";
@@ -465,6 +467,65 @@ fn a_file_original_is_its_own_object_with_its_metadata_record() {
         again.unwrap().is_none(),
         "the same original and record write no version"
     );
+}
+
+/// Bound files of a commit: a journal of `lines` entries for the reserved version.
+struct BoundJournal {
+    lines: usize,
+}
+
+impl VersionBoundFiles for BoundJournal {
+    fn files(
+        &self,
+        context: &BoundContext<'_>,
+    ) -> Result<std::collections::BTreeMap<String, Vec<u8>>, String> {
+        let path = format!("provenance/{}.journal.jsonl", context.version);
+        Ok([(path, "{}\n".repeat(self.lines).into_bytes())].into())
+    }
+}
+
+#[test]
+fn a_file_originals_bound_files_pass_the_journal_checks() {
+    let rig = Rig::new();
+    let file = FileId::new(FILE).unwrap();
+    let record = first_record(&file, "IMG_0001.JPG", "image/jpeg", JPEG).unwrap();
+    let root = file_object_root(&file).unwrap();
+    let model = rig.model(&root, &file_object_id(&file));
+    let too_long = BoundJournal {
+        lines: MAX_JOURNAL_LINES + 1,
+    };
+    let committed = BoundMeta {
+        meta: meta(&record_of("op-11")),
+        bound: Some(&too_long),
+    };
+    let refused = ready(commit_file_original(
+        &model,
+        &OwnerReadable,
+        &file,
+        &record,
+        None,
+        JPEG,
+        committed,
+    ));
+    assert!(refused.is_err(), "a journal no replay can read is refused");
+    let one = BoundJournal { lines: 1 };
+    let committed = BoundMeta {
+        meta: meta(&record_of("op-12")),
+        bound: Some(&one),
+    };
+    let receipt = ready(commit_file_original(
+        &model,
+        &OwnerReadable,
+        &file,
+        &record,
+        None,
+        JPEG,
+        committed,
+    ))
+    .unwrap()
+    .expect("a new version");
+    let journal = format!("provenance/{}.journal.jsonl", receipt.version);
+    assert!(head_paths(&rig, &file).contains(&journal));
 }
 
 #[test]

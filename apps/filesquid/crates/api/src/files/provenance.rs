@@ -296,14 +296,20 @@ fn own_entries(write: &Write<'_>) -> Vec<JournalEntry> {
     entries
 }
 
-/// The recorder of `operation`, with its `ocfl.commit` entry ID and the IDs of the `own`
-/// entries, allocated from the journal store before the commit.
+/// Journal IDs a commit allocates besides its operation's own entries: the `ocfl.commit`
+/// entry's and the `ocfl.lease.takeover` warning's, used only when the commit takes over a
+/// held reservation.
+const COMMIT_IDS: usize = CommitRecorder::JOURNAL_IDS + 1;
+
+/// The recorder of `operation`, with the IDs of its `ocfl.commit` entry, its possible
+/// takeover warning and the `own` entries, allocated from the journal store before the
+/// commit so all of them can ride the version.
 fn recorder_of(
     provenance: &FileProvenance,
     operation: &CommitOperation,
     own: &[JournalEntry],
 ) -> Result<CommitRecorder, FileError> {
-    let count = CommitRecorder::JOURNAL_IDS + own.len();
+    let count = COMMIT_IDS + own.len();
     let ids = provenance
         .ids
         .allocate_ids(count)
@@ -312,14 +318,15 @@ fn recorder_of(
         .ok_or_else(|| FileError::unavailable("no journal ids for the commit record"))?;
     let entries = own
         .iter()
-        .zip(&ids[CommitRecorder::JOURNAL_IDS..])
+        .zip(&ids[COMMIT_IDS..])
         .map(|(entry, id)| {
             let mut entry = entry.clone();
             entry.id = Some(*id);
             entry
         })
         .collect();
-    let recorder = CommitRecorder::new(provenance.context.clone(), operation.clone(), ids[0]);
+    let recorder = CommitRecorder::new(provenance.context.clone(), operation.clone(), ids[0])
+        .with_takeover_id(ids[1]);
     Ok(recorder.with_entries(entries))
 }
 
@@ -350,6 +357,10 @@ where
 
 /// Discard what `model` has staged after a refused write, so the next write starts clean;
 /// a failure to do so is logged. Storage I/O.
+///
+/// Only this write's changes are there to discard: [`require_clean`] found the staging area
+/// empty and cleared it, and the caller holds the library's write lock from that check to
+/// this cleanup, so no other writer of this host staged in between.
 pub(super) async fn discard_staging<B, R, S>(model: &ChangeModel<'_, B, R, S>)
 where
     B: StorageBackend,
@@ -361,8 +372,10 @@ where
     }
 }
 
-/// Refuse, as a `conflict`, a write to an object whose staging area holds another change.
-/// Reads the staging area.
+/// Refuse, as a `conflict`, a write to an object whose staging area holds another change;
+/// otherwise clear the staging area, so an index left without changes (for example by a
+/// published commit that could not clear it) never gives this write an older base than the
+/// head. The caller holds the library's write lock. Storage I/O.
 pub(super) async fn require_clean<B, R, S>(
     model: &ChangeModel<'_, B, R, S>,
 ) -> Result<(), FileError>
@@ -371,10 +384,11 @@ where
     R: VersionReservations,
     S: StorageBackend,
 {
-    match model.status().await?.changes.is_empty() {
-        true => Ok(()),
-        false => Err(FileError::conflict(
+    if !model.status().await?.changes.is_empty() {
+        return Err(FileError::conflict(
             "Another change to this object is in progress; try again when it has finished.",
-        )),
+        ));
     }
+    model.reset().await?;
+    Ok(())
 }
