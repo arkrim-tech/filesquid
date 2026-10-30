@@ -124,6 +124,17 @@ pub struct UploadQuery {
     /// The version label, 1 to [`super::MAX_MESSAGE_BYTES`] bytes, not blank, without control
     /// characters: the `label` member of the version's `filesquid.operation.v1` message.
     pub message: Option<String>,
+    /// The destination collection, a collection of the library (API-S-011 **Destination**).
+    /// Required: an upload without it is refused (`destination_required`).
+    pub collection_id: Option<String>,
+    /// The destination folder inside the collection, a collection logical path; the
+    /// collection's root when absent.
+    pub folder: Option<String>,
+    /// The file ID the upload's operation reserved for a new file, so a retry after a crash
+    /// completes the same file once. Set by the route, never read from or written to the
+    /// wire.
+    #[serde(skip)]
+    pub reserved_file_id: Option<String>,
 }
 
 /// The answer to an upload: the version it published in the file's object.
@@ -139,6 +150,13 @@ pub struct UploadView {
     pub version: String,
     /// When it was created (RFC 3339 UTC).
     pub created: String,
+    /// The file's home collection.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub collection_id: Option<String>,
+    /// The file's collection logical path: the one asked for, or the numbered path beside a
+    /// taken one that it got (API-S-011 **Same logical path**).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
 }
 
 /// Body of `POST /api/v1/files/folders`.

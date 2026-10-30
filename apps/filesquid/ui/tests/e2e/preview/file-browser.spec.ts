@@ -8,7 +8,7 @@
  */
 import { expect, test, type Page } from "@playwright/test";
 import { MemoryFileSource } from "../../../src/files/memory-source";
-import { PNG, WEBM, serveFiles, wav, type FilesApi } from "../support/files-api";
+import { COLLECTION, PNG, WEBM, serveFiles, wav, type FilesApi } from "../support/files-api";
 import {
   activeLabels,
   expectElementsDefined,
@@ -352,11 +352,26 @@ test("the viewer steps through files, closes with Escape and returns focus to th
   await expect(page.getByRole("button", { name: "model-export.blend" })).toBeFocused();
 });
 
+/**
+ * Tell the shown browser which collection it is in, as the collection route of UI-F2.17 will:
+ * the hash route names an object and a folder only, so the collection comes through the
+ * element's own `location`. The folder shown is then a folder of that collection.
+ */
+async function showCollection(page: Page): Promise<void> {
+  await page.locator("fs-file-browser").evaluate((element, collection) => {
+    const browser = element as unknown as {
+      location: { library_id: string; object_id: string; prefix: string };
+    };
+    browser.location = { ...browser.location, collection_id: collection } as never;
+  }, COLLECTION);
+}
+
 test("an upload is one PUT of the client's facts that creates the file's own object", async ({
   page,
 }) => {
   const errors = trackErrors(page);
   const api = await open(page);
+  await showCollection(page);
   await page.locator("fs-file-browser input[type=file]").setInputFiles({
     name: "Café scan.pdf",
     mimeType: "application/pdf",
@@ -369,6 +384,7 @@ test("an upload is one PUT of the client's facts that creates the file's own obj
   expect(api.uploads).toEqual([
     {
       library_id: "lib",
+      collection_id: COLLECTION,
       name: "Café scan.pdf",
       size: "9",
       media_type: "application/pdf",
@@ -381,6 +397,58 @@ test("an upload is one PUT of the client's facts that creates the file's own obj
   ]);
   expect(api.source.head).toBe("v1");
   await expect(page.getByRole("button", { name: "readme.txt" })).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
+test("an upload inside a folder of the collection names that folder", async ({ page }) => {
+  const errors = trackErrors(page);
+  const api = await open(page, fixture(), "#/files/lib/obj/Contracts");
+  await showCollection(page);
+  await page.locator("fs-file-browser input[type=file]").setInputFiles({
+    name: "annex.pdf",
+    mimeType: "application/pdf",
+    buffer: Buffer.from("%PDF-annex"),
+  });
+  await expect(page.locator("fs-file-browser .frame > .status")).toHaveText(
+    fill("fileUploaded", { count: "1", version: "v1" }),
+  );
+  expect(api.uploads).toHaveLength(1);
+  expect(api.uploads[0]).toMatchObject({ collection_id: COLLECTION, folder: "Contracts" });
+  expect(api.source.uploads).toEqual([
+    expect.objectContaining({ collection_id: COLLECTION, path: "Contracts/annex.pdf" }),
+  ]);
+  expect(errors).toEqual([]);
+});
+
+test("where no collection is shown an upload is refused before any dialog or request, in light and dark", async ({
+  page,
+}) => {
+  const errors = trackErrors(page);
+  let dialogs = 0;
+  page.on("filechooser", () => (dialogs += 1));
+  const reason = label(labels, "fileUploadDisabledReason");
+  for (const scheme of ["light", "dark"] as const) {
+    await setScheme(page, scheme);
+    const api = await open(page, fixture(), "#/files/lib/obj/Contracts");
+    await page.getByRole("button", { name: label(labels, "fileUpload") }).click();
+    const alert = page.locator("fs-file-browser .frame > .alert");
+    await expect(alert).toHaveText(reason);
+    expect(await alert.evaluate((el) => getComputedStyle(el).color)).toBe(
+      await tokenColour(page, "--fs-error"),
+    );
+    // Files that reach the hidden input some other way are refused the same, with no request.
+    await page.locator("fs-file-browser input[type=file]").setInputFiles({
+      name: "stray.pdf",
+      mimeType: "application/pdf",
+      buffer: Buffer.from("%PDF-stray"),
+    });
+    await expect(alert).toHaveText(reason);
+    await expect(page.locator("fs-file-browser .frame > .status")).toHaveText("");
+    expect(api.uploads).toEqual([]);
+    expect(api.writes).toEqual([]);
+    expect(api.source.uploads).toEqual([]);
+  }
+  expect(dialogs).toBe(0);
   expect(errors).toEqual([]);
 });
 

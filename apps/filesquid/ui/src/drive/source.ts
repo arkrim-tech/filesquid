@@ -78,24 +78,30 @@ function validRow(row: unknown): row is ViewRow {
  *
  * @param value The parsed answer.
  * @param libraryId The library the rows belong to, when known (the rows do not name it).
+ * @param path The route the answer came from, named in the error (the search operation answers
+ *   the same row shape, UI-F2.9).
  * @returns The page.
  * @throws TypeError when the answer breaks the contract.
  */
-export function parseViewPage(value: unknown, libraryId?: string): DrivePage {
+export function parseViewPage(
+  value: unknown,
+  libraryId?: string,
+  path: string = VIEW_PATH,
+): DrivePage {
   if (!isRecord(value) || !Array.isArray(value.rows)) {
-    throw new TypeError(`${VIEW_PATH} answered a value that breaks the contract`);
+    throw new TypeError(`${path} answered a value that breaks the contract`);
   }
   const answer = value as unknown as ViewPage;
   if (!answer.rows.every(validRow)) {
-    throw new TypeError(`${VIEW_PATH} answered a row that breaks the contract`);
+    throw new TypeError(`${path} answered a row that breaks the contract`);
   }
   const cursor = answer.next_cursor;
   if (cursor !== null && typeof cursor !== "string") {
-    throw new TypeError(`${VIEW_PATH} answered a next_cursor that is not text or null`);
+    throw new TypeError(`${path} answered a next_cursor that is not text or null`);
   }
   // A page that does not say whether the view is whole must not look whole.
   if (typeof answer.complete !== "boolean") {
-    throw new TypeError(`${VIEW_PATH} answered no boolean complete`);
+    throw new TypeError(`${path} answered no boolean complete`);
   }
   return {
     rows: answer.rows.map((row) => driveRow(row, libraryId)),

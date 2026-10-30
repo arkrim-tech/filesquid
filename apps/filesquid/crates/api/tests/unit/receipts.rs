@@ -9,7 +9,7 @@ use std::sync::Arc;
 /// The fingerprint of a move of `from` in library `lib`.
 fn moving(from: &str) -> Fingerprint {
     Fingerprint {
-        route: "files.move",
+        route: "file.move",
         library_id: "lib".to_string(),
         input: json!({ "from": from, "to": "b.txt" }),
     }

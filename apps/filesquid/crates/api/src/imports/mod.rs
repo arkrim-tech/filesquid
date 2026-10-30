@@ -66,11 +66,7 @@ pub const IMPORT_DISCARD_OPERATION: &str = "import.discard";
 /// Journal operation of a refused read of a plan's items.
 pub const IMPORT_PLAN_ITEMS_OPERATION: &str = "import.plan_items";
 
-/// Journal error code of a request that names no destination collection.
-pub const DESTINATION_REQUIRED: &str = "destination_required";
-
-/// Journal error code of a destination collection that is unknown or of another library.
-pub const COLLECTION_NOT_FOUND: &str = "collection_not_found";
+pub use crate::home::destination::{COLLECTION_NOT_FOUND, DESTINATION_REQUIRED};
 
 /// Journal and API error code of an unknown, expired or discarded plan.
 pub const PLAN_NOT_FOUND: &str = "plan_not_found";

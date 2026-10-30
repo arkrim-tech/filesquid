@@ -13,7 +13,8 @@ use super::error::FileError;
 use super::provenance::{label_of, Caller, Committed, Write};
 use super::service::{change_model, read, FileService};
 use super::statements::metadata_error;
-use super::upload::{canonical_error, mint_file_id, parse_file_id};
+use super::upload::{canonical_error, committed_before, mint_file_id, parse_file_id};
+use super::view::UploadView;
 use super::COPY_OPERATION;
 use crate::canonical::{
     commit_file_original, copy_record, file_object_id, file_object_root, read_file_original,
@@ -42,10 +43,21 @@ pub struct CopyRequest {
     pub library_id: String,
     /// The file to copy, at its head.
     pub file_id: String,
-    /// Optional version label of the copy's first version, 1 to [`super::MAX_MESSAGE_BYTES`]
-    /// bytes, not blank, without control characters.
+    /// Optional version message of the copy's first version.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
+    /// The destination collection, a collection of the library (API-S-011 **Destination**).
+    /// Required: a copy without it is refused (`destination_required`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub collection_id: Option<String>,
+    /// The destination folder inside the collection, a collection logical path; the
+    /// collection's root when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub folder: Option<String>,
+    /// The file ID the copy's operation reserved, so a retry after a crash completes the same
+    /// copy once. Set by the route, never read from or written to the wire.
+    #[serde(skip)]
+    pub reserved_file_id: Option<String>,
 }
 
 /// The copy a copy request made.
@@ -63,6 +75,13 @@ pub struct CopyView {
     pub created: String,
     /// The source's object version, `urn:uuid:<file-id>@vN`: the record's `dcterms:source`.
     pub source: String,
+    /// The copy's home collection.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub collection_id: Option<String>,
+    /// The copy's collection logical path: the one asked for, or the numbered path beside a
+    /// taken one that it got (API-S-011 **Same logical path**).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
 }
 
 /// The source of one copy: its head record and bytes.
@@ -79,6 +98,23 @@ where
     R: VersionReservations,
     S: StorageBackend,
 {
+    /// The display name a copy of the file `file_id` of `library_id` takes: its head
+    /// record's. Storage I/O.
+    ///
+    /// # Errors
+    /// `invalid_request` for a malformed file ID; `not_found` for an unknown library or file;
+    /// a storage failure otherwise.
+    pub async fn copy_name(&self, library_id: &str, file_id: &str) -> Result<String, FileError> {
+        let file_id = parse_file_id(file_id)?;
+        let library = self.library(library_id)?;
+        let backend = library.files.backend.as_ref();
+        let original = read_file_original(backend, &OwnerReadable, &file_id)
+            .await
+            .map_err(copy_error)?
+            .ok_or_else(FileError::not_found)?;
+        Ok(original.record.display_name().to_string())
+    }
+
     /// Copy the file `request.file_id` at its head by `caller` into a new file, in one commit
     /// linked to the journal ([`super::Committed`]).
     ///
@@ -102,8 +138,16 @@ where
         let registry = self.registry(&request.library_id).await?;
         let _writing = library.writes.lock().await;
         let backend = library.files.backend.as_ref();
+        let file_id = match copy_target(backend, &request).await? {
+            CopyTarget::New(file_id) => file_id,
+            CopyTarget::Committed(view) => {
+                return Ok(Committed {
+                    view,
+                    entries: Vec::new(),
+                })
+            }
+        };
         let source = read_source(backend, source_id, expected).await?;
-        let file_id = mint_file_id()?;
         let reference = source_reference(&source.file_id, &source.version);
         let record = self.copied_record(&file_id, &source, &registry, &reference)?;
         let root = file_object_root(&file_id).map_err(copy_error)?;
@@ -145,6 +189,8 @@ where
             version: receipt.version.to_string(),
             created: receipt.created.clone(),
             source: reference,
+            collection_id: None,
+            path: None,
         };
         Ok(prepared.finish(view, &receipt))
     }
@@ -224,5 +270,69 @@ fn copy_error(err: CanonicalError) -> FileError {
             FileError::invalid(format!("The copy was refused: {reason}."))
         }
         other => canonical_error(other),
+    }
+}
+
+/// The answer of a copy an earlier, unfinished run of the same operation already committed:
+/// its object's head, citing the source its record names (`dcterms:source`). Storage I/O.
+///
+/// # Errors
+/// `internal` for a committed copy whose record names no source; a storage failure.
+async fn resumed_copy<B: StorageBackend>(
+    backend: &B,
+    done: UploadView,
+) -> Result<CopyView, FileError> {
+    let file_id = parse_file_id(&done.file_id)?;
+    let original = read_file_original(backend, &OwnerReadable, &file_id)
+        .await
+        .map_err(copy_error)?
+        .ok_or_else(|| FileError::internal("a committed copy has no record"))?;
+    let source = original
+        .record
+        .statements()
+        .get(&format!("dcterms:{SOURCE_TERM}"))
+        .map(|statement| statement.value.clone())
+        .ok_or_else(|| FileError::internal("a committed copy names no source"))?;
+    Ok(CopyView {
+        library_id: done.library_id,
+        file_id: done.file_id,
+        object_id: done.object_id,
+        version: done.version,
+        created: done.created,
+        source,
+        collection_id: None,
+        path: None,
+    })
+}
+
+/// The file a copy writes.
+enum CopyTarget {
+    /// A file not committed yet: its reserved ID, or a freshly minted one.
+    New(FileId),
+    /// The copy an earlier, unfinished run of the same operation already committed, answered
+    /// as it was made (its source is the one its record names), so a retry completes it even
+    /// when the source changed since.
+    Committed(CopyView),
+}
+
+/// The file `request` writes: what its operation's reserved ID already committed, else that
+/// ID, else a freshly minted one. Storage I/O.
+///
+/// # Errors
+/// `invalid_request` for a reserved ID that is not a UUID v4; a storage failure.
+async fn copy_target<B: StorageBackend>(
+    backend: &B,
+    request: &CopyRequest,
+) -> Result<CopyTarget, FileError> {
+    let reserved = request
+        .reserved_file_id
+        .as_deref()
+        .map(parse_file_id)
+        .transpose()?;
+    let committed = committed_before(backend, &request.library_id, reserved.as_ref()).await?;
+    match (committed, reserved) {
+        (Some(done), _) => resumed_copy(backend, done).await.map(CopyTarget::Committed),
+        (None, Some(id)) => Ok(CopyTarget::New(id)),
+        (None, None) => mint_file_id().map(CopyTarget::New),
     }
 }
