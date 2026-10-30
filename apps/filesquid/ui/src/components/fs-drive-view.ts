@@ -8,6 +8,13 @@
  * remove with Undo, move or copy through the shared destination picker, and the Download as ZIP
  * dialog within its caps. The Recent view groups rows by day and has a fixed order.
  *
+ * Search (UI-F2.9, UI-S-030): given a {@link SearchRequest} the same view lists the results of
+ * the search operation, always as the list. The order starts at relevance and a column head
+ * replaces it for this search only (the Drive views' saved sort is left alone); the scope and
+ * count chips sit under the title, and a refusal (an operator the host cannot answer, or one that
+ * is not in the grammar) takes the list's place with the box that names it. While the sidebar
+ * filter holds text, the same chips name the view the filter narrows.
+ *
  * The choices that survive a restart (layout, sort, folder placement, hover card) are the
  * per-user preferences of {@link PreferencesService}; a change is applied at once and saved
  * through the API. Every name shown is the API's display name (UI-S-019): no name, path or stored
@@ -35,11 +42,14 @@ import {
   nextSort,
   scopeText,
   zipCheck,
+  type DrivePage,
   type DriveRow,
   type ViewQuery,
 } from "../drive/model";
 import { Selection } from "../drive/selection";
 import type { ViewSource } from "../drive/source";
+import { nextSearchSort, refusalOf, zoneOf, type SearchRefusal } from "../search/model";
+import type { SearchQuery, SearchSort, SearchSource } from "../search/source";
 import { formatSize } from "../files/model";
 import type { NavigationSource } from "../navigation/model";
 import { navigationHref } from "../navigation/model";
@@ -62,6 +72,13 @@ import {
   zipDialog,
 } from "./drive-dialogs";
 import { itemEntries, sortEntries } from "./drive-entries";
+import {
+  STYLE as SEARCH_STYLE,
+  chipNodes,
+  countChipText,
+  refusalNodes,
+  resultCountText,
+} from "./drive-search";
 import { DriveList, type DriveItem, type DriveListHooks } from "./drive-list";
 import { STYLE as MENU_STYLE, openMenu, type MenuAnchor, type OpenMenu } from "./drive-menu";
 import { STYLE as ROW_STYLE } from "./drive-row-view";
@@ -92,6 +109,8 @@ export interface DriveViewOptions {
   readonly files?: DriveFiles;
   /** The navigation listing the destination picker reads. */
   readonly navigation?: NavigationSource;
+  /** Reads search results; without it a view cannot be put in search mode. */
+  readonly search?: SearchSource;
   /** Streams a ZIP; without it the dialog says the download is not available. */
   readonly zip?: ZipDownload;
   /** The route of a folder row; defaults to the navigation route. */
@@ -102,9 +121,21 @@ export interface DriveViewOptions {
   readonly now?: () => Date;
 }
 
+/** What a search shows: the query, the node it runs in and the name of that scope's chip. */
+export interface SearchRequest {
+  /** The query (free text and operators). */
+  readonly q: string;
+  /** The library, collection or virtual-collection node searched. */
+  readonly node: string;
+  /** The scope's name, for the chip "In: {name}". */
+  readonly scope: string;
+}
+
 const STYLE = `
   :host { display: flex; flex-direction: column; block-size: 100%; min-block-size: 0; min-width: 0; color: var(--fs-on-surface); font-family: var(--fs-font-sans); font-size: var(--fs-font-size-ui); }
   :host([hidden]) { display: none; }
+  :host([data-search]) { --fs-search-lift: -0.5rem; }
+  :host([data-search]) .top { margin-block-start: var(--fs-search-lift); }
   .view { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; min-width: 0; }
   .top { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: var(--fs-space-3); margin-block-end: var(--fs-space-2); }
   .top .page-title { flex: 1 1 auto; min-width: 0; }
@@ -124,6 +155,9 @@ const STYLE = `
   .hover-card { position: fixed; z-index: 4; box-sizing: border-box; max-inline-size: 18rem; padding: var(--fs-space-2) var(--fs-space-3); border: 1px solid var(--fs-outline-strong); border-radius: var(--fs-radius); background: var(--fs-surface-overlay); font-size: var(--fs-font-size-small); color: var(--fs-on-surface); overflow-wrap: anywhere; }
   [hidden] { display: none !important; }
 `;
+
+/** The order a search starts in. */
+const RELEVANCE = { sort: "relevance", direction: "descending" } as const;
 
 /** Rows shown as placeholders while the first page loads (mockup 33). */
 const PLACEHOLDER_ROWS = 10;
@@ -157,6 +191,10 @@ export class FsDriveView extends HTMLElement {
   private applied = "";
   private hoverTimer?: number;
   private summaryText = "";
+  private request?: SearchRequest;
+  private searchSort: { sort: SearchSort; direction: SortDirection } = RELEVANCE;
+  /** Whether the rows shown are an answer, so the count chip may say how many there are. */
+  private counted = false;
   private readonly onPreferences = () => this.preferencesChanged();
 
   constructor() {
@@ -181,7 +219,12 @@ export class FsDriveView extends HTMLElement {
     this.actions = options.files ? new DriveActions(options.files) : undefined;
     options.preferences.addEventListener("change", this.onPreferences);
     this.build();
-    if (this.target.node !== "") void this.reload();
+    if (this.canRead()) void this.reload();
+  }
+
+  /** Whether there is something to read: a node, or a search. */
+  private canRead(): boolean {
+    return this.request !== undefined || this.target.node !== "";
   }
 
   /** The page title: the node's name. */
@@ -194,6 +237,35 @@ export class FsDriveView extends HTMLElement {
     this.titleText = text;
     const title = this.shadowRoot?.querySelector(".page-title");
     if (title) title.textContent = text;
+    if (this.options) this.drawChips();
+  }
+
+  /** The search the view shows, or undefined while it shows a node's view. */
+  get search(): SearchRequest | undefined {
+    return this.request;
+  }
+
+  /**
+   * Show the results of a search, or leave search mode with undefined. Leaving forgets the node,
+   * so nothing is read until the route names the node to show again (setting `node` then reads
+   * it). The order starts at relevance for each new query; the same request again is ignored.
+   */
+  set search(request: SearchRequest | undefined) {
+    const same =
+      request?.q === this.request?.q &&
+      request?.node === this.request?.node &&
+      request?.scope === this.request?.scope;
+    if (same) return;
+    if (request?.q !== this.request?.q) this.searchSort = RELEVANCE;
+    if (this.request && !request) this.target = { ...this.target, node: "" };
+    this.request = request;
+    this.toggleAttribute("data-search", request !== undefined);
+    this.chosen.clear();
+    if (!this.options) return;
+    this.configureList();
+    this.drawTools();
+    this.drawChips();
+    if (this.canRead()) void this.reload();
   }
 
   /** The node shown. */
@@ -222,7 +294,7 @@ export class FsDriveView extends HTMLElement {
     if (!this.options) return;
     this.configureList();
     this.drawTools();
-    if (this.target.node !== "") void this.reload();
+    if (this.canRead()) void this.reload();
   }
 
   /** The sidebar filter text: narrows only this view (UI-S-007). */
@@ -236,7 +308,7 @@ export class FsDriveView extends HTMLElement {
     if (clamped === this.target.filter) return;
     this.target = { ...this.target, filter: clamped };
     this.chosen.clear();
-    if (this.options && this.target.node !== "") void this.reload();
+    if (this.options && this.canRead()) void this.reload();
   }
 
   /** The footer summary or loading line now. */
@@ -267,7 +339,7 @@ export class FsDriveView extends HTMLElement {
    */
   async reload(): Promise<void> {
     const options = this.options;
-    if (!options || this.target.node === "") return;
+    if (!options || !this.canRead()) return;
     this.abort?.abort();
     const abort = new AbortController();
     this.abort = abort;
@@ -275,9 +347,7 @@ export class FsDriveView extends HTMLElement {
     this.applied = this.appliedKey();
     this.showLoading();
     try {
-      const page = await options.source.view(this.query(), null, VIEW_PAGE_SIZE, {
-        signal: abort.signal,
-      });
+      const page = await this.readPage(null, abort.signal);
       if (generation !== this.generation) return;
       this.rows = [...page.rows];
       this.cursor = page.nextCursor;
@@ -287,6 +357,33 @@ export class FsDriveView extends HTMLElement {
     } catch (error) {
       if (generation === this.generation && !abort.signal.aborted) this.fail(error);
     }
+  }
+
+  /**
+   * One page of the view, or of the search while in search mode. Network I/O via the source.
+   *
+   * @throws TypeError when the view is in search mode and was given no search source.
+   */
+  private readPage(cursor: string | null, signal?: AbortSignal): Promise<DrivePage> {
+    const options = this.options as DriveViewOptions;
+    if (!this.request) return options.source.view(this.query(), cursor, VIEW_PAGE_SIZE, { signal });
+    if (!options.search) return Promise.reject(new TypeError("This view has no search source"));
+    return options.search.search(this.searchQuery(this.request), cursor, VIEW_PAGE_SIZE, {
+      signal,
+    });
+  }
+
+  /** The query of a search: its scope, the order of this search and the caller's zone. */
+  private searchQuery(request: SearchRequest): SearchQuery {
+    const options = this.options as DriveViewOptions;
+    return {
+      q: request.q,
+      node: request.node,
+      sort: this.searchSort.sort,
+      direction: this.searchSort.direction,
+      folders: options.preferences.preferences.folder_placement,
+      zone: zoneOf((options.now ?? (() => new Date()))()),
+    };
   }
 
   /** The query for the node, the view and the saved sort. */
@@ -303,16 +400,20 @@ export class FsDriveView extends HTMLElement {
     };
   }
 
-  /** What a re-read depends on: the sort and the folder placement. */
+  /**
+   * What a re-read depends on: the saved sort and the folder placement; a search has an order of
+   * its own, so only the folder placement.
+   */
   private appliedKey(): string {
     const prefs = (this.options as DriveViewOptions).preferences.preferences;
+    if (this.request) return prefs.folder_placement;
     return [prefs.sort_key, prefs.sort_direction, prefs.folder_placement].join("|");
   }
 
   /** The preferences changed: read again for a new sort, redraw for a new layout. */
   private preferencesChanged(): void {
     if (!this.list) return;
-    if (this.appliedKey() !== this.applied && this.target.node !== "") {
+    if (this.appliedKey() !== this.applied && this.canRead()) {
       this.configureList();
       this.drawTools();
       void this.reload();
@@ -328,7 +429,8 @@ export class FsDriveView extends HTMLElement {
     const root = this.shadowRoot as ShadowRoot;
     const options = this.options as DriveViewOptions;
     const style = document.createElement("style");
-    style.textContent = A11Y_STYLE + CONTROL_STYLE + STYLE + ROW_STYLE + MENU_STYLE + DIALOG_STYLE;
+    style.textContent =
+      A11Y_STYLE + CONTROL_STYLE + STYLE + SEARCH_STYLE + ROW_STYLE + MENU_STYLE + DIALOG_STYLE;
     const view = document.createElement("div");
     view.className = "view";
     const top = document.createElement("header");
@@ -352,12 +454,18 @@ export class FsDriveView extends HTMLElement {
       rtl: () => getComputedStyle(this).direction === "rtl",
       hooks: this.hooks(),
     });
+    const chips = document.createElement("div");
+    chips.className = "chips";
+    const refused = document.createElement("div");
+    refused.className = "refused";
+    refused.hidden = true;
     const layer = document.createElement("div");
     layer.className = "layer";
-    view.append(top, states, this.list.element, layer);
+    view.append(top, chips, states, refused, this.list.element, layer);
     root.replaceChildren(style, view);
     this.configureList();
     this.drawTools();
+    this.drawChips();
     if (this.isConnected) this.list.connect();
   }
 
@@ -372,25 +480,35 @@ export class FsDriveView extends HTMLElement {
     return (this.shadowRoot as ShadowRoot).querySelector(selector) as T;
   }
 
-  /** The layout now: always the list in Recent, else the saved layout. */
+  /** The layout now: always the list in Recent and in search results, else the saved layout. */
   private layout(): Layout {
-    if (this.target.view === "recent") return "list";
+    if (this.target.view === "recent" || this.request) return "list";
     return (this.options as DriveViewOptions).preferences.preferences.layout;
+  }
+
+  /** The sort the column heads show: this search's own, the saved one, or none in Recent. */
+  private listSort(): { sort: SearchSort; direction: SortDirection } | undefined {
+    if (this.request) return this.searchSort;
+    if (this.target.view === "recent") return undefined;
+    const prefs = (this.options as DriveViewOptions).preferences.preferences;
+    return { sort: prefs.sort_key, direction: prefs.sort_direction };
   }
 
   /** Give the list its layout, its sort and the Recent mode. */
   private configureList(): void {
-    const prefs = (this.options as DriveViewOptions).preferences.preferences;
-    const recent = this.target.view === "recent";
-    const sort = recent ? undefined : { sort: prefs.sort_key, direction: prefs.sort_direction };
-    this.list?.configure(this.layout(), sort, recent);
+    const recent = this.target.view === "recent" && !this.request;
+    this.list?.configure(this.layout(), this.listSort(), recent);
   }
 
-  /** Draw the layout control and the sort button or the Recent note. */
+  /** Draw the layout control and the sort button or the Recent note; a search has neither. */
   private drawTools(): void {
     const options = this.options as DriveViewOptions;
     const { labels } = options;
     const tools = this.piece(".tools");
+    if (this.request) {
+      tools.replaceChildren();
+      return;
+    }
     const recent = this.target.view === "recent";
     if (recent) {
       const note = document.createElement("p");
@@ -463,14 +581,26 @@ export class FsDriveView extends HTMLElement {
     };
   }
 
-  /** A column head was clicked: sort by it, reversing when it is the sort now. */
+  /**
+   * A column head was clicked: sort by it, reversing when it is the sort now. In search results
+   * the order is this search's own (a third click returns to relevance) and nothing is saved.
+   */
   private sortBy(key: SortKey): void {
+    if (this.request) return this.sortSearchBy(key);
     const prefs = (this.options as DriveViewOptions).preferences;
     const next = nextSort(
       { sort: prefs.preferences.sort_key, direction: prefs.preferences.sort_direction },
       key,
     );
     prefs.update({ sort_key: next.sort, sort_direction: next.direction });
+  }
+
+  /** Order the search by a column, then ask again; the saved browsing sort is not touched. */
+  private sortSearchBy(key: SortKey): void {
+    this.searchSort = nextSearchSort(this.searchSort, key);
+    this.chosen.clear();
+    this.configureList();
+    void this.reload();
   }
 
   /** Tick a row, or the range from the last ticked row. */
@@ -783,6 +913,7 @@ export class FsDriveView extends HTMLElement {
   /** Show the placeholder rows and the loading line, keeping the header and title in place. */
   private showLoading(): void {
     const { labels } = this.options as DriveViewOptions;
+    this.counted = false;
     this.setState({ kind: "loading" }, true);
     this.list?.showPlaceholders(PLACEHOLDER_ROWS);
     this.announce(formatLabel(labels.fileLoadingName, { name: this.titleText }));
@@ -791,20 +922,39 @@ export class FsDriveView extends HTMLElement {
   /** Show the loaded rows, or the empty state. */
   private showRows(): void {
     this.chosen.retain(new Set(this.rows.map((row) => row.key)));
+    this.counted = true;
     this.drawItems();
     this.drawBulk();
-    this.setState(this.rows.length === 0 ? { kind: "empty" } : undefined, false);
+    const { labels } = this.options as DriveViewOptions;
+    const message = this.request ? labels.searchNoResults : undefined;
+    this.setState(this.rows.length === 0 ? { kind: "empty", message } : undefined, false);
+    this.drawChips();
+  }
+
+  /** Whether the Recent layout is shown (a search is never Recent). */
+  private recentMode(): boolean {
+    return this.target.view === "recent" && !this.request;
+  }
+
+  /** The footer line of search results: "3 results", with the limit note when cut short. */
+  private searchSummary(): string {
+    const { labels } = this.options as DriveViewOptions;
+    const locale = document.documentElement.lang || "en";
+    const text = resultCountText(this.rows.length, labels, locale);
+    if (this.complete) return text;
+    return `${text} · ${formatLabel(labels.fileLimitReached, { count: String(this.rows.length) })}`;
   }
 
   /** Build the list items (with day headings in Recent) and the footer summary. */
   private drawItems(): void {
     const { labels } = this.options as DriveViewOptions;
-    const recent = this.target.view === "recent";
+    const recent = this.recentMode();
     const items = recent
       ? this.recentItems()
       : this.rows.map((row) => ({ type: "row", row }) as DriveItem);
     this.list?.setItems(items, this.cursor !== null);
     const locale = document.documentElement.lang || "en";
+    if (this.request) return this.announce(this.searchSummary());
     if (recent) {
       this.announce(
         formatLabel(labels.fileRecentSummary, {
@@ -866,18 +1016,57 @@ export class FsDriveView extends HTMLElement {
     states.hidden = showList;
     if (state && !showList) states.state = state;
     (this.list as DriveList).element.hidden = !showList;
+    const refused = this.piece(".refused");
+    refused.replaceChildren();
+    refused.hidden = true;
     this.dataset.state = state?.kind ?? "ready";
   }
 
-  /** Show a failed read: view not available, gone, or the failure states. */
+  /** The chips under the title: the scope and the count of a search, or of the sidebar filter. */
+  private drawChips(): void {
+    const options = this.options;
+    if (!options) return;
+    const holder = this.piece(".chips");
+    const filtering = this.target.filter !== "" && this.request === undefined;
+    if (this.request === undefined && !filtering) return holder.replaceChildren();
+    const { labels } = options;
+    const name = this.request ? this.request.scope : this.titleText;
+    const locale = document.documentElement.lang || "en";
+    holder.replaceChildren(
+      ...chipNodes(
+        formatLabel(labels.searchScopeIn, { name }),
+        this.counted ? countChipText(this.rows, labels, locale) : undefined,
+      ),
+    );
+  }
+
+  /** Show a refused search in the list's place: the box naming the operator, and 0 results. */
+  private showRefusal(refusal: SearchRefusal): void {
+    const { labels } = this.options as DriveViewOptions;
+    const box = this.piece(".refused");
+    box.replaceChildren(...refusalNodes(labels, refusal));
+    this.piece<FsStates>("fs-states").hidden = true;
+    (this.list as DriveList).element.hidden = true;
+    box.hidden = false;
+    this.dataset.state = "refused";
+    this.counted = true;
+    this.announce(resultCountText(0, labels, document.documentElement.lang || "en"));
+    this.drawChips();
+  }
+
+  /** Show a failed read: a refused search, view not available, gone, or the failure states. */
   private fail(error: unknown): void {
     const { labels } = this.options as DriveViewOptions;
     console.warn("FileSquid could not read a view", error instanceof Error ? error.name : error);
     this.rows = [];
     this.cursor = null;
+    this.counted = false;
     this.drawBulk();
+    const refusal = this.request ? refusalOf(error, this.request.q) : undefined;
+    if (refusal) return this.showRefusal(refusal);
+    this.drawChips();
     const online = (this.options as DriveViewOptions).online ?? (() => navigator.onLine);
-    if (error instanceof ApiError && error.status === 400) {
+    if (error instanceof ApiError && error.status === 400 && !this.request) {
       return this.setState({ kind: "unavailable", reason: labels.fileViewUnavailable }, false);
     }
     if (error instanceof ApiError && error.code === "not_found") {
@@ -895,15 +1084,14 @@ export class FsDriveView extends HTMLElement {
     const generation = this.generation;
     const signal = this.abort?.signal;
     try {
-      const page = await options.source.view(this.query(), this.cursor, VIEW_PAGE_SIZE, {
-        signal,
-      });
+      const page = await this.readPage(this.cursor, signal);
       if (generation !== this.generation) return;
       this.rows = [...this.rows, ...page.rows];
       this.cursor = page.nextCursor;
       this.complete = this.complete && page.complete;
       this.pages += 1;
       this.drawItems();
+      this.drawChips();
     } catch (error) {
       // A read that was cancelled (the page was left, or a newer read began) is not a failure.
       if (generation !== this.generation || signal?.aborted) return;

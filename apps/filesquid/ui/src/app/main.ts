@@ -3,7 +3,8 @@
  * FileSquid's official brand and the internal vocabulary, talking to whichever host serves
  * this page. The navigation tree in the shell's navigation slot reads the host's live
  * navigation listing (UI-F2.1b), and `#/navigation/<node>` shows that destination with its
- * breadcrumb; `#/settings` shows the Settings page (Appearance with the theme control, Privacy,
+ * breadcrumb; the header's search bar (`<fs-search-bar>`, UI-F2.9) opens `#/search/<query>`,
+ * the results in the Drive list; `#/settings` shows the Settings page (Appearance with the theme control, Privacy,
  * About with the API status); `#/monitor` shows the Monitor dashboard, whose W010 note links to the library's repair offer;
  * `#/library` creates, opens or recovers a library and `#/library/<id>` shows it; `#/files/<library>/<object>` shows the
  * file browser until the API lists files by navigation node, with the file panel (File info and Versions) for the open file. On the desktop host the client
@@ -19,6 +20,7 @@ import {
   ClientFileSource,
   ClientPreferencesSource,
   ClientViewSource,
+  ClientSearchSource,
   singleOpenLibrary,
   ClientDownloadSource,
   ClientHistorySource,
@@ -36,6 +38,7 @@ import {
   bindNavigationRoute,
   bindSettingsRoute,
   createHostClient,
+  cachedLibraryScope,
   createThemeStore,
   defineElements,
   detectHost,
@@ -47,6 +50,7 @@ import {
   type FsAppShell,
   type FsNavTree,
   type FsNewMenu,
+  type FsSearchBar,
 } from "../index";
 import { deviceStorage } from "./device-storage";
 
@@ -84,7 +88,19 @@ const preferences = new PreferencesService({
 void preferences.start();
 const files = new ClientFileSource(client);
 const viewSource = new ClientViewSource(client, singleOpenLibrary(client, window));
-const drive = { source: viewSource, preferences, files, navigation };
+// The global search (UI-F2.9): one source for the results and the bar's live files, in the one
+// open library until the rows name theirs; the bar sits in the shell's search slot.
+const search = new ClientSearchSource(client, singleOpenLibrary(client, window));
+const drive = { source: viewSource, preferences, files, navigation, search };
+const searchBar = document.createElement("fs-search-bar") as FsSearchBar;
+searchBar.slot = "search";
+searchBar.configure({
+  labels,
+  search,
+  navigation,
+  scope: cachedLibraryScope(navigation, window),
+});
+shell?.append(searchBar);
 const newMenu = document.createElement("fs-new-menu") as FsNewMenu;
 newMenu.configure({ labels });
 shell?.append(newMenu);
@@ -93,7 +109,7 @@ tree.slot = "navigation";
 tree.configure({ labels, source: navigation });
 shell?.append(tree);
 if (shell) bindNavigationRoute(shell, { labels, source: navigation, tree, drive });
-if (shell) bindDriveRoute(shell, { labels, navigation, drive, newMenu });
+if (shell) bindDriveRoute(shell, { labels, navigation, drive, newMenu, searchBar });
 if (shell) bindStorage(shell, client);
 if (shell) {
   const settings = { labels, client, theme, distribution: filesquid };

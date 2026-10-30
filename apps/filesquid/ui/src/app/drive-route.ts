@@ -1,8 +1,10 @@
 /**
  * The routes of the Drive-style views and what they share with the shell (UI-F2.8, UI-S-025,
  * UI-S-026): `#/files` (All files) and `#/recent` (Recent) show a `<fs-drive-view>` over the
- * first library the host lists, and the view of any destination (`#/navigation/<node>`) is the
- * navigation view's own. This binder also carries what the views tell the shell:
+ * first library the host lists, `#/search/<query>` shows the same view as the results of the
+ * global search in that library (UI-F2.9, UI-S-030), and the view of any destination
+ * (`#/navigation/<node>`) is the navigation view's own. This binder also carries what the views
+ * and the search bar tell the shell:
  *
  * - `fs-summary` fills the footer's summary slot, and the commit state beside it says every
  *   change is committed (UI-S-025);
@@ -10,19 +12,30 @@
  * - `fs-destination-context` tells the New menu which collection or folder is shown, the only
  *   places an upload may go (UI-S-002);
  * - `fs-drive-open` opens a file in the file browser at its own object, where the file panel
- *   and the preview are, until the file panel opens from the view itself.
+ *   and the preview are, until the file panel opens from the view itself;
+ * - `fs-search` from the search bar (`detail.q`) moves the address to the results; the bar shows
+ *   the address's query (chips and text) while a search is open and is cleared on any other route,
+ *   and it is told which collection is shown, for its `in:` suggestion.
  *
  * Each route change moves focus to the shell's main area (UI-S-016), as every route does.
  */
 import { ApiError } from "../api/client";
 import type { DriveViewOptions, FsDriveView } from "../components/fs-drive-view";
 import type { FsNewMenu } from "../components/fs-new-menu";
+import type { FsSearchBar } from "../components/fs-search-bar";
 import { FILTER_EVENT } from "../components/fs-app-shell";
 import { locationHash } from "../files/model";
+import { firstLibraryScope } from "../navigation/library-scope";
 import type { NavigationSource } from "../navigation/model";
 import type { LabelTable } from "../theme/labels";
 import type { DriveRow } from "../drive/model";
-import { ALL_FILES_ROUTE, RECENT_ROUTE, type RouteHost } from "./routes";
+import {
+  ALL_FILES_ROUTE,
+  RECENT_ROUTE,
+  parseSearchHash,
+  searchHash,
+  type RouteHost,
+} from "./routes";
 
 /** What the Drive routes need. */
 export interface DriveRouteOptions {
@@ -34,17 +47,34 @@ export interface DriveRouteOptions {
   readonly drive: Omit<DriveViewOptions, "labels" | "online">;
   /** The New menu, told which collection or folder is shown. */
   readonly newMenu?: FsNewMenu;
+  /** The search bar: follows the search address and is told which collection is shown. */
+  readonly searchBar?: FsSearchBar;
   /** Whether the browser is online. */
   readonly online?: () => boolean;
 }
 
+/** A route that shows a node's view: the view and the label of its title. */
+interface ViewRoute {
+  readonly view: "all" | "recent";
+  readonly title: "fileRoot" | "fileRecent";
+}
+
+/** A route that shows the results of a search. */
+interface SearchRoute {
+  readonly search: string;
+}
+
 /** The view and title each route shows. */
-const ROUTES: Readonly<
-  Record<string, { view: "all" | "recent"; title: "fileRoot" | "fileRecent" }>
-> = {
+const ROUTES: Readonly<Record<string, ViewRoute>> = {
   [ALL_FILES_ROUTE]: { view: "all", title: "fileRoot" },
   [RECENT_ROUTE]: { view: "recent", title: "fileRecent" },
 };
+
+/** The route of a hash: a view, a search, or undefined for any other address. */
+function routeOf(hash: string): ViewRoute | SearchRoute | undefined {
+  const search = parseSearchHash(hash);
+  return search === undefined ? ROUTES[hash] : { search };
+}
 
 /**
  * The first library the host lists: the node the All files and Recent views show. At most one
@@ -55,12 +85,7 @@ const ROUTES: Readonly<
  * @throws ApiError or a network error when a listing fails.
  */
 export async function firstLibrary(navigation: NavigationSource): Promise<string | undefined> {
-  const root = await navigation.list(null);
-  for (const repository of root.nodes.filter((node) => node.kind === "repository").slice(0, 1)) {
-    const libraries = await navigation.list(repository.node);
-    return libraries.nodes.find((node) => node.kind === "library")?.node;
-  }
-  return undefined;
+  return (await firstLibraryScope(navigation))?.node;
 }
 
 /** The slotted `<span>` of a shell slot, created on first use. */
@@ -91,10 +116,11 @@ function createView(shell: HTMLElement, options: DriveRouteOptions): FsDriveView
 async function showLibrary(
   view: FsDriveView,
   options: DriveRouteOptions,
-  route: (typeof ROUTES)[string],
+  route: ViewRoute,
   current: () => boolean,
 ): Promise<void> {
   view.heading = options.labels[route.title];
+  view.search = undefined;
   view.view = route.view;
   try {
     const library = await firstLibrary(options.navigation);
@@ -106,9 +132,29 @@ async function showLibrary(
   }
 }
 
+/** Show the results of a search in the first library, or why there is none. */
+async function showSearch(
+  view: FsDriveView,
+  options: DriveRouteOptions,
+  q: string,
+  current: () => boolean,
+): Promise<void> {
+  view.heading = options.labels.searchResultsTitle;
+  try {
+    const library = await firstLibraryScope(options.navigation);
+    if (library === undefined) throw new ApiError(404, "/api/v1/navigation", { code: "not_found" });
+    const scope = library.name ?? options.labels.library;
+    if (current()) view.search = { q, node: library.node, scope };
+  } catch (error) {
+    if (current()) view.showFailure(error);
+    else console.warn("FileSquid dropped a library lookup of a route that was left", error);
+  }
+}
+
 /**
- * Mount, move or remove the drive view to match the hash. Each call starts a new route
- * generation, so a library lookup of an earlier route cannot change the view after a later one.
+ * Mount, move or remove the drive view to match the hash, and make the search bar show the
+ * address's query (cleared on any other route). Each call starts a new route generation, so a
+ * library lookup of an earlier route cannot change the view after a later one.
  */
 function applyRoute(
   shell: HTMLElement,
@@ -117,14 +163,17 @@ function applyRoute(
   generation: { n: number },
 ): void {
   const mine = ++generation.n;
-  const route = ROUTES[hash];
+  const route = routeOf(hash);
   const existing = shell.querySelector<FsDriveView>(":scope > fs-drive-view");
+  if (options.searchBar) options.searchBar.query = route && "search" in route ? route.search : "";
   if (!route) {
     existing?.remove();
     return;
   }
   const view = existing ?? createView(shell, options);
-  void showLibrary(view, options, route, () => mine === generation.n);
+  const current = () => mine === generation.n;
+  if ("search" in route) void showSearch(view, options, route.search, current);
+  else void showLibrary(view, options, route, current);
 }
 
 /** What the views tell the shell. */
@@ -142,9 +191,22 @@ function wireEvents(shell: RouteHost, options: DriveRouteOptions, win: Window): 
     }
   };
   const onContext = (event: Event) => {
-    const detail = (event as CustomEvent<{ node: string; kind: string } | undefined>).detail;
+    const detail = (event as CustomEvent<{ node: string; kind: string; name?: string } | undefined>)
+      .detail;
     const place = detail && (detail.kind === "collection" || detail.kind === "folder");
     if (options.newMenu) options.newMenu.destination = place ? detail.node : undefined;
+    if (options.searchBar) {
+      const named = place && detail.name !== undefined;
+      options.searchBar.folder = named
+        ? { node: detail.node, name: detail.name as string }
+        : undefined;
+    }
+  };
+  const onSearch = (event: Event) => {
+    const q = (event as CustomEvent<{ q: string }>).detail?.q ?? "";
+    if (q.trim() === "") return;
+    const hash = searchHash(q);
+    if (win.location.hash !== hash) win.location.hash = hash;
   };
   const onOpen = (event: Event) => {
     const row = (event as CustomEvent<{ row: DriveRow }>).detail?.row;
@@ -160,20 +222,22 @@ function wireEvents(shell: RouteHost, options: DriveRouteOptions, win: Window): 
     [FILTER_EVENT, onFilter],
     ["fs-destination-context", onContext],
     ["fs-drive-open", onOpen],
+    ["fs-search", onSearch],
   ];
   for (const [name, handler] of handlers) shell.addEventListener(name, handler);
   return () => handlers.forEach(([name, handler]) => shell.removeEventListener(name, handler));
 }
 
 /**
- * Show the drive view for `#/files` and `#/recent`, now and on every `hashchange`, and carry
- * the footer summary, the sidebar filter, the New menu's destination and file opening between
- * the views and the shell. After a `hashchange` (not on the first apply) focus moves to the
- * shell's main area. Side effect: adds window and shell listeners, mutates the shell's children
- * and moves focus.
+ * Show the drive view for `#/files`, `#/recent` and `#/search/<query>`, now and on every
+ * `hashchange`, and carry the footer summary, the sidebar filter, the New menu's destination, the
+ * search bar's query and folder, and file opening between the views and the shell. After a
+ * `hashchange` (not on the first apply) focus moves to the shell's main area. Side effect: adds
+ * window and shell listeners, mutates the shell's children and moves focus.
  *
  * @param shell Element the view is slotted into (the app shell).
- * @param options Labels, navigation, the view's sources and preferences, and the New menu.
+ * @param options Labels, navigation, the view's sources and preferences, the New menu and the
+ *   search bar.
  * @param win Window whose hash is followed.
  * @returns A function that removes the listeners.
  */
@@ -189,8 +253,9 @@ export function bindDriveRoute(
     // The destination of the last route is not a place on this one; a navigation view that is
     // shown now announces its own once it has read the node.
     if (options.newMenu) options.newMenu.destination = undefined;
+    if (options.searchBar) options.searchBar.folder = undefined;
     applyRoute(shell, options, win.location.hash, generation);
-    if (!ROUTES[win.location.hash]) showFooter(shell, options.labels, undefined);
+    if (!routeOf(win.location.hash)) showFooter(shell, options.labels, undefined);
     shell.focusMain?.();
   };
   win.addEventListener("hashchange", onChange);

@@ -42,6 +42,7 @@ export type IconName =
   | "download"
   | "list"
   | "grid"
+  | "calendar"
   | "check";
 
 /** The path data of each icon on the 24-unit grid. */
@@ -82,6 +83,8 @@ const PATHS: Readonly<Record<IconName, string>> = {
   download: "M12 3v12M7 10l5 5 5-5M5 21h14",
   list: "M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01",
   grid: "M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z",
+  calendar:
+    "M5 5h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2zM3 10h18M8 3v4M16 3v4",
   check: "M5 12.5l4.5 4.5L19 7.5",
 };
 
@@ -92,7 +95,7 @@ const DEFAULT_SIZE = 16;
  * Build one decorative line icon.
  *
  * @param name The icon.
- * @param size Its width and height in CSS pixels (16, 20 or 24).
+ * @param size Its width and height in CSS pixels (16, 20 or 24; the search chips draw 12 px close marks, mockup 20).
  * @returns An inline `<svg>` with `aria-hidden="true"` and the class `icon icon-<name>`.
  */
 export function icon(name: IconName, size = DEFAULT_SIZE): SVGSVGElement {
