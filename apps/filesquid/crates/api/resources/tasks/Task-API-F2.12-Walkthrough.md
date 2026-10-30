@@ -14,7 +14,7 @@ Also API-S-028 (PROV-O record per commit and journal linkage) and API-S-032 (Dur
   - A stalled writer holds the next version's reservation, so the move takes it over, and the OCFL engine warns "took over an expired version reservation" inside the move's activity span.
   - The test asserts that every `ocfl.engine.*` entry the journal layer writes carries the move's operation ID.
   - It has a binary of its own: `tracing` caches callsite interest for the whole process, so a parallel test that reaches the engine's callsites without a subscriber raced with this test's thread-local subscriber.
-- The code under test is the `activity` span (`trace_layer::activity_span`, opened through `canonical::message::commit_span` with the commit's operation ID) that API-F2.8 wraps around every file-route commit in `files::provenance::commit_staged`.
+- The code under test is the `activity` span (`trace_layer::activity_span`, opened through `canonical::message::commit_span` with the commit's operation ID) that API-F2.8 wraps around each file-route commit: in `files::provenance::commit_staged` (move, remove, label), around the reinstate of a restore, around the metadata store's commits (statement set and removal, rename, namespace registration), and inside `canonical::commit_file_original` and `commit_staged_original` (upload, copy, import). The test drives a move, so it exercises `commit_staged`.
 
 ## SRS traceability
 
