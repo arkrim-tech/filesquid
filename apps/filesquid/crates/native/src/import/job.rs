@@ -48,7 +48,7 @@ use super::placing::{logical_path, source_roots};
 use super::plans::{ImportPlan, ManifestEntry, SqliteImportPlans};
 use crate::catalog::{PendingIntent, RegisterFile, Registration, REGISTER_OPERATION};
 use crate::HostFiles;
-use filesquid_api::files::UploadView;
+use filesquid_api::files::{Committed, UploadView};
 use filesquid_api::jobs::{Halt, JobError, JobSpec, JobState, Jobs, RunningJob};
 use filesquid_api::journal::{JournalEntry, Level, Outcome};
 use filesquid_api::journal_writer::JournalSender;
@@ -723,7 +723,7 @@ fn import_with_heartbeat(
     context: &ImportContext<'_>,
     running: &RunningJob,
     request: &FileImport<'_>,
-) -> Result<UploadView, ImportFailure> {
+) -> Result<Committed<UploadView>, ImportFailure> {
     let every = renewal_interval(context.jobs);
     std::thread::scope(|scope| {
         let importing = scope.spawn(|| import_on_own_runtime(context.files, request));
@@ -750,7 +750,7 @@ fn import_with_heartbeat(
 fn import_on_own_runtime(
     files: &HostFiles,
     request: &FileImport<'_>,
-) -> Result<UploadView, ImportFailure> {
+) -> Result<Committed<UploadView>, ImportFailure> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .build()
         .map_err(|_| ImportFailure::Commit {
@@ -836,17 +836,20 @@ async fn import_with_attempts(
         }
         *retries += u32::from(attempt > 1);
         match import_with_heartbeat(context, running, request) {
-            Ok(view) => match register(
-                context,
-                running,
-                request.library_id,
-                request.file_id,
-                placed,
-            ) {
-                Registered::Done => return imported(context, running, view),
-                Registered::Refused(code) => return quarantine(context, running, code),
-                Registered::Retry => (last, committed) = ("unavailable", true),
-            },
+            Ok(done) => {
+                journal_commit(context, done.entries);
+                match register(
+                    context,
+                    running,
+                    request.library_id,
+                    request.file_id,
+                    placed,
+                ) {
+                    Registered::Done => return imported(context, running, done.view),
+                    Registered::Refused(code) => return quarantine(context, running, code),
+                    Registered::Retry => (last, committed) = ("unavailable", true),
+                }
+            }
             Err(failure) if !failure.retry_now() => {
                 return quarantine(context, running, failure.error_code())
             }
@@ -884,13 +887,24 @@ fn unregistered(running: &RunningJob) -> FileOutcome {
     FileOutcome::Unregistered
 }
 
+/// Journal the entries of a published import commit (its `ocfl.commit`, under the ID the
+/// commit's record names), right after the commit and before the file is registered, so a
+/// registration retried later (which replays the import and answers no entries) never loses
+/// them. Sends on the journal queue.
+fn journal_commit(context: &ImportContext<'_>, entries: Vec<JournalEntry>) {
+    for entry in entries {
+        context.journal.send(entry);
+    }
+}
+
 /// Journal an imported file and answer it.
 fn imported(context: &ImportContext<'_>, running: &RunningJob, view: UploadView) -> FileOutcome {
     let entry = JournalEntry::new(IMPORT_FILE_OPERATION, Outcome::Succeeded)
         .actor(context.actor)
         .target(view.file_id.as_str())
         .target(running.job().id.as_str())
-        .operation_id(running.job().operation_id.as_str());
+        .operation_id(running.job().operation_id.as_str())
+        .object_ref(format!("{}@{}", view.object_id, view.version));
     context.journal.send(entry);
     FileOutcome::Imported(view)
 }
