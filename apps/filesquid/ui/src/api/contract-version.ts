@@ -5,4 +5,4 @@
  * (`tests/support/write-contract-version.mjs`); the contract drift test fails when it differs
  * from the committed contract.
  */
-export const CONTRACT_VERSION = "0.29.0";
+export const CONTRACT_VERSION = "0.30.0";
