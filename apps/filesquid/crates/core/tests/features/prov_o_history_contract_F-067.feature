@@ -11,6 +11,20 @@ Feature: PROV-O history contract types
     Then the message should start with "filesquid.operation.v1 "
     And parsing it should give operation "op-7", kind "metadata.edit" and label "Before cleanup"
 
+  Scenario Outline: Catalog organisation, publication and backfill have stable tokens
+    When I format the operation message for operation "op-8" of kind "<kind>" with label "Release"
+    Then parsing it should give operation "op-8", kind "<kind>" and label "Release"
+
+    Examples:
+      | kind                 |
+      | catalog.organisation |
+      | publish              |
+      | backfill             |
+
+  Scenario: A version committed before the rename is read as catalog organisation
+    When I parse the version message "filesquid.operation.v1 {\"operation_id\":\"op-9\",\"kind\":\"catalog\"}"
+    Then it should be read as kind "catalog.organisation" and written back as "catalog.organisation"
+
   Scenario: A message another tool wrote is not a FileSquid message
     When I parse the version message "Edit metadata.md"
     Then it should not be a FileSquid operation message

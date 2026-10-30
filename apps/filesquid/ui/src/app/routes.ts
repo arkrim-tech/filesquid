@@ -15,6 +15,7 @@ import type { FsNavigationView, NavigationViewOptions } from "../components/fs-n
 import type { FsSettings, SettingsOptions } from "../components/fs-settings";
 import { locationHash, parseLocationHash, type FileLocation } from "../files/model";
 import type { HistorySource } from "../files/history-source";
+import type { MetadataSource } from "../files/metadata-source";
 import { bindFilePanel, removeFilePanel } from "./file-panel-route";
 
 /** An element the routed views are mounted in; the app shell also offers `focusMain`. */
@@ -227,6 +228,8 @@ function createNavigationView(shell: HTMLElement, options: NavigationRouteOption
 export interface FilesRouteOptions extends Pick<FileBrowserOptions, "labels" | "source"> {
   /** Reads histories, versions and history sizes for the file panel. */
   readonly history?: HistorySource;
+  /** Reads and writes statements for the file panel's Description tab (UI-F2.4). */
+  readonly metadata?: MetadataSource;
 }
 
 /**

@@ -174,7 +174,8 @@ fn a_catalog_commit_carries_its_history_in_the_same_version() {
     );
     let message = v1["message"].as_str().expect("message");
     assert!(
-        message.starts_with("filesquid.operation.v1 ") && message.contains("\"kind\":\"catalog\""),
+        message.starts_with("filesquid.operation.v1 ")
+            && message.contains("\"kind\":\"catalog.organisation\""),
         "{message}"
     );
     let paths: Vec<&str> = v1["state"]

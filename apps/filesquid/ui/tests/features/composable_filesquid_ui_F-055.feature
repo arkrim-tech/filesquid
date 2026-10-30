@@ -95,6 +95,17 @@ Feature: Composable filesquid user interface
     Then the panel region should be hidden
     And the file should stay open in the viewer
 
+  # Task UI-F2.4: the Description tab (the Metadata panel) in its named slot
+  # UI-S-003: each file fact is shown by the panel of its owning module; UI-S-022: the tabs
+  # share one property table; UI-S-031: Description composition (mockups 28 and 29)
+  Scenario: The Description tab shows the facts the metadata module owns, in its own slot
+    Given a file panel with the tabs "details" and "description"
+    When I select the Description tab
+    Then the metadata panel should be created in its Description slot and receive the file reference
+    And it should show the file's dcterms: and schema: statements and nothing the OCFL module owns
+    And it should share the file info tab's property table, filter and states
+    And neither panel should hold a reference to the other
+
   # Source
   # - resources/prd.md F-055
   # - resources/srs.md SRS-F-055
