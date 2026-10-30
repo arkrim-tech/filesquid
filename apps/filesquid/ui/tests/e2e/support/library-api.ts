@@ -177,10 +177,39 @@ export async function serveLibraries(page: Page): Promise<LibraryApi> {
     const url = new URL(request.url());
     const body = request.method() === "GET" ? url.search : (request.postDataJSON() as unknown);
     api.seen.push({ path: url.pathname, method: request.method(), body });
-    const answer = refusedShape(request.method(), url, body) ?? answerFor(api, url.pathname, body);
+    const answer =
+      factsAnswer(request.method(), url) ??
+      refusedShape(request.method(), url, body) ??
+      answerFor(api, url.pathname, body);
     await route.fulfill({ status: answer.status, json: answer.json });
   });
   return api;
+}
+
+/** `GET /api/v1/libraries/{library}/facts` (API-S-038). */
+const FACTS_PATH = /^\/api\/v1\/libraries\/([^/]+)\/facts$/;
+
+/**
+ * The facts of a library the page reads for its current revision: the library open at
+ * revision `1`, with no free-space reading. Another method is 405, a query 400.
+ *
+ * @param method - The request method.
+ * @param url - The request URL.
+ * @returns The answer, or undefined when the request is not for the facts route.
+ */
+function factsAnswer(method: string, url: URL): { status: number; json: unknown } | undefined {
+  const match = FACTS_PATH.exec(url.pathname);
+  if (!match) return undefined;
+  if (method !== "GET") return { status: 405, json: error("method_not_allowed") };
+  if (url.search !== "") return { status: 400, json: error("invalid_request") };
+  const facts = {
+    library_id: decodeURIComponent(match[1] ?? ""),
+    name: "Untitled library",
+    free_bytes: null,
+    free_bytes_reason: "volume_unreadable",
+    revision: "1",
+  };
+  return { status: 200, json: facts };
 }
 
 /** The method, required fields and optional fields of each route, as the contract defines them. */

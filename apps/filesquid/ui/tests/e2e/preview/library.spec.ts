@@ -170,6 +170,7 @@ test("(1) copy asks for a destination and passes it as destination_location_id",
   expect(api.to("/api/v1/libraries/location-choices").map(({ body }) => body)).toEqual([
     { purpose: "copy_destination" },
   ]);
+  expect(api.to(`/api/v1/libraries/${LIB}/facts`)).toHaveLength(1);
   expect(api.to("/api/v1/libraries/snapshot-copies").map(({ body }) => body)).toEqual([
     command(`library:${LIB}`, "1", {
       library_id: LIB,
