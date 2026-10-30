@@ -16,7 +16,7 @@ Amended: 2026-10-18 by [ADR 037](./037-c2pa-in-release-2.md): the first consumer
 
 Amended: 2026-10-19 by [ADR 040](./040-prov-o-history.md): the `prov` module joins the modules and ships in the FileSquid MVP and release 1 with `ocfl` and `metadata` (Decision 7), and its optional `ocfl` feature is the second allowed optional cross-module dependency (Decision 4).
 
-Amended: 2026-10-29 (owner decision): encrypted backup and sync is the primary product immediately after the MVP and before the first consumer release. The Drive is the daily interface. OCFL, the encrypted OCFL profile and PROV-O stay behind that Drive (Decision 7).
+Amended: 2026-10-29 (owner decision): encrypted backup and sync is the primary product immediately after the MVP. Ubuntu (GNOME) and Windows Tauri desktop releases start at the same time and do not wait on that backup release. The rest of the first consumer release follows it. The Drive is the daily interface. OCFL, the encrypted OCFL profile and PROV-O stay behind that Drive (Decision 7).
 
 ## Context / Requirement Reference
 
@@ -60,8 +60,8 @@ Requirements that drive this decision:
 **7. Release order.** Amended 2026-10-29. The Drive is the interface people use for day-to-day file work. OCFL compliance, the encrypted OCFL profile and PROV-O stay behind that Drive.
 
 1. The FileSquid MVP: the default Drive on the macOS desktop, with the `ocfl`, `metadata` and `prov` modules behind it ([ADR 035](./035-macos-first-desktop-mvp.md), [ADR 040](./040-prov-o-history.md)).
-2. Encrypted backup and sync at `*.filesquid.tech`, the primary product after the MVP ([ADR 032](./032-hosting-and-privacy-model.md)). It does not wait for `filesquid-server` or the rest of the first consumer release. The owner of a Drive enrolls device keys for uploads into that Drive. That Drive's backup keeps recovery points in more than one geography ([ADR 012](./012-s3-compatible-ciphertext-storage.md)).
-3. The first consumer release: Linux and Windows desktop, `filesquid-server`, and the remaining release-1 scope, still the default Drive over the `ocfl`, `metadata` and `prov` modules (the `c2pa` module moved to the ImageSquid release by [ADR 037](./037-c2pa-in-release-2.md)).
+2. Encrypted backup and sync at `*.filesquid.tech`, the primary product after the MVP ([ADR 032](./032-hosting-and-privacy-model.md)). It does not wait for `filesquid-server` or the rest of the first consumer release, and the Ubuntu (GNOME) and Windows Tauri desktop releases start beside it and do not wait on it. A node may authorise several devices to upload. Each device key must be on that node's whitelist. Those devices sync the live working set with Automerge. OCFL snapshots, on demand or every 1 or 24 hours, are the backup package. An upload strips embedded and sidecar metadata into the file's Markdown record and adds a Prov-O record plus a C2PA proof on the ProofMode model. That Drive's backup keeps recovery points in more than one geography ([ADR 012](./012-s3-compatible-ciphertext-storage.md)).
+3. The rest of the first consumer release: `filesquid-server`, accounts, groups, sharing, signing, published crates, and the remaining release-1 scope, still the default Drive over the `ocfl`, `metadata` and `prov` modules (the `c2pa` module's panel, scans, edits and publishing moved to the ImageSquid release by [ADR 037](./037-c2pa-in-release-2.md)). The Ubuntu (GNOME) and Windows Tauri desktop releases are the exception in item 2.
 4. ImageSquid, as a FileSquid distribution, with FileSquid's `c2pa` module.
 5. Arkrim and the other later milestones, in an order the owner chooses ([C-052](../product-vision.md#release-sequence)).
 

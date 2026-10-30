@@ -422,13 +422,15 @@ footer {
 <section class="hero" id="document">
   <p class="eyebrow">Design report · 29 October 2026 · owner correction the same day</p>
   <h1>Backup after the MVP</h1>
-  <p class="standfirst">Backup is the product that follows the FileSquid MVP. People do their daily work in a Drive. OCFL stays behind that Drive.</p>
+  <p class="standfirst">Backup is the product that follows the FileSquid MVP. Ubuntu (GNOME) and Windows desktop releases start beside it. People do their daily work in a Drive. OCFL stays behind that Drive.</p>
   <p class="meta">This file holds two things. The field prospectus is reproduced in full, because its backup rules are product requirements. The design half says how those rules become filesquid-backup, and in what order to build them once the MVP is finished.</p>
   <div class="chips">
     <span class="chip on">backup</span>
     <span class="chip">Drive</span>
+    <span class="chip">whitelist</span>
+    <span class="chip">Automerge</span>
     <span class="chip">recovery point</span>
-    <span class="chip">resume</span>
+    <span class="chip">Ubuntu and Windows</span>
     <span class="chip">OCFL</span>
   </div>
 </section>
@@ -782,7 +784,7 @@ footer {
   <p>Adding backup is the most immediate priority after the MVP is finished. Task FS-3.9 closes the MVP. Backup work starts then. People manage files every day in a Drive: folders, files, search, and versions they can see and restore. OCFL compliance and the preservation layout stay behind that Drive. They are how a recovery point remains readable and how a library can leave the service. They are not the thing the owner operates, and they are not a reason to ship backup later.</p>
   <p>The field prospectus supplies the product’s threat model, its resumable upload, the split between backup and sync, and the rule that a backup is real only after a restore. Those are requirements of filesquid-backup. The phone PWA, age, restic, and a field node are not the interface. The Drive is.</p>
   <p>Phase F4 in <code>resources/implementation-plan.md</code> is still the named body of work: encrypted backup and sync at <code>*.filesquid.tech</code>, requirements F-029 through F-032, F-042 and F-059, architecture ADR 004, ADR 009, ADR 010, ADR 012 and ADR 032. There is no separate <code>filesquid-backup</code> crate. The product is this work, moved to the front of the queue.</p>
-  <p>The product vision, the PRD, the SRS, the architecture document, ADR 029, the implementation plan and the checklist now record the same order. Backup follows Task FS-3.9 and precedes Task FS-3.5. The Drive is the interface. OCFL stays behind it. Phase F4 is the Backup section of the checklist, between the MVP and release 1. Release-1 work that backup leaves for later, including Linux and Windows installers, virtual exhibits and the activity stream, waits until Task FS-4.2 is checked.</p>
+  <p>The product vision, the PRD, the SRS, the architecture document, ADR 029, the implementation plan and the checklist now record the same order. Backup follows Task FS-3.9. Ubuntu (GNOME) and Windows Tauri desktop releases (Task FS-3.11) start then too and run beside phase F4. Neither waits on the other. The Drive is the interface. OCFL stays behind it. Phase F4 is the Backup section of the checklist. The Desktop section sits between the MVP and Backup. The rest of release 1, including virtual exhibits, the activity stream, <code>filesquid-server</code>, accounts, signing and published crates, waits until Task FS-4.2 is checked.</p>
   <p>The same decision is written out as a product canvas in <a href="FileSquid%20backup%20product%20vision.md">FileSquid backup product vision</a>. That note stays under C-025 and ADR 029. Its local U-numbers are reading aids for this release. They are not allocated into the PRD.</p>
   <p>The MVP Drive is the working library. Trash and visible version history protect against a mistake on that disk. F-031 already says that history is not a disaster-recovery service. Backup adds retained recovery points that survive a deleted file, a bad sync, or a dead disk, and it puts those points where the owner can restore them from the Drive.</p>
 </section>
@@ -803,7 +805,7 @@ footer {
       <tr><td>PWA, IndexedDB, Background Sync, field phone</td><td>Out of this feature. C-001 forbids promising background camera backup after the browser closes. The encrypted browser host is phase F5, after Task FS-4.2, and it is the receiver, not the capture pipeline.</td></tr>
       <tr><td>Field node running tusd and Garage</td><td>Out of this feature. <code>filesquid-server</code> is an operator-readable library server. <code>*.filesquid.tech</code> is a separate ciphertext mailbox. Garage is one acceptable S3-compatible backend under ADR 012, not a required component.</td></tr>
       <tr><td>Iroh, gossip, dial-by-public-key</td><td>A later transport if a user-run site needs NAT traversal. The geo-distributed copies of a Drive are the backup itself, over HTTPS and S3-compatible storage, not an Iroh mesh.</td></tr>
-      <tr><td>Automerge and other CRDTs</td><td>File bytes stay OCFL versions. ADR 016 already rebases or reports a conflict when two writers move the same head. The prospectus itself says a CRDT sync is not a backup, because a bad edit converges everywhere. Collaborative CRDTs stay the optional later item the PRD already lists.</td></tr>
+      <tr><td>Automerge</td><td>Use it for the live working set. Every device whose key is on one node's whitelist syncs through Automerge on that node. A device that is not listed does not join. Automerge is not a recovery point and not a second OCFL engine. The mailbox does not read the document. The prospectus is right that a CRDT sync is not a backup, because a bad edit converges everywhere. OCFL snapshots stay the backup. Collaborative migration review stays the optional later item.</td></tr>
       <tr><td>Pull replication, append-only, object lock, prune only from the archive side</td><td>Adopt this as the hosted threat model. A client credential that can upload a new recovery point cannot delete or overwrite an existing one. Retention prune uses a different credential, cannot break an object-lock floor, and never runs from the desktop’s sync credential. A half-written manifest is not a recovery point.</td></tr>
       <tr><td>Three archives: another site, an immutable bucket, an air-gapped disk</td><td>The Drive's own backup. Each Drive keeps multiple copies of its recovery points in different geographies. The working Drive is not one of those copies. Which providers and which regions stay the open operations choice, and the choice names more than one geography before paying users. An air-gapped disk, a further destination and a paid restore exercise stay F-035. A three-site pull mesh is not required for the first backup.</td></tr>
       <tr><td>Lost ciphertext on a seized node is acceptable; readable media is not</td><td>Already the mailbox guarantee. Say it in the backup threat model in the prospectus’s words: the worst loss is files not yet in a recovery point.</td></tr>
@@ -824,11 +826,11 @@ footer {
   </div>
   <div class="card" style="margin-bottom:16px">
     <h3 class="feature">Who may upload</h3>
-    <p>The owner of a Drive installation grants another user permission to upload into that Drive by enrolling the user's device public key (Ed25519, ADR 009). That is the permission for network-sensitive uploads: bytes that cross a network the owner does not trust. The uploader encrypts on their device before any byte leaves. The mailbox authorises the key and sees ciphertext. A password is not that permission. Revoking the key stops later uploads. The key can append a recovery point and cannot delete one. Share-link passwords in the release-1 sharing panel are a different control.</p>
+    <p>A FileSquid node (a Drive) may authorise several devices to upload. Each device's Ed25519 public key must be on that node's whitelist. A key that is not listed is refused. The owner enrols the keys. That is the permission for network-sensitive uploads: bytes that cross a network the owner does not trust. The uploader encrypts on their device before any byte leaves. The mailbox authorises the whitelisted key and sees ciphertext. A password is not whitelist membership. Revoking a key removes it and stops later uploads. The key can append a recovery point and cannot delete one. Share-link passwords in the later sharing panel are a different control.</p>
   </div>
   <div class="card" style="margin-bottom:16px">
     <h3 class="feature">Recovery point</h3>
-    <p>A retained generation of that library, stored as an encrypted OCFL profile and shown in the Drive as a point in time the owner can return to. Objects are written first. The manifest is published only when every referenced ciphertext object is present and hashed. Later deletes in the Drive do not remove it.</p>
+    <p>A retained generation of that library, stored as an encrypted OCFL profile and shown in the Drive as a point in time the owner can return to. The owner commits and pushes the current snapshot on demand, or on a schedule whose only settings are 1 hour and 24 hours. Objects are written first. The manifest is published only when every referenced ciphertext object is present and hashed. Later deletes in the Drive do not remove it. The live Automerge head is not this point.</p>
   </div>
   <div class="card" style="margin-bottom:16px">
     <h3 class="feature">Hosted copies of recovery points</h3>
@@ -840,7 +842,7 @@ footer {
   </div>
   <div class="card" style="margin-bottom:16px">
     <h3 class="feature">Sync, after the first rehearsed restore</h3>
-    <p>Live head replication between devices. Deletes propagate. The UI shows backup and sync as separate facts. The host indicator already has this rule waiting on API-F4.1.</p>
+    <p>Live head replication between the devices on one node's whitelist, through Automerge. Devices that are not on the whitelist do not join. Deletes propagate inside that live set. The UI shows backup and sync as separate facts. The host indicator already has this rule waiting on API-F4.1. On upload, EXIF and any other embedded metadata, and any sidecar, move into the file's <code>&lt;file-uuid&gt;.metadata.md</code>. The stored bytes are the stripped content. The upload adds a Prov-O record and a C2PA proof on the ProofMode model, signed by the uploading device key. The proof records the upload. It does not claim FileSquid witnessed the original capture. The Content Credentials panel stays in phase C.</p>
   </div>
   <div class="callout">
     <div class="t">The decisive test</div>
@@ -861,10 +863,12 @@ footer {
     <li>Resume state lives in the desktop job store. The server’s part offset wins. Completion is idempotent.</li>
     <li>Object keys and request metadata are an opaque id, a size and a ciphertext hash. Names, capture timestamps and location stay inside ciphertext. Upload time remains visible service metadata, and the UI says so.</li>
     <li>Verification is a ladder: upload receipt, ciphertext hash, a scheduled read of a subset, then a client restore that decrypts and checks the plaintext digest.</li>
-    <li>The owner of a Drive enrolls a device public key as permission to upload into that Drive. A password is not that permission. The uploader encrypts before the bytes leave. Revoking the key stops later uploads, and the key cannot delete a recovery point.</li>
+    <li>A node whitelist holds every device key allowed to upload. Several devices may be on it. A key that is not listed is refused. A password is not whitelist membership. The uploader encrypts before the bytes leave. Revoking a key stops later uploads, and the key cannot delete a recovery point.</li>
+    <li>Whitelisted devices sync the live working set with Automerge. The owner commits and pushes an OCFL snapshot on demand, or every 1 hour or every 24 hours. Those are the only schedule values. On demand stays available.</li>
+    <li>An upload strips EXIF and any other embedded metadata, and any sidecar, into the file's Markdown record with YAML front matter. The stored bytes are the stripped content. The upload adds a Prov-O record and a C2PA proof on the ProofMode model.</li>
     <li>Each Drive has its own backup, and that backup keeps multiple copies of its recovery points in different geographies. One hosted region plus the laptop is not that design. Further destinations, an air-gapped disk and a paid restore exercise stay F-035.</li>
     <li>Paid sync claims wait until one clean-device restore has passed. The plan already says this. The task split below makes it enforceable.</li>
-    <li>Non-goals for this feature: field PWA capture, age as the content suite, restic as the store, tusd as a product, Iroh, Automerge, server-side thumbnails, convergent encryption, traffic padding, and background phone backup. Postponing backup until after release 1 is also out.</li>
+    <li>Non-goals for this feature: field PWA capture, age as the content suite, restic as the store, tusd as a product, Iroh, server-side thumbnails, convergent encryption, traffic padding, and background phone backup. Automerge is in scope as live sync and is not a backup. Postponing backup until after release 1 is also out. Holding the Ubuntu and Windows desktop releases until after backup is also out.</li>
   </ol>
   <p>That record is an amendment or a short successor to ADR 010 and ADR 012. The implementation plan, the checklist and ADR 029 already place phase F4 immediately after the MVP and ahead of phase F3R. The record leaves ADR 009 unchanged.</p>
 </section>
@@ -910,13 +914,13 @@ footer {
   <article class="slice">
     <h3 class="feature">Slice F · Sync</h3>
     <p class="when">The remainder of Task 5.2.</p>
-    <p>CO-5.2 conflict and tombstone types, live head replication, rebase or an explicit conflict. The delete-then-sync-then-restore test is the exit criterion. Tombstone compaction must not let a long-offline device resurrect a purged file, and it must not delete a recovery point.</p>
+    <p>CO-5.2 conflict and tombstone types, Automerge among the whitelisted devices of one node, and an OCFL snapshot on demand or every 1 or 24 hours. The delete-then-sync-then-restore test is the exit criterion. Tombstone compaction must not let a long-offline device resurrect a purged file, and it must not delete a recovery point. An upload moves embedded and sidecar metadata into the Markdown record and adds the Prov-O and C2PA proof.</p>
   </article>
 
   <article class="slice">
     <h3 class="feature">Slice G · Release gate</h3>
     <p class="when">Task FS-4.2 (12 hours).</p>
-    <p>Desktop and, when a server library is a backup client, <code>filesquid-server</code> encrypting before upload. Evidence for RC-003 and RC-006: distinct guarantees, restore without the live service catalog, a revoked device, a ciphertext-only dependency graph, and published terms. Evidence also shows an enrolled uploader key that can append and cannot delete a recovery point, and one Drive's recovery points present in more than one geography. No SLA is invented. Paying users still wait on the crypto-protocol audit, named providers and regions in more than one geography, a payment processor, and the GDPR role analysis (F-059).</p>
+    <p>Desktop and, when a server library is a backup client, <code>filesquid-server</code> encrypting before upload. Enrolment from <code>filesquid-server</code> does not gate this release. Evidence for RC-003 and RC-006: distinct guarantees, restore without the live service catalog, a revoked device, a ciphertext-only dependency graph, and published terms. Evidence also shows several device keys on one whitelist, an unlisted key refused, an enrolled uploader key that can append and cannot delete a recovery point, Automerge among those devices, an on-demand snapshot and a 1 hour or 24 hour snapshot, stripped metadata in the Markdown record, a Prov-O record plus a C2PA proof, and one Drive's recovery points present in more than one geography. No SLA is invented. Paying users still wait on the crypto-protocol audit, named providers and regions in more than one geography, a payment processor, and the GDPR role analysis (F-059).</p>
   </article>
 
   <p>Task 0.11, the browser commit protocol (12 hours), stays a written protocol in F4 and an implementation in phase F5. Desktop backup does not need the browser writer.</p>
