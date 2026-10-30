@@ -111,12 +111,12 @@ pub use service::{
 };
 pub use versions::{MAX_SIZE_CONTENTS, MAX_SIZE_OBJECTS};
 pub use view::{
-    CollectionMoveRequest, CollectionMoveView, CommitView, ContentQuery, EntryView, FileChangeView,
-    FileDetailsView, FileHistorySizeView, FileQuery, FolderPageView, FolderRequest, FolderView,
-    HistoryEntryView, HistoryQuery, HistoryView, LabelRequest, LibraryHistorySizeView,
-    LibraryQuery, ListingQuery, ListingRequest, MintRequest, MintView, MoveInput, MoveRequest,
-    ObjectQuery, RemoveRequest, RestoreRequest, UploadQuery, UploadView, UserView, VersionView,
-    VersionsView,
+    CollectionFolderRequest, CollectionFolderView, CollectionMoveRequest, CollectionMoveView,
+    CommitView, ContentQuery, EntryView, FileChangeView, FileDetailsView, FileHistorySizeView,
+    FileQuery, FolderInput, FolderPageView, FolderRequest, FolderView, HistoryEntryView,
+    HistoryQuery, HistoryView, LabelRequest, LibraryHistorySizeView, LibraryQuery, ListingQuery,
+    ListingRequest, MintRequest, MintView, MoveInput, MoveRequest, ObjectQuery, RemoveRequest,
+    RestoreRequest, UploadQuery, UploadView, UserView, VersionView, VersionsView,
 };
 
 /// `tracing` target of this module's stdout-only diagnostics, outside `filesquid::activity`

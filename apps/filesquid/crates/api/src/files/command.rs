@@ -112,6 +112,15 @@ library_input!(
     super::view::CollectionMoveRequest,
 );
 
+impl CommandInput for super::view::FolderInput {
+    fn library_id(&self) -> &str {
+        match self {
+            Self::InObject(request) => &request.library_id,
+            Self::Collection(request) => &request.library_id,
+        }
+    }
+}
+
 impl CommandInput for super::view::MoveInput {
     fn library_id(&self) -> &str {
         match self {

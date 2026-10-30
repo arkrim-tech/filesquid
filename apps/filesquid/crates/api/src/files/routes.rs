@@ -12,7 +12,7 @@ use super::provenance::{Caller, Committed};
 use super::range::{RangePlan, RangeRequest};
 use super::service::{ContentAnswer, ContentRequest};
 use super::view::{
-    CollectionMoveView, ContentQuery, FileQuery, FolderRequest, HistoryQuery, LabelRequest,
+    CollectionMoveView, ContentQuery, FileQuery, FolderInput, HistoryQuery, LabelRequest,
     LibraryQuery, ListingRequest, MoveInput, ObjectQuery, RemoveRequest, RestoreRequest,
     UploadQuery,
 };
@@ -476,18 +476,26 @@ fn json_command<T: CommandInput>(
 async fn create_folder(
     State(state): State<ApiState>,
     Extension(principal): Extension<Principal>,
-    request: Result<Json<FileCommand<FolderRequest>>, JsonRejection>,
+    request: Result<Json<FileCommand<FolderInput>>, JsonRejection>,
 ) -> Response {
     let command = json_command(request);
+    let (state, principal) = (&state, &principal);
     command::run(
-        &state,
-        &principal,
+        state,
+        principal,
         FOLDER_OPERATION,
         command,
         |files, c, _| async move {
-            let folder = files.create_folder(c.input, c.expected).await?;
+            let view = match c.input {
+                FolderInput::InObject(input) => {
+                    serde_json::to_value(files.create_folder(input, c.expected).await?)
+                }
+                FolderInput::Collection(input) => {
+                    serde_json::to_value(homing::plan_folder(state, principal, input).await?)
+                }
+            };
             Ok(Done {
-                view: folder,
+                view: view.map_err(|_| FileError::internal("a folder answer did not encode"))?,
                 entries: Vec::new(),
                 changed: false,
             })

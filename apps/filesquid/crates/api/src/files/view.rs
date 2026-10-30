@@ -643,6 +643,47 @@ pub struct FolderView {
     pub pending: bool,
 }
 
+/// The collection folder of `POST /api/v1/files/folders` (Task API-F2.14; API-S-011 **Same
+/// logical path**): a new folder at a collection logical path, numbered beside a taken one.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CollectionFolderRequest {
+    /// The library.
+    pub library_id: String,
+    /// The collection the folder is in. Required: a request without it is refused
+    /// (`destination_required`).
+    pub collection_id: Option<String>,
+    /// The new folder's collection logical path.
+    pub folder: String,
+}
+
+/// The input of `POST /api/v1/files/folders`: a folder inside one OCFL object (API-S-008), or
+/// a folder of a collection (API-S-011). The shapes are told apart by their fields.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(untagged)]
+pub enum FolderInput {
+    /// A folder inside one OCFL object.
+    InObject(FolderRequest),
+    /// A folder of a collection.
+    Collection(CollectionFolderRequest),
+}
+
+/// The answer to a collection folder: where the folder is. A folder is the prefix of the
+/// logical paths of the files inside it (ADR 041 Decision 3), so a new folder stays pending in
+/// the client until a file is uploaded, copied or moved into it; nothing is written.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct CollectionFolderView {
+    /// The library.
+    pub library_id: String,
+    /// The collection.
+    pub collection_id: String,
+    /// The folder's collection logical path: the one asked for, or the numbered path beside a
+    /// taken one (`directoryY-1`).
+    pub path: String,
+    /// Always true: the folder exists once a file is placed in it.
+    pub pending: bool,
+}
+
 /// The answer to a mint: the handle is answered here and nowhere else. `Debug` output
 /// never shows it.
 #[derive(Clone, PartialEq, Eq, Serialize)]

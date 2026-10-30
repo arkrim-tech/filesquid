@@ -6,7 +6,9 @@
 //! does; the refusals carry the rule's own journal code.
 
 use super::error::FileError;
-use super::view::{CollectionMoveRequest, CollectionMoveView};
+use super::view::{
+    CollectionFolderRequest, CollectionFolderView, CollectionMoveRequest, CollectionMoveView,
+};
 use crate::auth::Principal;
 use crate::canonical::collection_path::{join, safe_segment, ItemKind, PathError};
 use crate::error::ErrorCode;
@@ -424,6 +426,46 @@ pub(super) async fn move_to_destination(
         path,
     };
     Ok((view, changed))
+}
+
+/// Plan the collection folder of `request` for `principal`: check the collection and the
+/// folder path, then find the first free folder path beside a taken one; nothing is written,
+/// since a folder exists once a file is placed in it (ADR 041 Decision 3). Reads the catalog.
+///
+/// # Errors
+/// The destination's refusal; the path's refusal (`path_suffix_exhausted`, `name_too_long`,
+/// `invalid_path`); a store failure.
+pub(super) async fn plan_folder(
+    state: &ApiState,
+    principal: &Principal,
+    request: CollectionFolderRequest,
+) -> Result<CollectionFolderView, FileError> {
+    let destination = Destination {
+        collection_id: request.collection_id.clone(),
+        folder: Some(request.folder.clone()),
+    };
+    let checked = destination::check(state, principal, &request.library_id, &destination)
+        .await
+        .map_err(|refusal| {
+            let (specific, code, message) = refusal.answer();
+            FileError::coded(code, specific, message)
+        })?;
+    let home = installed(state)?;
+    let library = LibraryId::new(&request.library_id).map_err(|_| FileError::not_found())?;
+    let collection = checked.collection_id.clone();
+    let folder = request.folder.clone();
+    let found = tokio::task::spawn_blocking(move || {
+        home.free_path(&library, &collection, &folder, ItemKind::Folder)
+    })
+    .await
+    .map_err(|_| FileError::internal("the home-collection task failed"))?;
+    let path = found.map_err(catalog_error)?.map_err(path_error)?;
+    Ok(CollectionFolderView {
+        library_id: request.library_id,
+        collection_id: checked.collection_id.as_str().to_string(),
+        path,
+        pending: true,
+    })
 }
 
 /// The refusal of a path the rule of API-S-011 refuses. Pure.
