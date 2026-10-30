@@ -21,7 +21,9 @@ import {
   rootOf,
   rowNamed,
   settle,
+  viewSource,
 } from "../support/drive-fakes";
+import { MemoryNavigationSource } from "../../src/navigation/source";
 import labels from "../../src/theme/labels.en.json";
 
 let errors: ReturnType<typeof vi.spyOn>;
@@ -122,7 +124,7 @@ describe("<fs-drive-view> list", () => {
     ).not.toBeNull();
   });
 
-  it("shows the actions button only on hover or focus (it is in the DOM, hidden by style)", async () => {
+  it("names each row's actions button from the label table", async () => {
     const { element } = await mount();
     const button = rowNamed(element, "budget-2026.xlsx").querySelector("button.actions");
     expect(button?.getAttribute("aria-label")).toBe(
@@ -347,6 +349,20 @@ describe("<fs-drive-view> rename and remove", () => {
     expect(files.rename).not.toHaveBeenCalled();
   });
 
+  it("counts the name's bytes, not its characters: 513 two-byte characters are 1,026 bytes", async () => {
+    const { element, files } = await mount();
+    await openRename(element, "budget-2026.xlsx");
+    const dialog = one(element, "[role=dialog]");
+    const input = dialog.querySelector("input") as HTMLInputElement;
+    input.value = "é".repeat(513);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(dialog.querySelector(".form-error")?.textContent).toBe(labels.fileDisplayNameTooLong);
+    expect(files.rename).not.toHaveBeenCalled();
+    input.value = "é".repeat(512);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(dialog.querySelector(".form-error")?.textContent).toBe("");
+  });
+
   it("shows a refusal under the field and keeps the form open with the typed name", async () => {
     const { element, files } = await mount();
     (files.rename as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
@@ -382,6 +398,30 @@ describe("<fs-drive-view> rename and remove", () => {
     expect(all(element, ".toast")).toHaveLength(0);
   });
 
+  it("removes the selected files in turn and stops at the first failure, keeping the selection", async () => {
+    const { element, files } = await mount();
+    const remove = files.remove as unknown as ReturnType<typeof vi.fn<() => Promise<unknown>>>;
+    const first = await remove();
+    remove.mockReset();
+    remove.mockResolvedValueOnce(first).mockRejectedValueOnce(new Error("refused"));
+    await tick(element, "budget-2026.xlsx");
+    await tick(element, "facade-study.jpg");
+    await tick(element, "survey-points.csv");
+    await click(one(element, ".bulk-remove"));
+    expect(remove).toHaveBeenCalledTimes(2);
+    expect(one(element, ".toast[role=alert]").textContent).toBe(labels.fileActionFailed);
+    expect(one(element, ".bulk-count").textContent).toBe("3 selected");
+  });
+
+  it("clears the selection once every selected file is removed", async () => {
+    const { element, files } = await mount();
+    await tick(element, "budget-2026.xlsx");
+    await tick(element, "facade-study.jpg");
+    await click(one(element, ".bulk-remove"));
+    expect(files.remove).toHaveBeenCalledTimes(2);
+    expect(all(element, ".bulk-count")).toHaveLength(0);
+  });
+
   it("says why an action is not available when the host does not name the library", async () => {
     const rows = ROWS.map((row) => ({ ...row, libraryId: undefined }));
     const source = new MemoryViewSource(new Map([["node-library", { all: rows, deleted: [] }]]));
@@ -392,6 +432,50 @@ describe("<fs-drive-view> rename and remove", () => {
     const rename = item(element, labels.fileRename);
     expect(rename.getAttribute("aria-disabled")).toBe("true");
     expect(rename.getAttribute("title")).toBe(labels.fileActionUnavailable);
+  });
+});
+
+describe("<fs-drive-view> reads", () => {
+  /** A source whose first page has a next page that never finishes until it is aborted. */
+  function pagedSource() {
+    return {
+      view: vi.fn(
+        async (
+          _query: unknown,
+          cursor?: string | null,
+          _limit?: number,
+          call?: { signal?: AbortSignal },
+        ) => {
+          if (!cursor) return { rows: [...ROWS], nextCursor: "page-2", complete: true };
+          return new Promise<never>((_, reject) =>
+            call?.signal?.addEventListener("abort", () =>
+              reject(new DOMException("aborted", "AbortError")),
+            ),
+          );
+        },
+      ),
+    };
+  }
+
+  it("keeps the rows and shows no error when the next page is aborted by leaving the page", async () => {
+    const source = pagedSource();
+    const { element } = await mount({ source: source as never });
+    // The list asks for the next page by itself because the first page is short.
+    expect(source.view).toHaveBeenCalledTimes(2);
+    element.remove();
+    await settle();
+    expect(element.dataset.state).toBe("ready");
+    expect(names(element)).toHaveLength(6);
+  });
+
+  it("limits the sidebar filter to the 256 bytes the API takes, never splitting a character", async () => {
+    const source = viewSource();
+    const { element } = await mount({ source });
+    element.filter = "é".repeat(200);
+    await settle();
+    const sent = new TextEncoder().encode(source.calls.at(-1)?.query.filter ?? "").length;
+    expect(sent).toBe(256);
+    expect(source.calls.at(-1)?.query.filter).toBe("é".repeat(128));
   });
 });
 
@@ -412,6 +496,24 @@ describe("<fs-drive-view> ZIP and move or copy", () => {
     await click(one(element, "input.check-all"));
     await click(one(element, ".bulk-zip"));
     expect(one(element, "[role=dialog]").textContent).toContain(labels.fileZipTooBig);
+  });
+
+  it("says an empty archive is the problem, not a cap", async () => {
+    const rows = [{ ...at(ROWS, 0), fileCount: 0 }, at(ROWS, 2)];
+    const { element } = await mount({ rows });
+    await tick(element, "Contracts");
+    await click(one(element, ".bulk-zip"));
+    const dialog = one(element, "[role=dialog]");
+    expect(dialog.querySelector(".form-error")?.textContent).toBe(labels.fileZipEmpty);
+    expect(dialog.textContent).not.toContain(labels.fileZipTooMany);
+    expect(dialog.querySelector("button.start")?.hasAttribute("disabled")).toBe(true);
+  });
+
+  it("words a one-file archive in the singular", async () => {
+    const { element } = await mount();
+    await tick(element, "budget-2026.xlsx");
+    await click(one(element, ".bulk-zip"));
+    expect(one(element, "[role=dialog]").textContent).toContain("1 file · 412 KB · saved to");
   });
 
   it("describes an allowed ZIP and never shows a save path", async () => {
@@ -435,7 +537,38 @@ describe("<fs-drive-view> ZIP and move or copy", () => {
     expect(one(element, "[role=dialog] .form-error").textContent).toBe(labels.fileZipUnavailable);
   });
 
-  it("opens the move or copy dialog with the mode control and the honest refusal", async () => {
+  it("refuses honestly, changing nothing, when the host cannot place the files in a collection", async () => {
+    const navigation = new MemoryNavigationSource({
+      node: "r",
+      kind: "repository",
+      name: null,
+      children: [
+        {
+          node: "node-library",
+          kind: "library",
+          name: "Family",
+          children: [{ node: "c1", kind: "collection", name: "Photos" }],
+        },
+      ],
+    });
+    const { element, files } = await mount({ navigation });
+    await tick(element, "budget-2026.xlsx");
+    await click(one(element, ".bulk-move"));
+    const picker = one(element, "fs-destination-picker");
+    await settle();
+    const photos = [
+      ...(picker.shadowRoot?.querySelectorAll<HTMLElement>("li[data-node]") ?? []),
+    ][1];
+    await click(photos as HTMLElement);
+    await click(one(element, "[role=dialog] button.start"));
+    expect(one(element, "[role=dialog] .form-error").textContent).toBe(
+      labels.fileMoveCopyUnavailable,
+    );
+    expect(files.rename).not.toHaveBeenCalled();
+    expect(files.remove).not.toHaveBeenCalled();
+  });
+
+  it("opens the move or copy dialog with the mode control and the mode's explanation", async () => {
     const { element } = await mount();
     await tick(element, "budget-2026.xlsx");
     await click(one(element, ".bulk-move"));

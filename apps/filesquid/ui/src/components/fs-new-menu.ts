@@ -106,10 +106,8 @@ export class FsNewMenu extends HTMLElement {
     }
     const enabled = this.place !== undefined && this.ready;
     const entries = newEntries(labels, enabled);
-    const reasoned =
-      enabled || this.place === undefined
-        ? entries
-        : withReason(entries, labels.fileActionUnavailable);
+    // A host that cannot place uploads says so everywhere, before it says where to go.
+    const reasoned = this.ready ? entries : withReason(entries, labels.fileActionUnavailable);
     this.menu = openMenu(layer, { element: opener }, opener, {
       className: "new-menu",
       label: labels.fileNewMenu,

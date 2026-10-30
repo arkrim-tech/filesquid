@@ -37,6 +37,21 @@ describe("singleOpenLibrary", () => {
     expect(request).toHaveBeenCalledTimes(1);
   });
 
+  it("reads again after the route changes, so a library opened later is found", async () => {
+    const events = new EventTarget();
+    const request = vi
+      .fn()
+      .mockResolvedValueOnce({ libraries: [library("a", false)] })
+      .mockResolvedValueOnce({ libraries: [library("a", true)] });
+    const lookup = singleOpenLibrary({ request } as never, events);
+    expect(await lookup()).toBeUndefined();
+    expect(await lookup()).toBeUndefined();
+    expect(request).toHaveBeenCalledTimes(1);
+    events.dispatchEvent(new Event("hashchange"));
+    expect(await lookup()).toBe("a");
+    expect(request).toHaveBeenCalledTimes(2);
+  });
+
   it("answers nothing when several libraries are open or none is", async () => {
     const two = vi.fn().mockResolvedValue({ libraries: [library("a", true), library("b", true)] });
     expect(await singleOpenLibrary({ request: two } as never)()).toBeUndefined();
@@ -95,6 +110,17 @@ describe("the storage block", () => {
     expect(request).toHaveBeenLastCalledWith("/api/v1/files/library-history-size?library_id=lib");
   });
 
+  it("leaves the free space out when the host cannot say, instead of reporting none", async () => {
+    const request = vi.fn(async (path: string) =>
+      path.startsWith("/api/v1/libraries/recent")
+        ? { libraries: [library("lib", true, null)] }
+        : { library_id: "lib", objects: 1, contents: 1, bytes: 1234, truncated: false },
+    );
+    const summary = await readStorage({ request } as never);
+    expect(summary).toEqual({ usedBytes: 1234 });
+    expect(summary).not.toHaveProperty("freeBytes");
+  });
+
   it("says nothing with several open libraries, or when a read fails", async () => {
     const two = vi.fn().mockResolvedValue({ libraries: [library("a", true), library("b", true)] });
     expect(await readStorage({ request: two } as never)).toBeUndefined();
@@ -138,5 +164,31 @@ describe("the storage block", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(root.querySelector(".storage-value")?.textContent).toBe("2 KB");
     shell.remove();
+  });
+
+  it("keeps the newest summary when an older read finishes last", async () => {
+    defineElements();
+    const shell = document.createElement("fs-app-shell") as FsAppShell;
+    const answers: ((bytes: number) => void)[] = [];
+    const request = vi.fn(async (path: string) => {
+      if (path.startsWith("/api/v1/libraries/recent")) return { libraries: [library("lib", true)] };
+      const bytes = await new Promise<number>((resolve) => answers.push(resolve));
+      return { library_id: "lib", objects: 1, contents: 1, bytes, truncated: false };
+    });
+    const seen: unknown[] = [];
+    Object.defineProperty(shell, "storage", {
+      set: (value) => seen.push(value),
+      configurable: true,
+    });
+    bindStorage(shell, { request } as never);
+    shell.dispatchEvent(new CustomEvent("fs-summary", { detail: { text: "x" } }));
+    shell.dispatchEvent(new CustomEvent("fs-drive-change"));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(answers).toHaveLength(2);
+    answers[1]?.(2000);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    answers[0]?.(1000);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(seen).toEqual([{ usedBytes: 2000, freeBytes: 1000 }]);
   });
 });

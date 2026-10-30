@@ -14,6 +14,7 @@ import { DEFAULT_PREFERENCES, type UserPreferences } from "../../src/preferences
 import { MemoryPreferencesSource } from "../../src/preferences/source";
 import { PreferencesService } from "../../src/preferences/service";
 import { NavigationStore } from "../../src/navigation/store";
+import type { NavigationSource } from "../../src/navigation/model";
 import type { FileSource } from "../../src/files/source";
 import labels from "../../src/theme/labels.en.json";
 
@@ -135,6 +136,8 @@ export interface MountOptions {
   prefs?: Partial<UserPreferences>;
   /** A source to use instead of the fixture's. */
   source?: MemoryViewSource;
+  /** The navigation listing the destination picker reads; none by default. */
+  navigation?: NavigationSource;
 }
 
 /** The mounted element with what a test needs to steer and inspect it. */
@@ -165,6 +168,7 @@ export async function mount(options: MountOptions = {}): Promise<Mounted> {
     preferences: service,
     now: () => NOW,
     online: () => true,
+    navigation: options.navigation,
   });
   document.body.replaceChildren(element);
   element.heading = "Harbour project";
@@ -211,13 +215,14 @@ export async function click(element: Element): Promise<void> {
   await settle();
 }
 
-/** Every text and attribute value below `root`, shadow roots included, as one string. */
+/** Every text and attribute value of `root` and below it, shadow roots included, as one string. */
 export function deepText(root: ParentNode): string {
   const parts: string[] = [];
   const stack: ParentNode[] = [root];
   for (let guard = 0; guard < 100_000 && stack.length > 0; guard += 1) {
     const node = stack.pop() as ParentNode;
-    for (const el of node.querySelectorAll("*")) {
+    const own = node instanceof Element ? [node] : [];
+    for (const el of [...own, ...node.querySelectorAll("*")]) {
       parts.push(el.textContent ?? "", ...[...el.attributes].map((a) => `${a.name}=${a.value}`));
       if (el.shadowRoot) stack.push(el.shadowRoot);
     }

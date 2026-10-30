@@ -22,6 +22,13 @@ import {
 } from "../support/strict-dom";
 
 const labels = activeLabels();
+
+/** A label template with its `{placeholders}` filled, so no English word is typed in a test. */
+function fill(key: string, values: Record<string, string | number>): string {
+  return label(labels, key).replace(/\{(\w+)\}/g, (whole, name: string) =>
+    name in values ? String(values[name]) : whole,
+  );
+}
 const SCHEMES = ["light", "dark"] as const;
 
 /** The shell's health, host and event channel, answered so only the build is under test. */
@@ -254,7 +261,7 @@ for (const scheme of SCHEMES) {
         "18.4 MB · 2 hours ago",
       );
       const sort = view.locator("button.sort-button");
-      await expect(sort).toContainText("Sort: Name");
+      await expect(sort).toContainText(fill("fileSortButton", { key: label(labels, "sortName") }));
       await sort.click();
       const menu = view.locator("[role=menu].sort-menu");
       await expect(menu.locator(".eyebrow")).toHaveText(label(labels, "fileSortBy"));
@@ -270,7 +277,7 @@ for (const scheme of SCHEMES) {
       await expect
         .poll(() => api.calls.at(-1))
         .toMatchObject({ sort: "size", direction: "ascending" });
-      await expect(sort).toContainText("Sort: Size");
+      await expect(sort).toContainText(fill("fileSortButton", { key: label(labels, "sortSize") }));
       expect(errors).toEqual([]);
     });
 
@@ -282,8 +289,13 @@ for (const scheme of SCHEMES) {
       await rowNamed(page, "harbour-masterplan-v7.pdf").locator("input.check").check();
       await rowNamed(page, "budget-2026.xlsx").locator("input.check").check();
       const bar = view.locator(".bulk");
-      await expect(bar.locator(".bulk-count")).toHaveText("2 selected");
-      await expect(bar.locator(".bulk-scope")).toHaveText("2 files · 18.8 MB");
+      await expect(bar.locator(".bulk-count")).toHaveText(fill("fileSelected", { count: 2 }));
+      await expect(bar.locator(".bulk-scope")).toHaveText(
+        fill("fileSelectionScopeFiles", {
+          files: fill("fileCountOther", { count: 2 }),
+          size: "18.8 MB",
+        }),
+      );
       await expectBox(bar, { x: 264, y: 142, width: 1152, height: 56 });
       await expectBox(view.locator(".head"), { y: 198 });
       expect(await look(bar)).toMatchObject({ background: rgbOf(c.tint) });
@@ -307,7 +319,9 @@ for (const scheme of SCHEMES) {
           .evaluate((el) => (el as HTMLInputElement).indeterminate),
       ).toBe(true);
       await view.locator("input.check-all").click();
-      await expect(bar.locator(".bulk-count")).toHaveText(`${ROWS.length} selected`);
+      await expect(bar.locator(".bulk-count")).toHaveText(
+        fill("fileSelected", { count: ROWS.length }),
+      );
       await view.locator("input.check-all").click();
       await expect(bar).toHaveCount(0);
       expect(errors).toEqual([]);
@@ -362,7 +376,9 @@ for (const scheme of SCHEMES) {
       await view.getByRole("menuitem", { name: label(labels, "fileRename") }).click();
       const dialog = view.locator("[role=dialog]");
       await expectBox(dialog, { width: 560, height: 250 });
-      await expect(dialog.locator(".dialog-title")).toHaveText("Rename harbour-masterplan-v7.pdf");
+      await expect(dialog.locator(".dialog-title")).toHaveText(
+        fill("fileRenameOnlyTitle", { name: "harbour-masterplan-v7.pdf" }),
+      );
       expect(await look(dialog.locator(".dialog-title"))).toMatchObject({
         size: "20px",
         weight: "700",
@@ -463,7 +479,9 @@ for (const scheme of SCHEMES) {
       await view.locator(".bulk-move").click();
       const move = view.locator("[role=dialog]");
       await expectBox(move, { width: 600, height: 640 });
-      await expect(move.locator(".dialog-title")).toHaveText("Move or copy 2 files");
+      await expect(move.locator(".dialog-title")).toHaveText(
+        fill("fileMoveTitleMany", { count: 2 }),
+      );
       await expect(move.locator(".names")).toHaveText(
         "harbour-masterplan-v7.pdf, tender-response.pdf",
       );
@@ -528,7 +546,9 @@ for (const scheme of SCHEMES) {
       const zip = view.locator("[role=dialog]");
       await expectBox(zip, { width: 640, height: 520 });
       await expect(zip.locator(".dialog-title")).toHaveText(label(labels, "fileZipTitle"));
-      await expect(zip).toContainText("2 files · 18.8 MB · saved to a file you choose");
+      await expect(zip).toContainText(
+        fill("fileZipSummary", { files: fill("fileCountOther", { count: 2 }), size: "18.8 MB" }),
+      );
       await expect(zip.locator("input")).toHaveValue("Family.zip");
       expect((await look(zip.locator("input"))).family).toMatch(/mono/i);
       await expect(zip).toContainText(label(labels, "fileZipPolicyTitle"));
@@ -557,7 +577,9 @@ test("the loading state (mockup 33): placeholder rows and the footer line", asyn
   await expect(view).toHaveAttribute("data-state", "loading");
   await expect(view.locator(".head")).toBeVisible();
   await expect(view.locator(".placeholder-row").first()).toBeVisible();
-  await expect(page.locator('fs-app-shell [slot="summary"]')).toHaveText("Loading Family…");
+  await expect(page.locator('fs-app-shell [slot="summary"]')).toHaveText(
+    fill("fileLoadingName", { name: "Family" }),
+  );
   await expect(view).toHaveAttribute("data-state", "ready", { timeout: 8000 });
   await expect(page.locator('fs-app-shell [slot="summary"]')).toContainText(
     "Folders: 3 · Files: 10",
@@ -576,7 +598,9 @@ test("the storage block (UI-S-025) shows the bytes the open library keeps and th
   const nav = page.locator("fs-app-shell nav").first();
   await expect(nav.locator(".storage-value")).toHaveText("4.2 GB");
   await expect(nav.locator(".storage-title")).toHaveText(label(labels, "fileStorageUsed"));
-  await expect(nav.locator(".storage-free")).toHaveText("466 GB free on disk");
+  await expect(nav.locator(".storage-free")).toHaveText(
+    fill("fileStorageFree", { free: "466 GB" }),
+  );
   await expect(nav.locator(".storage-history")).toBeHidden();
   expect(errors).toEqual([]);
 });

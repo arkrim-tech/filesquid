@@ -124,6 +124,70 @@ describe("<fs-destination-picker>", () => {
     expect(picker.selected?.node).toBe("c1");
   });
 
+  it("has one Tab stop, on the chosen row or else the first, and moves it with focus", async () => {
+    const picker = await mountPicker();
+    expect(rows(picker).map((li) => li.tabIndex)).toEqual([0, -1]);
+    rows(picker)[1]?.focus();
+    expect(rows(picker).map((li) => li.tabIndex)).toEqual([-1, 0]);
+  });
+
+  it("clears the choice, and says so, when it is configured again", async () => {
+    const picker = await mountPicker();
+    rows(picker)[1]?.click();
+    const seen = vi.fn();
+    picker.addEventListener("fs-destination-change", (e) => seen((e as CustomEvent).detail));
+    picker.configure({ labels, source: new MemoryNavigationSource(TREE) });
+    await settle();
+    expect(picker.selected).toBeUndefined();
+    expect(seen).toHaveBeenCalledWith(null);
+    expect(rows(picker).every((li) => li.getAttribute("aria-selected") === "false")).toBe(true);
+  });
+
+  it("shows the error state with Try again when a lazy read of a node fails", async () => {
+    const source = new MemoryNavigationSource(TREE);
+    const list = source.list.bind(source);
+    let fail = false;
+    source.list = (parent, cursor, limit) =>
+      fail && parent === "c1" ? Promise.reject(new Error("down")) : list(parent, cursor, limit);
+    const picker = document.createElement("fs-destination-picker") as FsDestinationPicker;
+    picker.configure({ labels, source, online: () => true });
+    document.body.append(picker);
+    await settle();
+    fail = true;
+    (rows(picker)[1]?.querySelector(".chevron") as HTMLElement).click();
+    await settle();
+    expect(picker.dataset.state).toBe("error");
+  });
+
+  it("ignores a read that finishes after a newer one started", async () => {
+    const stale = new MemoryNavigationSource({
+      ...TREE,
+      children: [{ node: "node-library", kind: "library", name: "Old", children: [] }],
+    });
+    const fresh = new MemoryNavigationSource(TREE);
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    let gated = false;
+    const source = {
+      ...fresh,
+      list: async (parent: string | null, cursor?: string | null, limit?: number) => {
+        if (parent !== "r" || gated) return fresh.list(parent, cursor, limit);
+        gated = true;
+        await gate;
+        return stale.list(parent, cursor, limit);
+      },
+    };
+    const picker = document.createElement("fs-destination-picker") as FsDestinationPicker;
+    picker.configure({ labels, source: source as never });
+    document.body.append(picker);
+    await picker.load();
+    release();
+    await settle();
+    (rows(picker)[1]?.querySelector(".chevron") as HTMLElement).click();
+    await settle();
+    expect(rows(picker).map((li) => li.textContent?.trim())).toEqual(["Family", "Photos", "2025"]);
+  });
+
   it("shows the error state with Try again when the listing fails", async () => {
     const source = new MemoryNavigationSource(TREE);
     source.failure = new Error("down");
@@ -168,8 +232,15 @@ describe("<fs-new-menu>", () => {
     );
   });
 
+  it("says the host cannot place uploads, not where to go, while uploads are not possible anywhere", () => {
+    const { menu, button } = mountMenu();
+    pressNew(button);
+    expect(items(menu).every((i) => i.title === labels.fileActionUnavailable)).toBe(true);
+  });
+
   it("disables every item with the label-table reason where no collection or folder is shown", () => {
     const { menu, button } = mountMenu();
+    menu.uploads = true;
     pressNew(button);
     expect(items(menu).every((i) => i.getAttribute("aria-disabled") === "true")).toBe(true);
     expect(items(menu)[0]?.title).toBe(labels.fileUploadDisabledReason);
@@ -284,6 +355,20 @@ describe("Settings, Browsing", () => {
     expect(source.writes.at(-1)?.start_view).toBe("personal_root");
   });
 
+  it("stops following the old preferences when it is configured with others", async () => {
+    const { service: first } = await preferences();
+    const { service: second } = await preferences({ layout: "grid" });
+    const settings = await mountSettings(first);
+    const release = vi.spyOn(first, "removeEventListener");
+    settings.configure({
+      ...(settings as unknown as { options: object }).options,
+      preferences: second,
+    } as never);
+    expect(release).toHaveBeenCalledWith("change", expect.any(Function));
+    const layout = settings.shadowRoot?.querySelector<HTMLSelectElement>("#pref-layout");
+    expect(layout?.value).toBe("grid");
+  });
+
   it("says the choices apply until the page closes when the host stores none", async () => {
     const service = new PreferencesService({
       source: {
@@ -379,6 +464,45 @@ describe("Drive routes", () => {
     await settle();
     expect(shell.querySelector("fs-drive-view")).toBeNull();
     expect(shell.querySelector('[slot="summary"]')?.textContent).toBe("");
+  });
+
+  it("forgets the New menu's destination on every route change, so Upload cannot target a place no longer shown", async () => {
+    const { newMenu } = await mountRoute("#/files");
+    newMenu.destination = "c1";
+    window.location.hash = "#/recent";
+    window.dispatchEvent(new HashChangeEvent("hashchange"));
+    expect(newMenu.destination).toBeUndefined();
+  });
+
+  it("ignores a library lookup that finishes after the route changed", async () => {
+    window.location.hash = "#/files";
+    const shell = document.createElement("fs-app-shell") as FsAppShell;
+    document.body.append(shell);
+    const { service } = await preferences();
+    const navigation = new MemoryNavigationSource(TREE);
+    const list = navigation.list.bind(navigation);
+    let fail: (reason: unknown) => void = () => undefined;
+    let first = true;
+    navigation.list = (parent, cursor, limit) => {
+      if (parent !== null || !first) return list(parent, cursor, limit);
+      first = false;
+      return new Promise((_, reject) => (fail = reject));
+    };
+    bindDriveRoute(shell, {
+      labels,
+      navigation,
+      drive: { source: viewSource(), preferences: service },
+    });
+    window.location.hash = "#/recent";
+    window.dispatchEvent(new HashChangeEvent("hashchange"));
+    await settle();
+    await settle();
+    const view = shell.querySelector<HTMLElement>("fs-drive-view");
+    const before = view?.dataset.state;
+    fail(new Error("late"));
+    await settle();
+    expect(view?.dataset.state).toBe(before);
+    expect(view?.dataset.state).not.toBe("error");
   });
 
   it("says the node is gone when the host lists no library", async () => {

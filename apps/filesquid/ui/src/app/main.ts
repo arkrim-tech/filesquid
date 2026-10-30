@@ -69,6 +69,7 @@ const tokens = memoryTokenStore(() => {
   void shell?.refreshHealth();
   navigation.reconnect();
   void tree.reload();
+  void preferences.start(); // reads again when the first read was refused before the token
 });
 const client = createHostClient(window, () => tokens.get());
 const navigation = new ClientNavigationSource(client);
@@ -82,7 +83,7 @@ const preferences = new PreferencesService({
 });
 void preferences.start();
 const files = new ClientFileSource(client);
-const viewSource = new ClientViewSource(client, singleOpenLibrary(client));
+const viewSource = new ClientViewSource(client, singleOpenLibrary(client, window));
 const drive = { source: viewSource, preferences, files, navigation };
 const newMenu = document.createElement("fs-new-menu") as FsNewMenu;
 newMenu.configure({ labels });

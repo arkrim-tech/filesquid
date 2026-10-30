@@ -87,25 +87,36 @@ function createView(shell: HTMLElement, options: DriveRouteOptions): FsDriveView
   return view;
 }
 
-/** Show the library's view for a route, or why there is none. */
+/** Show the library's view for a route, or why there is none; dropped when `current` is false. */
 async function showLibrary(
   view: FsDriveView,
   options: DriveRouteOptions,
   route: (typeof ROUTES)[string],
+  current: () => boolean,
 ): Promise<void> {
   view.heading = options.labels[route.title];
   view.view = route.view;
   try {
     const library = await firstLibrary(options.navigation);
     if (library === undefined) throw new ApiError(404, "/api/v1/navigation", { code: "not_found" });
-    view.node = library;
+    if (current()) view.node = library;
   } catch (error) {
-    view.showFailure(error);
+    if (current()) view.showFailure(error);
+    else console.warn("FileSquid dropped a library lookup of a route that was left", error);
   }
 }
 
-/** Mount, move or remove the drive view to match the hash. */
-function applyRoute(shell: HTMLElement, options: DriveRouteOptions, hash: string): void {
+/**
+ * Mount, move or remove the drive view to match the hash. Each call starts a new route
+ * generation, so a library lookup of an earlier route cannot change the view after a later one.
+ */
+function applyRoute(
+  shell: HTMLElement,
+  options: DriveRouteOptions,
+  hash: string,
+  generation: { n: number },
+): void {
+  const mine = ++generation.n;
   const route = ROUTES[hash];
   const existing = shell.querySelector<FsDriveView>(":scope > fs-drive-view");
   if (!route) {
@@ -113,7 +124,7 @@ function applyRoute(shell: HTMLElement, options: DriveRouteOptions, hash: string
     return;
   }
   const view = existing ?? createView(shell, options);
-  void showLibrary(view, options, route);
+  void showLibrary(view, options, route, () => mine === generation.n);
 }
 
 /** What the views tell the shell. */
@@ -172,9 +183,13 @@ export function bindDriveRoute(
   win: Window = window,
 ): () => void {
   const unwire = wireEvents(shell, options, win);
-  applyRoute(shell, options, win.location.hash);
+  const generation = { n: 0 };
+  applyRoute(shell, options, win.location.hash, generation);
   const onChange = () => {
-    applyRoute(shell, options, win.location.hash);
+    // The destination of the last route is not a place on this one; a navigation view that is
+    // shown now announces its own once it has read the node.
+    if (options.newMenu) options.newMenu.destination = undefined;
+    applyRoute(shell, options, win.location.hash, generation);
     if (!ROUTES[win.location.hash]) showFooter(shell, options.labels, undefined);
     shell.focusMain?.();
   };

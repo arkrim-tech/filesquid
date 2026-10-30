@@ -44,6 +44,9 @@ export type ViewClient = Pick<FileSquidClient, "request">;
 /** The view operation (API-S-011). */
 const VIEW_PATH = "/api/v1/files/view";
 
+/** The most rows one page may ask for (API-S-011). */
+const MAX_VIEW_LIMIT = 1000;
+
 /** True for a plain object. */
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -53,7 +56,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function validRow(row: unknown): row is ViewRow {
   if (!isRecord(row)) return false;
   if (row.kind === "folder") {
-    return typeof row.node === "string" && typeof row.name === "string" && !!row.node_kind;
+    const kind = row.node_kind;
+    const known = kind === "collection" || kind === "virtual_collection";
+    return typeof row.node === "string" && typeof row.name === "string" && known;
   }
   return (
     row.kind === "file" &&
@@ -83,14 +88,24 @@ export function parseViewPage(value: unknown, libraryId?: string): DrivePage {
     throw new TypeError(`${VIEW_PATH} answered a row that breaks the contract`);
   }
   const cursor = answer.next_cursor;
+  if (cursor !== null && typeof cursor !== "string") {
+    throw new TypeError(`${VIEW_PATH} answered a next_cursor that is not text or null`);
+  }
+  // A page that does not say whether the view is whole must not look whole.
+  if (typeof answer.complete !== "boolean") {
+    throw new TypeError(`${VIEW_PATH} answered no boolean complete`);
+  }
   return {
     rows: answer.rows.map((row) => driveRow(row, libraryId)),
-    nextCursor: typeof cursor === "string" && cursor !== "" ? cursor : null,
-    complete: answer.complete !== false,
+    nextCursor: cursor !== undefined && cursor !== "" ? cursor : null,
+    complete: answer.complete,
   };
 }
 
-/** The query string of a view request: only what differs from the API's defaults is sent. */
+/**
+ * The query string of a view request: the node, view, sort, direction and folder placement are
+ * always sent; the filter only when it is not empty, the cursor only after the first page.
+ */
 function viewQuery(query: ViewQuery, cursor: string | null, limit: number): string {
   const params = new URLSearchParams({ node: query.node, view: query.view });
   params.set("sort", query.sort);
@@ -122,6 +137,7 @@ export class ClientViewSource implements ViewSource {
    * @param limit Rows per page (default 200).
    * @param call Abort signal.
    * @returns The page.
+   * @throws RangeError when `limit` is not an integer from 1 to 1,000 (nothing is sent).
    * @throws ApiError when the API refuses: 400 for a view that is not available yet, 404 for an
    *   unknown node, 409 `conflict` for a cursor of a view that changed.
    * @throws TypeError when the answer breaks the contract.
@@ -132,6 +148,9 @@ export class ClientViewSource implements ViewSource {
     limit: number = VIEW_PAGE_SIZE,
     call: ViewCall = {},
   ): Promise<DrivePage> {
+    if (!Number.isInteger(limit) || limit < 1 || limit > MAX_VIEW_LIMIT) {
+      throw new RangeError(`A view page holds 1 to ${MAX_VIEW_LIMIT} rows, not ${limit}`);
+    }
     const path = `${VIEW_PATH}${viewQuery(query, cursor, limit)}`;
     const answer = await this.client.request<unknown>(path, { signal: call.signal });
     return parseViewPage(answer, await this.libraryOf?.());

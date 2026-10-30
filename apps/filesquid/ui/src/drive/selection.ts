@@ -16,15 +16,27 @@ export type SelectionState = "none" | "some" | "all";
 /** A set of row keys with the rules of a listing's checkboxes. */
 export class Selection extends EventTarget {
   private readonly chosen = new Set<string>();
+  private anchorKey?: string;
 
   /** How many rows are selected. */
   get size(): number {
     return this.chosen.size;
   }
 
-  /** The selected keys, in the order they were selected. */
+  /**
+   * The selected keys, in the order they were added. A range is added in display order, so the
+   * last key is not the last row clicked: use {@link anchor} for that.
+   */
   keys(): string[] {
     return [...this.chosen];
+  }
+
+  /**
+   * The row last ticked or unticked by itself, where a Shift-click range starts; undefined
+   * when none, after a clear, or when that row left the view.
+   */
+  get anchor(): string | undefined {
+    return this.anchorKey;
   }
 
   /**
@@ -44,6 +56,7 @@ export class Selection extends EventTarget {
    * @param on True to select, false to unselect; the opposite of now when omitted.
    */
   toggle(key: string, on: boolean = !this.chosen.has(key)): void {
+    this.anchorKey = key;
     if (on === this.chosen.has(key)) return;
     if (on && this.chosen.size >= MAX_SELECTED) return;
     if (on) this.chosen.add(key);
@@ -81,6 +94,7 @@ export class Selection extends EventTarget {
 
   /** Unselect everything. */
   clear(): void {
+    this.anchorKey = undefined;
     if (this.chosen.size === 0) return;
     this.chosen.clear();
     this.announce();
@@ -92,6 +106,7 @@ export class Selection extends EventTarget {
    * @param present The keys of the rows now in the view.
    */
   retain(present: ReadonlySet<string>): void {
+    if (this.anchorKey !== undefined && !present.has(this.anchorKey)) this.anchorKey = undefined;
     let changed = false;
     for (const key of [...this.chosen]) {
       if (present.has(key)) continue;

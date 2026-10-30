@@ -306,10 +306,9 @@ export class DriveList {
       node = this.replaceNode(item, node, signature);
     node.style.setProperty("--r", String(Math.floor(index / columns)));
     node.style.setProperty("--c", String(index % columns));
-    node.setAttribute(
-      this.layout === "list" ? "aria-rowindex" : "aria-posinset",
-      String(index + 2),
-    );
+    // The list's header is row 1, so its first row is 2; a grid tile counts from 1.
+    if (this.layout === "list") node.setAttribute("aria-rowindex", String(index + 2));
+    else node.setAttribute("aria-posinset", String(index + 1));
     if (node.parentElement !== this.canvas) this.insertSorted(node, index);
     node.dataset.index = String(index);
   }

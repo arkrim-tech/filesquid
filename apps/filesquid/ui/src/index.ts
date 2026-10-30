@@ -264,7 +264,7 @@ export {
   ZIP_MAX_FILES,
   driveRow,
   nextSort,
-  relativeTime,
+  relativeTime as driveRelativeTime,
   scopeText,
   zipCheck,
   type DriveRow,

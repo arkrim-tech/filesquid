@@ -29,7 +29,10 @@ PRD: [F-062](../../../../../resources/prd.md#f-062-drive-style-views-sorting-sel
 
 ## Decisions to confirm
 
-- **API wins over the device value** (UI-S-017 says "copy that value there once"): when the API already holds navigation choices, they stay and the device key is only removed; the copy happens when the API's choices are empty. This avoids overwriting choices made on another device.
+- **Merge, not overwrite** (UI-S-017 says "copy that value there once"): when the API already holds navigation choices and the device holds a value too, the two are merged (the API's pins first, then the device's pins it lacks; the API's section order unless it has none; the union of collapsed nodes, each list inside its bound), written once, and the device key is removed. Neither side loses a choice. Changed after review round 1.
+- **Whole-choices saves, last writer wins**: each save is one complete `PUT` (the contract has no merge), so when two tabs change the navigation choices the last save wins; a tab reads the API's choices again when it starts. Documented in the README and `NavigationStore.useRemote`.
+- **Folder contents in a ZIP are not byte-counted**: the view contract gives a folder row neither a size nor (yet) a file count, so the 10 GiB cap is checked against the selected files' own bytes and left to the ZIP route to enforce for folder contents (the dialog says the download is not available until that route exists).
+- **Download in the item menu stays disabled with the label-table reason**: the mockup draws the item, and a single-file download needs the head version, which the view rows do not name yet (item 1 below).
 - **File actions without a library in the view rows**: the stop-gap `singleOpenLibrary` names the library when exactly one is open; otherwise the actions are disabled with the label-table reason.
 
 ## What is not built, and what the platform engineer must add
@@ -38,7 +41,7 @@ PRD: [F-062](../../../../../resources/prd.md#f-062-drive-style-views-sorting-sel
 2. Move and copy into a collection need `collection_id` and `folder` on the copy and move commands (API-F2.14). The dialog works up to the choice and then refuses with `fileMoveCopyUnavailable`, never a copy no collection would show.
 3. The ZIP download has no route (API-F2.2 item 8); the dialog applies the caps and says the download is not available.
 4. The views home, personal, favorites, shares and tags and Recent answer 400 (not available yet); the UI says so. Favorite, manage tags, share, Show in Finder and drag-to-folder are left out of the menus until their routes or tasks exist.
-5. File counts inside a folder row (for "{inside} files inside") and the library's used-versus-history split for the storage caption.
+5. File counts and byte sizes inside a folder row (for "{inside} files inside") and the library's used-versus-history split for the storage caption.
 
 ## Tests
 
@@ -100,7 +103,7 @@ Playwright against `vite build` plus `vite preview` (`FILESQUID_E2E=1`). The pin
   144 passed (1.0m)
 ```
 
-Re-run before the pull request (Playwright again 144 passed against `vite build` plus `vite preview`; `browsingRows` was split so no function exceeds 60 lines).
+Re-run after review round 1 (Vitest 77 files, 1788 passed and 1 skipped; Playwright again 144 passed against `vite build` plus `vite preview`; `browsingRows` was split so no function exceeds 60 lines).
 
 Hook, ordinary `bash scripts/pre-commit.sh` (the change scope against `origin/main` is `npm:apps/filesquid/ui`, so no Cargo step runs):
 

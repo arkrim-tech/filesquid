@@ -33,7 +33,9 @@ export async function readStorage(client: StorageClient): Promise<StorageSummary
     if (!only) return undefined;
     const path = `/api/v1/files/library-history-size?library_id=${encodeURIComponent(only.library_id)}`;
     const size = await client.request<LibraryHistorySize>(path);
-    return { usedBytes: size.bytes, freeBytes: only.free_bytes ?? 0 };
+    // A null free space (volume unreadable, or not local) is unknown, never zero.
+    if (only.free_bytes === null || only.free_bytes === undefined) return { usedBytes: size.bytes };
+    return { usedBytes: size.bytes, freeBytes: only.free_bytes };
   } catch (error) {
     console.warn("FileSquid could not read the storage used", error);
     return undefined;
@@ -51,7 +53,14 @@ export async function readStorage(client: StorageClient): Promise<StorageSummary
  */
 export function bindStorage(shell: FsAppShell, client: StorageClient): () => void {
   let started = false;
-  const refresh = () => void readStorage(client).then((summary) => (shell.storage = summary));
+  let latest = 0;
+  const refresh = () => {
+    const mine = ++latest;
+    // Only the newest read may set the block; an older one that finishes later is dropped.
+    void readStorage(client).then((summary) => {
+      if (mine === latest) shell.storage = summary;
+    });
+  };
   const first = () => {
     if (started) return;
     started = true;

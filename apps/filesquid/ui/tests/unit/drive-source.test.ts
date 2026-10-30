@@ -106,6 +106,36 @@ describe("ClientViewSource", () => {
     );
   });
 
+  it("rejects a page whose completeness or cursor is missing or mistyped, so a truncated view never looks whole", () => {
+    const withoutComplete: Record<string, unknown> = { ...body };
+    delete withoutComplete.complete;
+    expect(() => parseViewPage(withoutComplete)).toThrow(TypeError);
+    expect(() => parseViewPage({ ...body, complete: "yes" })).toThrow(TypeError);
+    expect(() => parseViewPage({ ...body, next_cursor: 7 })).toThrow(TypeError);
+    expect(parseViewPage({ ...body, complete: false }).complete).toBe(false);
+  });
+
+  it("rejects a folder row whose kind is not one of the contract's two", () => {
+    const folderRow = (node_kind: unknown) => ({ kind: "folder", node: "c", node_kind, name: "x" });
+    expect(() => parseViewPage({ ...body, rows: [folderRow("library")] })).toThrow(TypeError);
+    expect(() => parseViewPage({ ...body, rows: [folderRow("nonsense")] })).toThrow(TypeError);
+    expect(parseViewPage({ ...body, rows: [folderRow("collection")] }).rows).toHaveLength(1);
+    expect(parseViewPage({ ...body, rows: [folderRow("virtual_collection")] }).rows).toHaveLength(
+      1,
+    );
+  });
+
+  it("refuses a page size outside 1 to 1,000 before calling the API", async () => {
+    const request = vi.fn().mockResolvedValue(body);
+    const source = new ClientViewSource({ request } as never);
+    for (const limit of [0, -1, 1001, 1.5, Number.NaN]) {
+      await expect(source.view(QUERY, null, limit)).rejects.toThrow(RangeError);
+    }
+    expect(request).not.toHaveBeenCalled();
+    await source.view(QUERY, null, 1000);
+    expect(request).toHaveBeenCalledTimes(1);
+  });
+
   it("carries the API's own refusals", async () => {
     const request = vi
       .fn()

@@ -66,7 +66,7 @@ export const STYLE = `
   .name { display: block; max-inline-size: 100%; padding: var(--fs-space-1) 0; border: 0; background: none; color: inherit; font: inherit; text-align: start; text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
   .name:hover { text-decoration: underline; }
   .row .collection { grid-column: 5 / 7; text-align: start; }
-  .recent .row .activity { grid-column: 7 / 11; text-align: end; }
+  .recent .row .activity { grid-column: 7 / 10; text-align: end; }
   .group { position: absolute; inset-inline: 0; inset-block-start: calc(var(--r) * var(--row-height)); box-sizing: border-box; display: flex; align-items: end; block-size: var(--row-height); padding: 0 var(--fs-space-3) var(--fs-space-2); }
   .group .eyebrow { margin: 0; }
   .badge { display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; min-inline-size: 1.875rem; block-size: 1rem; padding: 0 var(--fs-space-1); border: 1px solid var(--fs-surface-raised); border-radius: var(--fs-radius-badge); font-family: var(--fs-font-mono); font-size: var(--fs-font-size-badge); font-weight: 700; text-transform: uppercase; background: var(--fs-surface-raised); color: var(--fs-on-surface-variant); }

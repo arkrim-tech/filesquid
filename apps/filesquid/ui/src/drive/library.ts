@@ -20,14 +20,25 @@ export type LibraryLookupClient = Pick<FileSquidClient, "request">;
 const PATH = "/api/v1/libraries/recent";
 
 /**
- * Build a lookup that reads the host's libraries once and answers the one open library.
+ * Build a lookup that reads the host's libraries and answers the one open library. The answer is
+ * kept until the route changes (`hashchange` on `events`), because opening or closing a library
+ * is a route change; the next call after that reads again.
  *
  * @param client The API client.
+ * @param events Where `hashchange` is announced (the window); without it the first answer is
+ *   kept for the page's lifetime.
  * @returns A function resolving to the library's id, or undefined when there is not exactly one
- *   open library or the host could not say. Network I/O on its first call only.
+ *   open library or the host could not say. Network I/O on the first call after each route
+ *   change.
  */
-export function singleOpenLibrary(client: LibraryLookupClient): () => Promise<string | undefined> {
+export function singleOpenLibrary(
+  client: LibraryLookupClient,
+  events?: EventTarget,
+): () => Promise<string | undefined> {
   let cached: Promise<string | undefined> | undefined;
+  events?.addEventListener("hashchange", () => {
+    cached = undefined;
+  });
   return () => {
     cached ??= read(client);
     return cached;

@@ -27,7 +27,9 @@ import {
   VIEW_PAGE_SIZE,
   MAX_VIEW_PAGES,
   activityOf,
+  clampFilter,
   driveSummary,
+  fileCountText,
   recentGroup,
   SORT_LABEL,
   nextSort,
@@ -230,8 +232,9 @@ export class FsDriveView extends HTMLElement {
 
   /** Narrow the view to rows whose name contains `text`; read again when it changes. */
   set filter(text: string) {
-    if (text === this.target.filter) return;
-    this.target = { ...this.target, filter: text };
+    const clamped = clampFilter(text);
+    if (clamped === this.target.filter) return;
+    this.target = { ...this.target, filter: clamped };
     this.chosen.clear();
     if (this.options && this.target.node !== "") void this.reload();
   }
@@ -474,8 +477,7 @@ export class FsDriveView extends HTMLElement {
   private toggleRow(row: DriveRow, range: boolean): void {
     const keys = this.list?.rowKeys() ?? [];
     if (!range) return this.chosen.toggle(row.key);
-    const last = this.chosen.keys().at(-1) ?? row.key;
-    this.chosen.selectRange(keys, last, row.key);
+    this.chosen.selectRange(keys, this.chosen.anchor ?? row.key, row.key);
   }
 
   /** The header checkbox: select every row, or clear when every row is selected. */
@@ -649,10 +651,14 @@ export class FsDriveView extends HTMLElement {
     });
   }
 
-  /** Remove one file and offer Undo. */
-  private async removeFile(row: DriveRow): Promise<void> {
+  /**
+   * Remove one file and offer Undo.
+   *
+   * @returns True when the file was removed; false when it could not be (the failure is shown).
+   */
+  private async removeFile(row: DriveRow): Promise<boolean> {
     const { labels } = this.options as DriveViewOptions;
-    if (!this.actions || !this.canWrite(row)) return;
+    if (!this.actions || !this.canWrite(row)) return false;
     try {
       const receipt = await this.actions.remove(row);
       showToast({
@@ -666,15 +672,20 @@ export class FsDriveView extends HTMLElement {
         },
       });
       await this.afterWrite();
+      return true;
     } catch (error) {
       this.showActionFailure(error);
+      return false;
     }
   }
 
-  /** Remove each selected file in turn; the first failure stops and is shown. */
+  /**
+   * Remove each selected file in turn. The first failure stops the rest, is shown, and keeps the
+   * selection so the user can try again; the selection is cleared once every file is removed.
+   */
   private async removeMany(rows: readonly DriveRow[]): Promise<void> {
     for (const row of rows) {
-      if (row.kind === "file") await this.removeFile(row);
+      if (row.kind === "file" && !(await this.removeFile(row))) return;
     }
     this.chosen.clear();
   }
@@ -794,7 +805,9 @@ export class FsDriveView extends HTMLElement {
     const locale = document.documentElement.lang || "en";
     if (recent) {
       this.announce(
-        formatLabel(labels.fileRecentSummary, { count: this.rows.length.toLocaleString(locale) }),
+        formatLabel(labels.fileRecentSummary, {
+          files: fileCountText(this.rows.length, labels, locale),
+        }),
       );
       return;
     }
@@ -878,9 +891,10 @@ export class FsDriveView extends HTMLElement {
       return;
     this.loadingMore = true;
     const generation = this.generation;
+    const signal = this.abort?.signal;
     try {
       const page = await options.source.view(this.query(), this.cursor, VIEW_PAGE_SIZE, {
-        signal: this.abort?.signal,
+        signal,
       });
       if (generation !== this.generation) return;
       this.rows = [...this.rows, ...page.rows];
@@ -889,7 +903,8 @@ export class FsDriveView extends HTMLElement {
       this.pages += 1;
       this.drawItems();
     } catch (error) {
-      if (generation !== this.generation) return;
+      // A read that was cancelled (the page was left, or a newer read began) is not a failure.
+      if (generation !== this.generation || signal?.aborted) return;
       if (error instanceof ApiError && error.status === 409) void this.reload();
       else this.fail(error);
     } finally {

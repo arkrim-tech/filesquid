@@ -57,8 +57,13 @@ export const DEFAULT_PREFERENCES: UserPreferences = Object.freeze({
   folder_placement: "on_top",
   layout: "list",
   hover_card: true,
-  navigation: Object.freeze({ version: 1, pinned: [], order: [], collapsed: [] }),
-}) as UserPreferences;
+  navigation: Object.freeze({
+    version: 1,
+    pinned: Object.freeze([]),
+    order: Object.freeze([]),
+    collapsed: Object.freeze([]),
+  }),
+}) as unknown as UserPreferences;
 
 /** True for a plain object. */
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -141,14 +146,52 @@ export function parsePreferences(value: unknown): UserPreferences | undefined {
 }
 
 /**
- * The navigation choices inside preferences. Pure.
+ * The navigation choices inside preferences, as copies the caller may keep or change without
+ * touching the preferences (or the shared defaults). Pure.
  *
  * @param prefs The preferences.
  * @returns Pins, section order and collapsed nodes.
  */
 export function navigationOf(prefs: UserPreferences): NavigationPreferences {
   const { pinned, order, collapsed } = prefs.navigation;
-  return { pinned, order, collapsed };
+  return {
+    pinned: pinned.map((pin) => ({ node: pin.node, kind: pin.kind })),
+    order: [...order],
+    collapsed: [...collapsed],
+  };
+}
+
+/** `first`, then the members of `second` it lacks, at most `max` in all. */
+function union<T>(
+  first: readonly T[],
+  second: readonly T[],
+  key: (item: T) => string,
+  max: number,
+) {
+  const seen = new Set(first.map(key));
+  const extra = second.filter((item) => !seen.has(key(item)) && seen.add(key(item)));
+  return [...first, ...extra].slice(0, max);
+}
+
+/**
+ * Combine the navigation choices the API holds with those a device held (UI-S-017: the device
+ * value is copied to the API once). Nothing the API holds is lost: its pins come first, then
+ * the device's pins it lacks; its section order wins unless it has none; collapsed nodes are
+ * the union. Every list stays inside its bound. Pure.
+ *
+ * @param api The choices the API holds.
+ * @param device The choices read from the device.
+ * @returns The combined choices.
+ */
+export function mergeNavigation(
+  api: NavigationPreferences,
+  device: NavigationPreferences,
+): NavigationPreferences {
+  return {
+    pinned: union(api.pinned, device.pinned, (pin) => pin.node, MAX_PINNED),
+    order: api.order.length > 0 ? [...api.order] : device.order.slice(0, MAX_SECTIONS),
+    collapsed: union(api.collapsed, device.collapsed, (node) => node, MAX_COLLAPSED),
+  };
 }
 
 /**

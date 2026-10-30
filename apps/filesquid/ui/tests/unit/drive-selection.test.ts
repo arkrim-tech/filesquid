@@ -32,9 +32,31 @@ describe("Selection", () => {
   it("selects the rows between two keys in display order, either way round", () => {
     const selection = new Selection();
     selection.selectRange(["a", "b", "c", "d", "e"], "d", "b");
-    expect(selection.keys().sort()).toEqual(["b", "c", "d"]);
+    expect(selection.keys()).toEqual(["b", "c", "d"]);
     selection.selectRange(["a", "b"], "x", "a");
     expect(selection.has("a")).toBe(true);
+  });
+
+  it("remembers the last row clicked as the anchor of a range, not the last key added", () => {
+    const selection = new Selection();
+    const order = ["a", "b", "c", "d", "e"];
+    expect(selection.anchor).toBeUndefined();
+    selection.toggle("b");
+    expect(selection.anchor).toBe("b");
+    selection.selectRange(order, "b", "d");
+    expect(selection.anchor).toBe("b");
+    selection.toggle("c");
+    expect(selection.has("c")).toBe(false);
+    expect(selection.anchor).toBe("c");
+    selection.clear();
+    expect(selection.anchor).toBeUndefined();
+  });
+
+  it("forgets an anchor whose row left the view", () => {
+    const selection = new Selection();
+    selection.toggle("a");
+    selection.retain(new Set(["b"]));
+    expect(selection.anchor).toBeUndefined();
   });
 
   it("clears, and drops keys that left the view", () => {

@@ -5,7 +5,7 @@
  * level, a virtual collection or Recently deleted, because those are not destinations. UI-F2.17
  * reuses it for uploads and imports, so it knows nothing about move or copy; it announces the
  * choice with a bubbling, composed `fs-destination-change` event whose `detail` is the
- * {@link DestinationChoice}, or undefined when the choice is cleared.
+ * {@link DestinationChoice}, or `null` when the choice is cleared.
  *
  * A level is read page by page through `next_cursor`, at most {@link MAX_PAGES} pages, and the
  * tree is read no deeper than {@link MAX_DEPTH}. Keys follow the ARIA tree pattern: Up and Down
@@ -81,8 +81,8 @@ function isPlace(kind: NavigationKind): boolean {
 /** Custom element that offers collections and folders as destinations. */
 export class FsDestinationPicker extends HTMLElement {
   private options?: DestinationPickerOptions;
-  private readonly levels = new Map<string, readonly NavigationNode[]>();
-  private readonly expanded = new Set<string>();
+  private levels = new Map<string, readonly NavigationNode[]>();
+  private expanded = new Set<string>();
   private roots: readonly NavigationNode[] = [];
   private chosen?: DestinationChoice;
   private generation = 0;
@@ -103,7 +103,26 @@ export class FsDestinationPicker extends HTMLElement {
    */
   configure(options: DestinationPickerOptions): void {
     this.options = options;
+    this.clearChoice();
     if (this.isConnected) void this.load();
+  }
+
+  /** Forget the chosen destination (the new tree may not hold it) and announce that. */
+  private clearChoice(): void {
+    if (!this.chosen) return;
+    this.chosen = undefined;
+    this.announce(undefined);
+  }
+
+  /** Announce the choice; the event's `detail` is null when it is cleared. */
+  private announce(choice: DestinationChoice | undefined): void {
+    this.dispatchEvent(
+      new CustomEvent("fs-destination-change", {
+        detail: choice ?? null,
+        bubbles: true,
+        composed: true,
+      }),
+    );
   }
 
   /** The chosen destination, or undefined. */
@@ -133,23 +152,36 @@ export class FsDestinationPicker extends HTMLElement {
     const generation = ++this.generation;
     this.show({ kind: "loading" });
     try {
-      const repositories = await this.level(null);
+      const staged = new Map<string, readonly NavigationNode[]>();
+      const repositories = await this.level(null, staged);
       const libraries = (
-        await Promise.all(repositories.map((node) => this.level(node.node)))
+        await Promise.all(repositories.map((node) => this.level(node.node, staged)))
       ).flat();
+      const first = libraries[0];
+      if (first) await this.level(first.node, staged);
+      if (generation !== this.generation) return;
+      this.levels = staged;
       this.roots = libraries;
-      for (const library of libraries.slice(0, 1)) await this.expand(library.node);
-      if (generation === this.generation) this.show(undefined);
+      this.expanded = new Set(first ? [first.node] : []);
+      this.show(undefined);
     } catch (error) {
       if (generation !== this.generation) return;
-      console.warn("FileSquid could not read the destinations", error);
-      const online = this.options?.online ?? (() => navigator.onLine);
-      this.show(failureState(error, online()));
+      this.showFailure("FileSquid could not read the destinations", error);
     }
   }
 
-  /** Read one level through every page, at most {@link MAX_PAGES}. */
-  private async level(parent: string | null): Promise<readonly NavigationNode[]> {
+  /** Log a failed read and show the error state of the whole tree, with Try again. */
+  private showFailure(message: string, error: unknown): void {
+    console.warn(message, error);
+    const online = this.options?.online ?? (() => navigator.onLine);
+    this.show(failureState(error, online()));
+  }
+
+  /** Read one level through every page, at most {@link MAX_PAGES}, into `into`. */
+  private async level(
+    parent: string | null,
+    into: Map<string, readonly NavigationNode[]>,
+  ): Promise<readonly NavigationNode[]> {
     const source = (this.options as DestinationPickerOptions).source;
     const nodes: NavigationNode[] = [];
     let cursor: string | null = null;
@@ -159,13 +191,19 @@ export class FsDestinationPicker extends HTMLElement {
       cursor = answer.next_cursor;
       if (cursor === null) break;
     }
-    if (parent !== null) this.levels.set(parent, nodes);
+    if (parent !== null) into.set(parent, nodes);
     return nodes;
   }
 
-  /** Read the children of a node and show it open. */
+  /** Read the children of a node, if not read yet, and show it open. */
   private async expand(node: string): Promise<void> {
-    if (!this.levels.has(node)) await this.level(node);
+    if (!this.levels.has(node)) {
+      const generation = this.generation;
+      const staged = new Map(this.levels);
+      await this.level(node, staged);
+      if (generation !== this.generation) return;
+      this.levels = staged;
+    }
     this.expanded.add(node);
   }
 
@@ -219,12 +257,29 @@ export class FsDestinationPicker extends HTMLElement {
     root.replaceChildren(style, states, list);
     list.addEventListener("click", (event) => this.onClick(event));
     list.addEventListener("keydown", (event) => this.onKey(event));
+    list.addEventListener("focusin", (event) => this.moveTabStop(list, event.target as Element));
+    this.setTabStop(list);
     this.dataset.state = state?.kind ?? "ready";
     // The tree is drawn again after each change; focus stays on the row it was on (UI-S-016).
     const again = [...list.querySelectorAll<HTMLElement>("li[data-node]")].find(
       (li) => li.dataset.node === focused,
     );
     again?.focus();
+  }
+
+  /** Give the tree its one Tab stop: the chosen row, else the first (ARIA tree pattern). */
+  private setTabStop(list: HTMLElement): void {
+    const items = [...list.querySelectorAll<HTMLElement>("li[data-node]")];
+    const stop = items.find((li) => li.getAttribute("aria-selected") === "true") ?? items[0];
+    if (stop) stop.tabIndex = 0;
+  }
+
+  /** Move the tree's Tab stop to the row that took focus. */
+  private moveTabStop(list: HTMLElement, target: Element): void {
+    const row = target.closest<HTMLElement>("li[data-node]");
+    if (!row) return;
+    for (const li of list.querySelectorAll<HTMLElement>("li[data-node]")) li.tabIndex = -1;
+    row.tabIndex = 0;
   }
 
   /** The note shown when no destination exists. */
@@ -277,14 +332,23 @@ export class FsDestinationPicker extends HTMLElement {
     else this.choose(node);
   }
 
-  /** Expand or collapse a node. */
+  /** Expand or collapse a node; a failed read shows the error state with Try again. */
   private async toggle(node: string): Promise<void> {
-    if (this.expanded.has(node)) this.expanded.delete(node);
-    else
-      await this.expand(node).catch((error: unknown) =>
-        console.warn("FileSquid could not read a destination", error),
-      );
-    this.show(undefined);
+    if (this.expanded.has(node)) {
+      this.expanded.delete(node);
+      this.show(undefined);
+      return;
+    }
+    const generation = this.generation;
+    try {
+      await this.expand(node);
+    } catch (error) {
+      if (generation === this.generation) {
+        this.showFailure("FileSquid could not read a destination", error);
+      }
+      return;
+    }
+    if (generation === this.generation) this.show(undefined);
   }
 
   /** Make the node the destination and announce it. */
@@ -293,13 +357,7 @@ export class FsDestinationPicker extends HTMLElement {
     if (!row?.selectable) return;
     this.chosen = { node, kind: row.node.kind, trail: row.trail };
     this.show(undefined);
-    this.dispatchEvent(
-      new CustomEvent("fs-destination-change", {
-        detail: this.chosen,
-        bubbles: true,
-        composed: true,
-      }),
-    );
+    this.announce(this.chosen);
   }
 
   /** Tree keys: Up, Down, Right, Left, Enter and Space. */

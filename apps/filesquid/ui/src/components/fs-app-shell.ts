@@ -68,8 +68,8 @@ export interface StorageSummary {
   usedBytes: number;
   /** Bytes of version history inside `usedBytes`; absent when the host does not split it out. */
   historyBytes?: number;
-  /** Bytes free on the disk that holds the library. */
-  freeBytes: number;
+  /** Bytes free on the disk that holds the library; absent when the host cannot say. */
+  freeBytes?: number;
 }
 
 /** Name of the event the fallback New button dispatches. */
@@ -350,8 +350,9 @@ export class FsAppShell extends HTMLElement {
     button.className = "button primary large new";
     button.setAttribute("aria-haspopup", "menu");
     button.append(icon("plus"), document.createTextNode(labels.fileNew));
+    // Sent from the button, so a menu opens below it and returns focus to it.
     button.addEventListener("click", () =>
-      this.dispatchEvent(new CustomEvent(NEW_EVENT, { bubbles: true, composed: true })),
+      button.dispatchEvent(new CustomEvent(NEW_EVENT, { bubbles: true, composed: true })),
     );
     return button;
   }
@@ -438,11 +439,14 @@ export class FsAppShell extends HTMLElement {
         formatLabel(labels.fileStorageCaptionHistory, { history: size(summary.historyBytes) }),
       );
     }
-    setText(
-      root,
-      ".storage-free",
-      formatLabel(labels.fileStorageFree, { free: size(summary.freeBytes) }),
-    );
+    const known = summary.freeBytes !== undefined;
+    for (const part of root.querySelectorAll<HTMLElement>(".storage-free, .storage-bar")) {
+      part.hidden = !known;
+    }
+    if (summary.freeBytes !== undefined) {
+      const free = formatLabel(labels.fileStorageFree, { free: size(summary.freeBytes) });
+      setText(root, ".storage-free", free);
+    }
     const fill = root.querySelector<HTMLElement>(".storage-fill");
     if (fill) fill.style.inlineSize = `${usedFraction(summary).toFixed(1)}%`;
   }
@@ -475,7 +479,7 @@ export class FsAppShell extends HTMLElement {
 
 /** The share of the disk the library uses, as a percentage, 0 when nothing is known. */
 function usedFraction(summary: StorageSummary): number {
-  const total = summary.usedBytes + summary.freeBytes;
+  const total = summary.usedBytes + (summary.freeBytes ?? 0);
   return total > 0 ? Math.min(100, (summary.usedBytes / total) * 100) : 0;
 }
 

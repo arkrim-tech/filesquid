@@ -513,6 +513,7 @@ export const REQUIRED_LABEL_KEYS = [
   "fileZipStart",
   "fileZipTooMany",
   "fileZipTooBig",
+  "fileZipEmpty",
   "fileZipUnavailable",
   "fileRecentNote",
   "fileRecentToday",

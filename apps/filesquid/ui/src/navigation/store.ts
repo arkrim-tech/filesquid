@@ -75,6 +75,7 @@ export class NavigationStore extends EventTarget {
   start(): void {
     if (!this.listening) this.env.events?.addEventListener("storage", this.onStorage);
     this.listening = true;
+    if (this.remote) return;
     const saved = this.readSaved();
     if (saved) this.adopt(saved);
   }
@@ -87,7 +88,9 @@ export class NavigationStore extends EventTarget {
 
   /**
    * Keep the choices through the API from now on (UI-S-017, UI-F2.8): every change is handed to
-   * `write` instead of device storage, and other tabs' device saves are no longer followed.
+   * `write` instead of device storage, and neither `start()` nor other tabs' device saves are
+   * read any more. Each save is the whole choices, so when two tabs change them the last save
+   * wins (the API has no merge); a tab reads the API's choices again when it starts.
    *
    * @param write Saves the whole choices through the API; it reports its own failures.
    */

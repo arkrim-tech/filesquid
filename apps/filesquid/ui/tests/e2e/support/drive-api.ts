@@ -200,6 +200,9 @@ const RECENT = {
   ],
 };
 
+/** The refusal codes a client may retry (the contract's `retryable` is true for these). */
+const RETRYABLE_CODES = new Set(["unavailable", "rate_limited"]);
+
 /** The head version of every file object, before a write. */
 const HEAD = "v4";
 
@@ -211,6 +214,8 @@ interface WriteBody {
 
 /** Serve the library list and the file routes the actions use (listing and the writes). */
 async function serveFiles(page: Page, api: DriveApi): Promise<void> {
+  /** Answers already given, by route, operation id and input: a repeat is not a second write. */
+  const receipts = new Map<string, unknown>();
   await page.route(/\/api\/v1\/libraries\/recent$/, (route) => route.fulfill({ json: RECENT }));
   await page.route(/\/api\/v1\/files\/library-history-size\?/, (route) =>
     route.fulfill({
@@ -250,10 +255,14 @@ async function serveFiles(page: Page, api: DriveApi): Promise<void> {
   await page.route(/\/api\/v1\/files\/(renames|removals|restorations)$/, (route) => {
     const name = new URL(route.request().url()).pathname.split("/").at(-1) as string;
     const body = route.request().postDataJSON() as WriteBody;
+    const receiptKey = `${name}|${body.envelope.operation_id}|${JSON.stringify(body.input)}`;
+    const repeated = receipts.get(receiptKey);
+    if (repeated) return route.fulfill({ json: repeated });
     api.writes.push({ route: name, body: body as unknown as Record<string, unknown> });
     if (name === "renames" && api.renameRefusal) {
       const { status, code } = api.renameRefusal;
-      return route.fulfill({ status, json: { code, message: "refused", retryable: false } });
+      const retryable = RETRYABLE_CODES.has(code);
+      return route.fulfill({ status, json: { code, message: "refused", retryable } });
     }
     const version = name === "restorations" ? "v6" : "v5";
     const result = {
@@ -268,6 +277,7 @@ async function serveFiles(page: Page, api: DriveApi): Promise<void> {
       error: null,
       result,
     };
+    receipts.set(receiptKey, answer);
     return route.fulfill({ json: answer });
   });
 }

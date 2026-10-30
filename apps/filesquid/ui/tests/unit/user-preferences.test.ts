@@ -158,9 +158,12 @@ describe("PreferencesService with a host that stores preferences", () => {
 
   it("neither saves nor announces a change that changes nothing", async () => {
     const { service, source } = await started(DEFAULT_PREFERENCES);
+    const seen = vi.fn();
+    service.addEventListener("change", seen);
     service.update({ layout: "list" });
     await service.settled();
     expect(source.writes).toHaveLength(0);
+    expect(seen).not.toHaveBeenCalled();
   });
 
   it("folds changes made during a save into the next one, so the last value wins", async () => {
@@ -174,7 +177,8 @@ describe("PreferencesService with a host that stores preferences", () => {
       hover_card: false,
       folder_placement: "mixed",
     });
-    expect(source.writes.length).toBeLessThanOrEqual(MAX_FLUSHES);
+    expect(source.writes).toHaveLength(2);
+    expect(MAX_FLUSHES).toBeGreaterThanOrEqual(2);
   });
 
   it("keeps the choice and says the save failed when the PUT is refused", async () => {
@@ -216,15 +220,43 @@ describe("the one-time copy of the device navigation value (UI-S-017)", () => {
     expect(service.preferences.navigation.order).toEqual(NAV.order);
   });
 
-  it("keeps the API's own choices when it already holds some, and only removes the key", async () => {
-    const mine = { ...NAV, pinned: [{ node: "c9", kind: "collection" }] };
+  it("merges the device value into the choices the API already holds, losing neither", async () => {
+    const mine = { ...NAV, pinned: [{ node: "c9", kind: "collection" }], collapsed: ["l9"] };
     const { source, navigation, store } = await started(
       { ...DEFAULT_PREFERENCES, navigation: mine as never },
       storage({ [NAVIGATION_STORAGE_KEY]: device }),
     );
+    expect(source.writes).toHaveLength(1);
+    const merged = source.writes[0]?.navigation;
+    expect(merged?.pinned).toEqual([
+      { node: "c9", kind: "collection" },
+      { node: "c1", kind: "collection" },
+    ]);
+    expect(merged?.order).toEqual(mine.order);
+    expect(merged?.collapsed).toEqual(["l9", "l1"]);
+    expect(store.data.has(NAVIGATION_STORAGE_KEY)).toBe(false);
+    expect(navigation.preferences.pinned).toHaveLength(2);
+  });
+
+  it("writes nothing when the API already holds everything the device holds", async () => {
+    const { source, store } = await started(
+      { ...DEFAULT_PREFERENCES, navigation: NAV as never },
+      storage({ [NAVIGATION_STORAGE_KEY]: device }),
+    );
     expect(source.writes).toHaveLength(0);
     expect(store.data.has(NAVIGATION_STORAGE_KEY)).toBe(false);
-    expect(navigation.preferences.pinned).toEqual(mine.pinned);
+  });
+
+  it("keeps each merged list inside its bound", async () => {
+    const pins = (from: number, n: number) =>
+      Array.from({ length: n }, (_, i) => ({ node: `n${from + i}`, kind: "collection" }));
+    const api = { ...NAV, pinned: pins(0, 99), order: [], collapsed: [] };
+    const dev = { ...NAV, pinned: pins(99, 5) };
+    const { source } = await started(
+      { ...DEFAULT_PREFERENCES, navigation: api as never },
+      storage({ [NAVIGATION_STORAGE_KEY]: JSON.stringify(dev) }),
+    );
+    expect(source.writes[0]?.navigation.pinned).toHaveLength(100);
   });
 
   it("does nothing when the device holds no value", async () => {
@@ -242,15 +274,26 @@ describe("the one-time copy of the device navigation value (UI-S-017)", () => {
     expect(warnings).toHaveBeenCalled();
   });
 
-  it("keeps the key when the copy to the API fails, so the next start tries again", async () => {
+  it("keeps the key when the copy to the API fails, says so, and tries again on the next start", async () => {
     const store = storage({ [NAVIGATION_STORAGE_KEY]: device });
     const source = new MemoryPreferencesSource(DEFAULT_PREFERENCES);
+    const write = source.write.bind(source);
     source.write = () => Promise.reject(new Error("offline"));
     const navigation = new NavigationStore({});
     const service = new PreferencesService({ source, navigation, storage: store });
     await service.start();
     expect(store.data.has(NAVIGATION_STORAGE_KEY)).toBe(true);
     expect(navigation.preferences.pinned).toEqual(NAV.pinned);
+    expect(service.saveFailed).toBe(true);
+    source.write = write;
+    const next = new PreferencesService({
+      source,
+      navigation: new NavigationStore({}),
+      storage: store,
+    });
+    await next.start();
+    expect(source.writes).toHaveLength(1);
+    expect(store.data.has(NAVIGATION_STORAGE_KEY)).toBe(false);
   });
 
   it("survives refused device storage", async () => {
@@ -288,5 +331,76 @@ describe("PreferencesService on a host that stores none", () => {
     });
     await service.start();
     expect(store.data.has(NAVIGATION_STORAGE_KEY)).toBe(true);
+  });
+});
+
+describe("PreferencesService changes made while it starts, and a later start", () => {
+  /** A source whose read waits until `release` is called. */
+  function slowSource(stored: UserPreferences) {
+    const inner = new MemoryPreferencesSource(stored);
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const source: PreferencesSource & { writes: UserPreferences[] } = {
+      writes: inner.writes,
+      read: async () => (await gate, inner.read()),
+      write: (prefs) => inner.write(prefs),
+    };
+    return { source, release };
+  }
+
+  it("applies a change made before the mode is known on top of what the API holds, and saves it", async () => {
+    const held = { ...DEFAULT_PREFERENCES, sort_key: "size", navigation: NAV } as UserPreferences;
+    const { source, release } = slowSource(held);
+    const service = new PreferencesService({ source, navigation: new NavigationStore({}) });
+    const starting = service.start();
+    service.update({ layout: "grid" });
+    expect(service.preferences.layout).toBe("grid");
+    expect(source.writes).toHaveLength(0);
+    release();
+    await starting;
+    await service.settled();
+    expect(service.mode).toBe("api");
+    expect(source.writes).toHaveLength(1);
+    expect(source.writes[0]).toMatchObject({ layout: "grid", sort_key: "size" });
+    expect(source.writes[0]?.navigation.pinned).toEqual(NAV.pinned);
+  });
+
+  it("starts again after a failed read and then saves in the API", async () => {
+    const inner = new MemoryPreferencesSource(DEFAULT_PREFERENCES);
+    let reads = 0;
+    const source: PreferencesSource = {
+      read: () =>
+        ++reads === 1
+          ? Promise.reject(new ApiError(401, "/api/v1/preferences", { code: "unauthorized" }))
+          : inner.read(),
+      write: (prefs) => inner.write(prefs),
+    };
+    const service = new PreferencesService({ source, navigation: new NavigationStore({}) });
+    await service.start();
+    expect(service.mode).toBe("device");
+    service.update({ layout: "grid" });
+    await service.start();
+    await service.settled();
+    expect(service.mode).toBe("api");
+    expect(inner.writes.at(-1)).toMatchObject({ layout: "grid" });
+  });
+
+  it("does not start a second read while one is running", async () => {
+    const read = vi.fn().mockResolvedValue(DEFAULT_PREFERENCES);
+    const service = new PreferencesService({
+      source: { read, write: vi.fn() },
+      navigation: new NavigationStore({}),
+    });
+    await Promise.all([service.start(), service.start()]);
+    expect(read).toHaveBeenCalledTimes(1);
+  });
+
+  it("hands out copies of the navigation choices and keeps the defaults frozen", () => {
+    const nav = navigationOf(DEFAULT_PREFERENCES);
+    (nav.pinned as unknown[]).push({ node: "x", kind: "collection" });
+    expect(DEFAULT_PREFERENCES.navigation.pinned).toHaveLength(0);
+    expect(Object.isFrozen(DEFAULT_PREFERENCES.navigation.pinned)).toBe(true);
+    expect(Object.isFrozen(DEFAULT_PREFERENCES.navigation.order)).toBe(true);
+    expect(Object.isFrozen(DEFAULT_PREFERENCES.navigation.collapsed)).toBe(true);
   });
 });

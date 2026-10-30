@@ -231,6 +231,29 @@ const MEDIA = new Set([
   "raw",
 ]);
 
+/** The longest filter text the API takes, in UTF-8 bytes (API-S-011). */
+export const FILTER_MAX_BYTES = 256;
+
+/**
+ * Cut a filter to at most {@link FILTER_MAX_BYTES} UTF-8 bytes without splitting a character.
+ * Pure.
+ *
+ * @param text What the user typed.
+ * @returns `text`, or its longest prefix that fits.
+ */
+export function clampFilter(text: string): string {
+  const encoder = new TextEncoder();
+  if (encoder.encode(text).length <= FILTER_MAX_BYTES) return text;
+  let bytes = 0;
+  let out = "";
+  for (const character of text) {
+    bytes += encoder.encode(character).length;
+    if (bytes > FILTER_MAX_BYTES) break;
+    out += character;
+  }
+  return out;
+}
+
 /**
  * The extension to show in a badge: the last dot-separated part of the display name, upper
  * case, at most 5 characters; a leading-dot name such as `.env` is its own extension. Pure.
@@ -266,8 +289,9 @@ function dayGap(then: Date, now: Date): number {
 }
 
 /**
- * Write a time as the list shows it (UI-S-026): "2 hours ago" within a day, "Yesterday" on the
- * day before, otherwise the date ("9 Oct 2026"). A value that is not a time is shown as given,
+ * Write a time as the list shows it (UI-S-026): "2 hours ago" earlier today (minutes within the
+ * hour, even across midnight), "Yesterday" for any time on the calendar day before, otherwise
+ * the date ("9 Oct 2026"). A value that is not a time is shown as given,
  * never as a wrong date. Pure.
  *
  * @param iso An RFC 3339 time.
@@ -283,8 +307,9 @@ export function relativeTime(iso: string, now: Date, locale: string, labels: Lab
   if (seconds < 60) return labels.fileTimeJustNow;
   const rtf = new Intl.RelativeTimeFormat(locale, { numeric: "always" });
   if (seconds < 3600) return rtf.format(-Math.floor(seconds / 60), "minute");
-  if (seconds < 86_400) return rtf.format(-Math.floor(seconds / 3600), "hour");
-  return dayGap(then, now) === 1 ? labels.fileTimeYesterday : formatModified(iso, locale);
+  const gap = dayGap(then, now);
+  if (gap === 0) return rtf.format(-Math.floor(seconds / 3600), "hour");
+  return gap === 1 ? labels.fileTimeYesterday : formatModified(iso, locale);
 }
 
 /** The count of files as the label table words it ("1 file", "62 files"). */

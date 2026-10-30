@@ -13,7 +13,7 @@ import { MAX_DISPLAY_NAME_BYTES, formatSize, validateName, type NameProblem } fr
 import { problemText, renameFailureText } from "../files/ops";
 import { formatLabel, type LabelTable } from "../theme/labels";
 import type { DriveRow, ZipCheck } from "../drive/model";
-import { driveSummary } from "../drive/model";
+import { driveSummary, fileCountText } from "../drive/model";
 import type { TransferMode } from "../drive/actions";
 import { DestinationUnavailableError } from "../drive/actions";
 import type { FsDestinationPicker } from "./fs-destination-picker";
@@ -262,6 +262,7 @@ export interface ZipDialogOptions {
 /** The refusal text for a selection the caps refuse, empty for an allowed one. */
 function zipRefusal(check: ZipCheck, labels: LabelTable): string {
   if (check.ok) return "";
+  if (check.reason === "empty") return labels.fileZipEmpty;
   return check.reason === "too_big" ? labels.fileZipTooBig : labels.fileZipTooMany;
 }
 
@@ -274,7 +275,7 @@ function zipBody(options: ZipDialogOptions): { nodes: HTMLElement[]; name: HTMLI
     "p",
     "note",
     formatLabel(labels.fileZipSummary, {
-      count: count.toLocaleString(locale),
+      files: fileCountText(count, labels, locale),
       size: formatSize(sum.bytes, labels, locale),
     }),
   );
@@ -351,7 +352,7 @@ async function runZip(
     return;
   }
   const sum = driveSummary(options.rows);
-  const total = String(options.check.ok ? options.check.count : sum.files);
+  const total = fileCountText(options.check.ok ? options.check.count : sum.files, labels, locale);
   error.textContent = "";
   try {
     await options.download(name, (done, bytes) => {
@@ -486,8 +487,8 @@ function wireMoveDialog(parts: MoveParts): void {
     parts.start.textContent = copy ? labels.fileCopyHere : labels.fileMoveHere;
   });
   parts.picker.addEventListener("fs-destination-change", (event) => {
-    const choice = (event as CustomEvent<{ trail: string[] } | undefined>).detail;
-    parts.start.toggleAttribute("disabled", choice === undefined);
+    const choice = (event as CustomEvent<{ trail: string[] } | null>).detail;
+    parts.start.toggleAttribute("disabled", !choice);
     parts.line.textContent = choice
       ? `${labels.fileDestination}: ${choice.trail.join(" › ")}`
       : labels.fileDestination;

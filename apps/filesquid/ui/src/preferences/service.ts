@@ -7,13 +7,16 @@
  * On a host that serves preferences ("api" mode) the navigation tree's pins, section order and
  * collapsed nodes move here too: the first time, a `filesquid.navigation` value on the device is
  * copied to the API once and the key is removed from the device (UI-S-017). When the API
- * already holds navigation choices they win and the device value is only removed. On a host
- * that serves none (503, or any refusal; "device" mode) the navigation tree keeps using device
- * storage as before and the browsing choices apply until the page closes, with a console
- * message that says why.
+ * already holds navigation choices the two are merged (the API's first), so neither is lost. On
+ * a host that serves none (503, or any refusal; "device" mode) the navigation tree keeps using
+ * device storage as before and the browsing choices apply until the page closes, with a console
+ * message that says why; `start()` may be called again (the server host calls it when the
+ * administrator token is entered), and the choices made meanwhile are saved on top of what the
+ * API holds. A change made before the mode is known is kept the same way.
  *
  * Saves are serialised: while one `PUT` is in flight, later changes are folded into the next
- * one, so the last value always wins and at most {@link MAX_FLUSHES} writes run per burst.
+ * one, so the last value always wins. One flush starts at most {@link MAX_FLUSHES} writes; a
+ * change that arrives after that starts a new flush.
  */
 import { ApiError } from "../api/client";
 import type { DeviceStorage } from "../app/device-storage";
@@ -21,7 +24,7 @@ import { NAVIGATION_STORAGE_KEY, type NavigationStore } from "../navigation/stor
 import { readStoredPreferences, type NavigationPreferences } from "../navigation/model";
 import {
   DEFAULT_PREFERENCES,
-  isEmptyNavigation,
+  mergeNavigation,
   navigationOf,
   withNavigation,
   type UserPreferences,
@@ -34,7 +37,7 @@ export type PreferencesMode = "pending" | "api" | "device";
 /** The browsing choices a caller may change; navigation choices go through the tree's store. */
 export type BrowsingChoices = Partial<Omit<UserPreferences, "schema" | "navigation">>;
 
-/** Most writes one burst of changes may start before it waits for the next change. */
+/** Most writes one flush may start; a change that arrives after that starts a new flush. */
 export const MAX_FLUSHES = 8;
 
 /** Everything the service touches, injectable in tests. */
@@ -56,6 +59,9 @@ export class PreferencesService extends EventTarget {
   private failed = false;
   private dirty = false;
   private flushing?: Promise<void>;
+  private starting?: Promise<void>;
+  /** Choices made while the mode is not "api"; applied over what the API holds when it starts. */
+  private session: BrowsingChoices = {};
 
   /** @param env The source, the navigation store and the device storage. */
   constructor(private readonly env: PreferencesEnvironment) {
@@ -79,22 +85,38 @@ export class PreferencesService extends EventTarget {
 
   /**
    * Read the preferences, apply them, and move the navigation choices to the API. Dispatches
-   * `change` once the mode is known. Network I/O via the source; reads and writes Web Storage.
+   * `change` once the mode is known. Safe to call again while the mode is not "api" (a host
+   * that was not reachable or not yet authorised): it reads again and, when the API answers,
+   * saves the choices made meanwhile on top of what it holds. A call while a start is running
+   * joins it. Network I/O via the source; reads and writes Web Storage.
    *
    * @returns Resolves when the mode is known.
    */
-  async start(): Promise<void> {
+  start(): Promise<void> {
+    if (this.current === "api") return Promise.resolve();
+    this.starting ??= this.begin().finally(() => {
+      this.starting = undefined;
+    });
+    return this.starting;
+  }
+
+  /** One start: read, merge the device value, apply the choices made meanwhile, switch mode. */
+  private async begin(): Promise<void> {
     const read = await this.readApi();
     if (!read) {
       this.current = "device";
       this.dispatchEvent(new Event("change"));
       return;
     }
+    const moved = await this.moveDeviceNavigation(read);
+    const pending = Object.keys(this.session).length > 0;
+    this.prefs = { ...moved, ...this.session };
+    this.session = {};
     this.current = "api";
-    this.prefs = await this.moveDeviceNavigation(read);
     this.env.navigation.useRemote((navigation) => this.saveNavigation(navigation));
     this.env.navigation.replace(navigationOf(this.prefs));
     this.dispatchEvent(new Event("change"));
+    if (pending) this.scheduleSave();
   }
 
   /**
@@ -107,6 +129,7 @@ export class PreferencesService extends EventTarget {
     const next = { ...this.prefs, ...choices };
     if (JSON.stringify(next) === JSON.stringify(this.prefs)) return;
     this.prefs = next;
+    if (this.current !== "api") this.session = { ...this.session, ...choices };
     this.dispatchEvent(new Event("change"));
     this.scheduleSave();
   }
@@ -139,21 +162,24 @@ export class PreferencesService extends EventTarget {
   }
 
   /**
-   * Copy a device navigation value to the API once and remove it (UI-S-017). The API's own
-   * choices win when it already holds some. Returns the preferences to apply.
+   * Copy a device navigation value to the API once and remove it (UI-S-017). When the API holds
+   * choices too they are merged, the API's first, so neither is lost. A failed copy keeps the
+   * device key (the next start tries again), is shown as a failed save and is logged. Returns
+   * the preferences to apply.
    */
   private async moveDeviceNavigation(api: UserPreferences): Promise<UserPreferences> {
     const device = this.readDevice();
     if (!device) return api;
-    if (!isEmptyNavigation(navigationOf(api)) || isEmptyNavigation(device)) {
+    const merged = withNavigation(api, mergeNavigation(navigationOf(api), device));
+    if (JSON.stringify(merged) === JSON.stringify(api)) {
       this.removeDevice();
       return api;
     }
-    const merged = withNavigation(api, device);
     try {
       await this.env.source.write(merged);
       this.removeDevice();
     } catch (error) {
+      this.failed = true;
       console.warn("FileSquid could not copy the navigation choices to the API yet", error);
     }
     return merged;
@@ -191,7 +217,7 @@ export class PreferencesService extends EventTarget {
     this.flushing ??= this.flush();
   }
 
-  /** Write the latest value, again while changes arrive, at most {@link MAX_FLUSHES} times. */
+  /** Write the latest value, again while changes arrive, at most {@link MAX_FLUSHES} times per flush. */
   private async flush(): Promise<void> {
     try {
       for (let round = 0; round < MAX_FLUSHES && this.dirty; round += 1) {

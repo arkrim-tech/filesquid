@@ -79,6 +79,8 @@ export class FsSettings extends HTMLElement {
   private readonly onThemeChange = () => this.showLogo();
   /** The browsing section's elements, while it is shown. */
   private browsing?: HTMLElement[];
+  /** The preferences whose `change` event the section follows, so that one is the one let go. */
+  private followedPreferences?: PreferencesService;
   private readonly onPreferences = () => this.syncPreferences();
 
   constructor() {
@@ -117,7 +119,8 @@ export class FsSettings extends HTMLElement {
   disconnectedCallback(): void {
     this.followed?.removeEventListener("change", this.onThemeChange);
     this.followed = undefined;
-    this.options?.preferences?.removeEventListener("change", this.onPreferences);
+    this.followedPreferences?.removeEventListener("change", this.onPreferences);
+    this.followedPreferences = undefined;
   }
 
   /** Show the saved preferences in the Browsing section's controls. */
@@ -172,13 +175,15 @@ export class FsSettings extends HTMLElement {
 
   /** The Browsing section, or undefined when the page has no preferences to show. */
   private browsingSection(options: SettingsOptions): HTMLElement | undefined {
-    this.options?.preferences?.removeEventListener("change", this.onPreferences);
+    this.followedPreferences?.removeEventListener("change", this.onPreferences);
+    this.followedPreferences = undefined;
     this.browsing = undefined;
     if (!options.preferences) return undefined;
     const { section: element } = section("browsing", options.labels.settingsBrowsing);
     this.browsing = browsingRows(options.labels, options.preferences);
     element.append(...this.browsing);
     options.preferences.addEventListener("change", this.onPreferences);
+    this.followedPreferences = options.preferences;
     return element;
   }
 

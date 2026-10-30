@@ -20,7 +20,9 @@ import type { LabelTable } from "../theme/labels";
 /** The stylesheet of the section's rows, tokens only; added after the page's own. */
 export const STYLE = `
   .pref-rows { display: grid; gap: var(--fs-space-2); max-inline-size: 40rem; }
-  .pref-row { display: grid; grid-template-columns: 12rem minmax(0, 1fr); align-items: center; gap: var(--fs-space-3); }
+  .pref-row { display: grid; grid-template-columns: minmax(0, 12rem) minmax(0, 1fr); align-items: center; gap: var(--fs-space-3); }
+  @media (max-width: 40rem) { .pref-row { grid-template-columns: minmax(0, 1fr); gap: var(--fs-space-1); } }
+  .pref-row label { overflow-wrap: anywhere; }
   .pref-row label { font-size: var(--fs-font-size-ui); color: var(--fs-on-surface); }
   .pref-row select.input { inline-size: 100%; }
   .pref-row input[type="checkbox"] { appearance: auto; inline-size: 0.90625rem; block-size: 0.90625rem; margin: 0; accent-color: var(--fs-primary); }

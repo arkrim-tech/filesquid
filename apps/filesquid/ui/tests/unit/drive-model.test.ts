@@ -26,6 +26,8 @@ import {
   type ViewQuery,
   type ViewRow,
 } from "../../src/drive/model";
+import * as published from "../../src/index";
+import { relativeTime as versionsRelativeTime } from "../../src/files/versions";
 import labels from "../../src/theme/labels.en.json";
 
 const NOW = new Date("2026-10-16T12:00:00Z");
@@ -97,6 +99,10 @@ describe("sorting", () => {
       filter: "",
     };
     expect(sameQuery(q, { ...q })).toBe(true);
+    expect(sameQuery(q, { ...q, node: "m" })).toBe(false);
+    expect(sameQuery(q, { ...q, view: "deleted" })).toBe(false);
+    expect(sameQuery(q, { ...q, sort: "size" })).toBe(false);
+    expect(sameQuery(q, { ...q, direction: "descending" })).toBe(false);
     expect(sameQuery(q, { ...q, filter: "x" })).toBe(false);
     expect(sameQuery(q, { ...q, folders: "mixed" })).toBe(false);
   });
@@ -119,6 +125,13 @@ describe("file-type badges", () => {
   });
 });
 
+describe("the published names of the two relative-time writers", () => {
+  it("keeps the versions panel's relativeTime and exports the Drive one as driveRelativeTime", () => {
+    expect(published.relativeTime).toBe(versionsRelativeTime);
+    expect(published.driveRelativeTime).toBe(relativeTime);
+  });
+});
+
 describe("relativeTime", () => {
   const rel = (iso: string) => relativeTime(iso, NOW, "en", labels);
   it("says just now, minutes and hours ago within a day", () => {
@@ -129,6 +142,16 @@ describe("relativeTime", () => {
   it("says Yesterday for the day before, then the date", () => {
     expect(rel("2026-10-15T12:00:00Z")).toBe(labels.fileTimeYesterday);
     expect(rel("2026-10-09T12:00:00Z")).toMatch(/9 Oct 2026|Oct 9, 2026/);
+  });
+  it("says Yesterday for any time on the day before, even under 24 hours ago", () => {
+    const now = new Date(2026, 9, 16, 9, 0, 0);
+    const yesterday = new Date(2026, 9, 15, 10, 0, 0).toISOString();
+    expect(relativeTime(yesterday, now, "en", labels)).toBe(labels.fileTimeYesterday);
+  });
+  it("keeps minutes ago across midnight", () => {
+    const now = new Date(2026, 9, 16, 0, 10, 0);
+    const before = new Date(2026, 9, 15, 23, 40, 0).toISOString();
+    expect(relativeTime(before, now, "en", labels)).toBe("30 minutes ago");
   });
   it("shows a value that is not a time as given, never a wrong date", () => {
     expect(rel("not a time")).toBe("not a time");
@@ -187,8 +210,12 @@ describe("Recent", () => {
     });
     expect(activityOf(file("a", 1))).toBeUndefined();
   });
+  it("ignores the shared modified time, which may be another user's change", () => {
+    const shared = file("a", 1, { modified: "2026-10-16T11:00:00Z" });
+    expect(activityOf(shared)).toBeUndefined();
+  });
   it("groups into today, yesterday and earlier within seven days", () => {
-    expect(recentGroup("2026-10-16T01:00:00Z", NOW)).toBe("today");
+    expect(recentGroup("2026-10-16T09:00:00Z", NOW)).toBe("today");
     expect(recentGroup("2026-10-15T12:00:00Z", NOW)).toBe("yesterday");
     expect(recentGroup("2026-10-13T12:00:00Z", NOW)).toBe("earlier");
     expect(recentGroup("2026-10-01T12:00:00Z", NOW)).toBeUndefined();
