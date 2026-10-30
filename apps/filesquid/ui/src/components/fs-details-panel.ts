@@ -147,7 +147,7 @@ async function readHistorySize(
   try {
     return await source.historySize(file, { signal });
   } catch (error) {
-    // A read that another file's panel cancelled is not a failure.
+    // A read this panel cancelled itself (its next load, or leaving the document) is not a failure.
     if (!signal.aborted)
       console.warn("FileSquid could not read the history size", errorName(error));
     return undefined;

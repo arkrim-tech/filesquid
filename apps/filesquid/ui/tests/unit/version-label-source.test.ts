@@ -7,7 +7,7 @@
  */
 import { describe, expect, it, vi } from "vitest";
 import { ApiError } from "../../src/api/client";
-import { MAX_LABELLED_VERSIONS, MemoryFileSource } from "../../src/files/memory-source";
+import { MemoryFileSource } from "../../src/files/memory-source";
 import { ClientFileSource, type FileClient } from "../../src/files/source";
 
 const OBJECT = { library_id: "lib", object_id: "obj" };
@@ -77,6 +77,16 @@ describe("ClientFileSource.setVersionLabel", () => {
   });
 });
 
+/** The contract's cap of labelled versions per object (API-F2.5), written here on its own. */
+const LABEL_CAP = 1000;
+
+/** Label versions v1 to v1000 one after another, so 1,000 versions carry a label. */
+async function fillToCap(s: MemoryFileSource): Promise<void> {
+  for (let n = 1; n <= LABEL_CAP; n += 1) {
+    await s.setVersionLabel(OBJECT, `v${n}`, `Label ${n}`, { revision: s.head });
+  }
+}
+
 /** A source holding one file with two versions. */
 function memory(): MemoryFileSource {
   const s = new MemoryFileSource({
@@ -138,18 +148,38 @@ describe("MemoryFileSource.setVersionLabel", () => {
     await expect(refusal).rejects.toMatchObject({ status: 404, code: "not_found" });
   });
 
-  it("refuses a label past the 1,000 labelled versions an object may have, as conflict", async () => {
+  it("refuses a label past the 1,000 labelled versions an object may have, as conflict, publishing nothing", async () => {
     const s = memory();
-    for (let n = 1; n <= MAX_LABELLED_VERSIONS; n += 1) {
-      await s.setVersionLabel(OBJECT, `v${n}`, `Label ${n}`, { revision: s.head });
-    }
-    const next = `v${MAX_LABELLED_VERSIONS + 1}`;
+    await fillToCap(s);
+    const next = `v${LABEL_CAP + 1}`;
+    const head = s.head;
+    const count = (await s.versions()).versions.length;
     await expect(
-      s.setVersionLabel(OBJECT, next, "One too many", { revision: s.head }),
+      s.setVersionLabel(OBJECT, next, "One too many", { revision: head }),
     ).rejects.toMatchObject({ status: 409, code: "conflict" });
+    expect(s.head).toBe(head);
+    expect((await s.versions()).versions).toHaveLength(count);
     // Changing or clearing a label that exists is still allowed at the cap.
     await s.setVersionLabel(OBJECT, "v1", "Renamed", { revision: s.head });
     await s.setVersionLabel(OBJECT, "v2", null, { revision: s.head });
     await s.setVersionLabel(OBJECT, next, "Fits again", { revision: s.head });
+  });
+
+  it("refuses a labelled restore past the cap, publishing nothing, and still restores without a label", async () => {
+    const s = memory();
+    await s.remove(OBJECT, "a.txt", { revision: "v1" });
+    // v2 removed the file; label v2 and v3.. so that 1,000 versions carry a label.
+    for (let n = 1; n <= LABEL_CAP; n += 1) {
+      await s.setVersionLabel(OBJECT, `v${n}`, `Label ${n}`, { revision: s.head });
+    }
+    const head = s.head;
+    const count = (await s.versions()).versions.length;
+    await expect(
+      s.restore(OBJECT, "v1", ["a.txt"], { revision: head, label: "One too many" }),
+    ).rejects.toMatchObject({ status: 409, code: "conflict" });
+    expect(s.head).toBe(head);
+    expect((await s.versions()).versions).toHaveLength(count);
+    const restored = await s.restore(OBJECT, "v1", ["a.txt"], { revision: head });
+    expect(restored.version).toBe(`v${count + 1}`);
   });
 });

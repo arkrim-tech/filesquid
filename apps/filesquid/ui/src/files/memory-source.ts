@@ -463,6 +463,7 @@ export class MemoryFileSource implements FileSource, HistorySource, DownloadSour
       throw refusal(400, "invalid_request");
     }
     this.expect(options.revision);
+    if (options.label !== undefined) this.expectLabelRoom();
     const earlier = this.snapshot(version);
     const change = (files: Map<string, Stored>, label: string, created: string) => {
       for (const path of paths) {
@@ -492,10 +493,7 @@ export class MemoryFileSource implements FileSource, HistorySource, DownloadSour
     this.expect(options.revision);
     const target = this.snapshot(version);
     if (target.label === label) throw refusal(409, "conflict");
-    const labelled = this.snapshots.filter((snapshot) => snapshot.label !== null).length;
-    if (target.label === null && label !== null && labelled >= MAX_LABELLED_VERSIONS) {
-      throw refusal(409, "conflict");
-    }
+    if (target.label === null && label !== null) this.expectLabelRoom();
     this.snapshots[this.snapshots.indexOf(target)] = { ...target, label };
     const created = new Date(BASE_TIME + this.snapshots.length * 60_000).toISOString();
     this.snapshots.push({ created, files: this.latest().files, label: null });
@@ -579,6 +577,16 @@ export class MemoryFileSource implements FileSource, HistorySource, DownloadSour
   /** Refuse a write as `conflict` unless `revision` is the head, as the API does (API-F2.13). */
   private expect(revision: string): void {
     if (revision !== this.head) throw refusal(409, "conflict");
+  }
+
+  /**
+   * Refuse as `conflict` when another labelled version would pass the object's cap of
+   * {@link MAX_LABELLED_VERSIONS}; a new labelled version is made by a label edit on an
+   * unlabelled version and by a restore that carries a label.
+   */
+  private expectLabelRoom(): void {
+    const labelled = this.snapshots.filter((snapshot) => snapshot.label !== null).length;
+    if (labelled >= MAX_LABELLED_VERSIONS) throw refusal(409, "conflict");
   }
 
   /** The newest snapshot. */

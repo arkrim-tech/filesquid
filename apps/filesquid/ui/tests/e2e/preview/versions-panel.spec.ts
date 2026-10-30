@@ -27,6 +27,7 @@ import {
   PANEL_OBJECT,
   PANEL_ROUTE,
   servePanel,
+  versionSize,
   type PanelApi,
   type PanelFixture,
 } from "../support/file-panel-api";
@@ -294,6 +295,30 @@ for (const scheme of SCHEMES) {
       ]);
       expect(api.downloads).toEqual([]);
       await expect(page.locator("fs-versions-panel .notice")).toHaveCount(0);
+      expect(errors).toEqual([]);
+    });
+
+    test("Download this version: a version a restore created is read through the ranged path too", async ({
+      page,
+    }) => {
+      const errors = trackErrors(page);
+      const api = await openVersions(page);
+      const view = page.locator("fs-versions-panel");
+      await choose(page, "v5", "restore");
+      await view.locator('[role="dialog"] button.restore').click();
+      await expect(view.locator('li[data-version="v8"] .current')).toBeVisible();
+      const [download] = await Promise.all([
+        page.waitForEvent("download"),
+        choose(page, "v8", "download"),
+      ]);
+      const size = versionSize(HARBOUR);
+      expect(statSync(await download.path()).size).toBe(size);
+      expect(api.contentReads).toEqual([
+        "bytes=0-8388607",
+        "bytes=8388608-16777215",
+        `bytes=16777216-${size - 1}`,
+      ]);
+      expect(api.downloads).toEqual([]);
       expect(errors).toEqual([]);
     });
 

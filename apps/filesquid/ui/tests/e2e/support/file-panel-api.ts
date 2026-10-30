@@ -120,10 +120,20 @@ function records(
   });
 }
 
+/**
+ * The size of one version of the fixture file: its own for a fixture version; the newest
+ * fixture version's for any version a restore or another commit added (a restore brings back
+ * content of that size), and for no version at all.
+ */
+export function versionSize(fixture: PanelFixture, version?: string | null): number {
+  const last = fixture.versions[fixture.versions.length - 1] as readonly [unknown, string, number];
+  const asked = version ? fixture.versions[Number(version.slice(1)) - 1] : undefined;
+  return (asked ?? last)[2];
+}
+
 /** The storage facts of the fixture at its head. */
 function details(fixture: PanelFixture, count: number, version?: string | null) {
   const last = fixture.versions[fixture.versions.length - 1] as readonly [unknown, string, number];
-  const asked = version ? fixture.versions[Number(version.slice(1)) - 1] : undefined;
   return {
     library_id: PANEL_LIBRARY,
     object_id: PANEL_OBJECT,
@@ -133,7 +143,7 @@ function details(fixture: PanelFixture, count: number, version?: string | null) 
     display_name: fixture.displayName,
     digest: "5a".repeat(64),
     digest_algorithm: "sha512",
-    size: (asked ?? last)[2],
+    size: versionSize(fixture, version),
     fixity: { sha256: [SHA256] },
     last_change: { version: `v${count}`, created: last[1], message: null, user: null },
     type_hint: fixture.path.split(".").pop(),
@@ -325,10 +335,10 @@ export async function servePanel(page: Page, fixture: PanelFixture): Promise<Pan
   await page.route(/\/api\/v1\/files\/content\?/, (route) => {
     const url = new URL(route.request().url());
     const range = /^bytes=(\d+)-(\d+)$/.exec(route.request().headers().range ?? "");
-    const asked = fixture.versions[Number(url.searchParams.get("version")?.slice(1)) - 1];
+    const total = versionSize(fixture, url.searchParams.get("version"));
     // Only a ranged read of a version above the desktop cap is this route's; the rest is the
     // listing fake's (previews).
-    if (!range || !asked || asked[2] <= DESKTOP_ANSWER_CAP) return route.fallback();
+    if (!range || total <= DESKTOP_ANSWER_CAP) return route.fallback();
     api.contentReads.push(route.request().headers().range as string);
     const [start, end] = [Number(range[1]), Number(range[2])];
     return route.fulfill({
@@ -336,7 +346,7 @@ export async function servePanel(page: Page, fixture: PanelFixture): Promise<Pan
       body: Buffer.alloc(end - start + 1, 0x61),
       headers: {
         "content-type": "application/octet-stream",
-        "content-range": `bytes ${start}-${end}/${asked[2]}`,
+        "content-range": `bytes ${start}-${end}/${total}`,
       },
     });
   });
