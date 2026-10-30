@@ -4202,7 +4202,7 @@
       "post": {
         "operationId": "startImportPlan",
         "summary": "Start the import job of a reviewed plan",
-        "description": "API-S-036 Review. Asks the host to submit one durable import job (API-S-033, kind `import`) for the open plan and start it in the background; answers `pending` with `import: started` and the job. A repeated start of the same plan answers the same job again and starts nothing. An unknown, expired or discarded plan is 404 not_found (`plan_not_found`); a source that changed since the plan was made is 409 conflict (`source_changed`) and the plan stays open for review; a host that cannot run the job now, or without an import dialog, answers 503. Each start is journaled once as `import.start`: `succeeded` with the job ID, or `failed` with its code. Takes no body: the plan carries the operation ID of the request that made it.",
+        "description": "API-S-036 Review. Takes no body and no CommandEnvelope (API-S-002, owner decision 2026-10-30): the plan ID is the idempotency key, and the answer's outcome names the plan request's operation ID. Asks the host to submit one durable import job (API-S-033, kind `import`) for the open plan and start it in the background; answers `pending` with `import: started` and the job. A repeated start of the same plan answers the same job again and starts nothing. An unknown, expired or discarded plan is 404 not_found (`plan_not_found`); a source that changed since the plan was made is 409 conflict (`source_changed`) and the plan stays open for review; a host that cannot run the job now, or without an import dialog, answers 503. Each start is journaled once as `import.start`: `succeeded` with the job ID, or `failed` with its code. Takes no body: the plan carries the operation ID of the request that made it.",
         "x-filesquid-action": "files.write",
         "parameters": [
           {
@@ -4252,7 +4252,7 @@
       "delete": {
         "operationId": "discardImportPlan",
         "summary": "Discard an import plan",
-        "description": "API-S-036 Review. Discards the open plan, changing nothing else: no byte was staged and no job is made; the plan's operation ID then answers 404 not_found (`plan_not_found`). The host discards an open plan on its own 1 hour after it was made. An unknown, expired, discarded or started plan is 404 not_found (`plan_not_found`); a host without an import dialog answers 503. Each discard is journaled once as `import.discard`.",
+        "description": "API-S-036 Review. Takes no body and no CommandEnvelope (API-S-002, owner decision 2026-10-30): the plan ID is the idempotency key; a repeated discard is 404 not_found (`plan_not_found`) and changes nothing. Discards the open plan, changing nothing else: no byte was staged and no job is made; the plan's operation ID then answers 404 not_found (`plan_not_found`). The host discards an open plan on its own 1 hour after it was made. An unknown, expired, discarded or started plan is 404 not_found (`plan_not_found`); a host without an import dialog answers 503. Each discard is journaled once as `import.discard`.",
         "x-filesquid-action": "files.write",
         "parameters": [
           {

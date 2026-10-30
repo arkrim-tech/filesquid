@@ -5,7 +5,10 @@
 # the planned files by base name, at most 1,000 per page; the job MUST start only on the start
 # route (a repeated start answers the same job); a plan MUST be discarded by DELETE or after
 # 1 hour, changing nothing; a changed source MUST be refused as source_changed; a repeated
-# operation ID answers its open plan, its started job or cancelled without a dialog; every plan
+# operation ID answers its open plan, its started job or cancelled without a dialog; the start
+# and discard routes take no CommandEnvelope, the plan ID being their idempotency key (API-S-002,
+# owner decision 2026-10-30), so a repeated start answers the same job and a repeated discard is
+# plan_not_found; every plan
 # request, start and discard MUST be journaled once with IDs only, never a path or a file name.
 # API-S-037: Job routes — Per-file progress (owner answer 6, 2026-10-22, "Yes, report progress
 # per file"): an upload job's view MUST carry its destination; the job items route MUST list its
@@ -67,6 +70,14 @@ Feature: Upload review step and per-file job progress
     Given the owner has asked to upload a folder into a collection
     When the owner discards the plan
     Then the plan should be gone and no job should have started
+    And the discard should be journaled once with the plan
+
+  Scenario: A discarded plan discarded again is plan_not_found and changes nothing
+    Given the owner has asked to upload a folder into a collection
+    And the owner has discarded the plan
+    When the owner discards the plan again
+    Then the discard should be refused as "plan_not_found"
+    And the plan should be gone and no job should have started
     And the discard should be journaled once with the plan
 
   Scenario: A page of planned files holds at most 1,000 files

@@ -302,6 +302,7 @@ fn one_dialog(w: &mut MonitorWorld) {
 }
 
 #[when("the owner discards the plan")]
+#[given("the owner has discarded the plan")]
 async fn discard(w: &mut MonitorWorld) {
     let path = format!("{PATH}/{}", w.imports.plan_id());
     let (status, answer) = w
@@ -312,6 +313,35 @@ async fn discard(w: &mut MonitorWorld) {
     assert_eq!(status, StatusCode::OK, "{answer}");
     assert_eq!(answer["discarded"], true);
     w.imports.answers.push((status, answer));
+}
+
+#[when("the owner discards the plan again")]
+async fn discard_again(w: &mut MonitorWorld) {
+    let path = format!("{PATH}/{}", w.imports.plan_id());
+    let answer = w
+        .imports
+        .host()
+        .send(Method::DELETE, &path, None, true)
+        .await;
+    w.imports.answers.push(answer);
+}
+
+#[then(expr = "the discard should be refused as {string}")]
+fn discard_refused(w: &mut MonitorWorld, code: String) {
+    let (status, answer) = w.imports.last();
+    assert_eq!(*status, StatusCode::NOT_FOUND, "{answer}");
+    assert!(answer["message"]
+        .as_str()
+        .is_some_and(|m| m.contains(&code)));
+    let failed: Vec<_> = w
+        .imports
+        .host()
+        .journaled(IMPORT_DISCARD_OPERATION)
+        .into_iter()
+        .filter(|e| e.outcome == Outcome::Failed)
+        .collect();
+    assert_eq!(failed.len(), 1);
+    assert_eq!(failed[0].error_code.as_deref(), Some(code.as_str()));
 }
 
 #[when("an hour passes")]

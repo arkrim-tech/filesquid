@@ -237,7 +237,7 @@ Fixed on the pull request (15 findings):
 - `retry_allowed` refuses any job under a pause request, running ones included (`job_paused`); the retry and items routes check the per-file port before the job, so a host without one answers `503` for every job, journaled as `job.refused` (`unavailable`). API-S-037 states both.
 - The feature gained scenarios for the 1,000-file page cap, the `503` of a host without the ports, the repeated operation ID answering the started job and `cancelled`, and a successful retry of all failed files.
 
-Open for the owner: Cubic asks the plan start and discard routes to take a `CommandEnvelope` (API-S-002 lists the only mutation routes without one). See the pull request.
+Two findings asked the plan start and discard routes to take a `CommandEnvelope`. The owner decided on 2026-10-30 to extend the API-S-002 exemption to both routes instead, because the plan ID is the idempotency key and the plan request's own envelope carries the operation ID. API-S-002, API-S-036, the contract descriptions (the version stays 0.31.0) and the plan row now say so, and the feature gained "A discarded plan discarded again is plan_not_found and changes nothing"; "Confirming the plan starts one job and a second confirmation answers the same job" already covers a repeated start.
 
 ```text
      Running tests/unit/import_review.rs (<target>/debug/deps/unit_import_review-e68ab1f14e83db26)
