@@ -28,10 +28,10 @@ export type RouteHost = HTMLElement & {
 /** Hash of the Monitor route. */
 export const MONITOR_ROUTE = "#/monitor";
 
-/** Hash of the All files view of the sidebar (UI-S-025); UI-F2.8 binds it. */
+/** Hash of the All files view of the sidebar (UI-S-025); `bindDriveRoute` binds it (UI-F2.8). */
 export const ALL_FILES_ROUTE = "#/files";
 
-/** Hash of the Recent view of the sidebar (UI-S-025, UI-S-026); UI-F2.8 binds it. */
+/** Hash of the Recent view of the sidebar (UI-S-025, UI-S-026); `bindDriveRoute` binds it (UI-F2.8). */
 export const RECENT_ROUTE = "#/recent";
 
 /** Hash of the Recently deleted view (UI-S-002, UI-S-017); UI-F2.17 binds it. */
@@ -216,8 +216,8 @@ function applyNavigationRoute(shell: HTMLElement, options: NavigationRouteOption
 /** Create the view and add it to the shell. */
 function createNavigationView(shell: HTMLElement, options: NavigationRouteOptions) {
   const view = document.createElement("fs-navigation-view") as FsNavigationView;
-  const { labels, source, online, href } = options;
-  view.configure({ labels, source, online, href });
+  const { labels, source, online, href, drive } = options;
+  view.configure({ labels, source, online, href, drive });
   shell.append(view);
   return view;
 }

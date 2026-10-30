@@ -66,14 +66,20 @@ export interface ShellOptions {
 export interface StorageSummary {
   /** Bytes the library uses, history included. */
   usedBytes: number;
-  /** Bytes of version history inside `usedBytes`. */
-  historyBytes: number;
+  /** Bytes of version history inside `usedBytes`; absent when the host does not split it out. */
+  historyBytes?: number;
   /** Bytes free on the disk that holds the library. */
   freeBytes: number;
 }
 
 /** Name of the event the fallback New button dispatches. */
 export const NEW_EVENT = "fs-new";
+
+/**
+ * Name of the event the fallback view filter dispatches on every input (`detail.value`): the
+ * filter narrows only the current view (UI-S-007), so whoever owns the view listens for it.
+ */
+export const FILTER_EVENT = "fs-filter";
 
 const STYLE = `
   :host { position: relative; display: grid; grid-template-columns: auto minmax(0, 1fr); block-size: 100vh; overflow: hidden; background: var(--fs-surface); color: var(--fs-on-surface); font-family: var(--fs-font-sans); font-size: var(--fs-font-size-ui); }
@@ -313,7 +319,7 @@ export class FsAppShell extends HTMLElement {
     nav.append(
       brand(dist),
       namedSlot("new", this.newButton(labels)),
-      namedSlot("filter", textField("filter", labels.fileFilterView, "text")),
+      namedSlot("filter", this.filterField(labels)),
       namedSlot("views", rows("views", VIEWS, labels)),
       tree,
       storageBlock(labels),
@@ -322,11 +328,27 @@ export class FsAppShell extends HTMLElement {
     return nav;
   }
 
-  /** The fallback New button: dispatches `fs-new` for the menu a later task adds. */
+  /** The fallback view filter: dispatches `fs-filter` with the text on every input. */
+  private filterField(labels: LabelTable): HTMLInputElement {
+    const input = textField("filter", labels.fileFilterView, "text");
+    input.addEventListener("input", () =>
+      this.dispatchEvent(
+        new CustomEvent(FILTER_EVENT, {
+          detail: { value: input.value },
+          bubbles: true,
+          composed: true,
+        }),
+      ),
+    );
+    return input;
+  }
+
+  /** The fallback New button: dispatches `fs-new` for the New menu (`<fs-new-menu>`). */
   private newButton(labels: LabelTable): HTMLButtonElement {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "button primary large new";
+    button.setAttribute("aria-haspopup", "menu");
     button.append(icon("plus"), document.createTextNode(labels.fileNew));
     button.addEventListener("click", () =>
       this.dispatchEvent(new CustomEvent(NEW_EVENT, { bubbles: true, composed: true })),
@@ -407,11 +429,15 @@ export class FsAppShell extends HTMLElement {
     const lang = document.documentElement.lang || "en";
     const size = (bytes: number) => formatSize(bytes, labels, lang);
     setText(root, ".storage-value", size(summary.usedBytes));
-    setText(
-      root,
-      ".storage-history",
-      formatLabel(labels.fileStorageCaptionHistory, { history: size(summary.historyBytes) }),
-    );
+    const history = root.querySelector<HTMLElement>(".storage-history");
+    if (history) history.hidden = summary.historyBytes === undefined;
+    if (summary.historyBytes !== undefined) {
+      setText(
+        root,
+        ".storage-history",
+        formatLabel(labels.fileStorageCaptionHistory, { history: size(summary.historyBytes) }),
+      );
+    }
     setText(
       root,
       ".storage-free",

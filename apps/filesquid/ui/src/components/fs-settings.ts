@@ -12,8 +12,10 @@
  *   (owner answer 12, verbatim "No, dont show API info on regular UI screens, just in the
  *   Settings"); a denied or failed health read is shown there as an alert with its reason.
  *
- * The Browsing section (UI-F2.8) and the Recently deleted section (UI-F2.17) join with their
- * tasks. Words come only from the label table, styling only from tokens.
+ * The Browsing section (UI-F2.8: default layout, sort, folder placement, start view and the
+ * hover card, saved through the per-user preferences) is shown when the page is given the
+ * shared preference service; the Recently deleted section (UI-F2.17) joins with its task. Words
+ * come only from the label table, styling only from tokens.
  */
 import { logoSource, type Distribution } from "../distribution";
 import type { HealthStatus } from "../api/client";
@@ -25,6 +27,8 @@ import { denialLabel } from "./denial";
 import type { FsHostIndicator, HostClient } from "./fs-host-indicator";
 import type { FsThemeControl } from "./fs-theme-control";
 import { icon } from "./icons";
+import type { PreferencesService } from "../preferences/service";
+import { STYLE as BROWSING_STYLE, browsingRows, syncBrowsing } from "./settings-browsing";
 
 /** The part of the API client the page needs: the host descriptor and health. */
 export interface SettingsClient extends HostClient {
@@ -44,6 +48,8 @@ export interface SettingsOptions {
   distribution: Distribution;
   /** The API contract version this UI targets, shown beside the API status. */
   contractVersion: string;
+  /** The shared per-user preferences; without them the Browsing section is not shown. */
+  preferences?: PreferencesService;
 }
 
 const STYLE = `
@@ -71,6 +77,9 @@ export class FsSettings extends HTMLElement {
   /** The theme store whose `change` event this page follows for the About logo, if any. */
   private followed?: ThemeStore;
   private readonly onThemeChange = () => this.showLogo();
+  /** The browsing section's elements, while it is shown. */
+  private browsing?: HTMLElement[];
+  private readonly onPreferences = () => this.syncPreferences();
 
   constructor() {
     super();
@@ -108,6 +117,15 @@ export class FsSettings extends HTMLElement {
   disconnectedCallback(): void {
     this.followed?.removeEventListener("change", this.onThemeChange);
     this.followed = undefined;
+    this.options?.preferences?.removeEventListener("change", this.onPreferences);
+  }
+
+  /** Show the saved preferences in the Browsing section's controls. */
+  private syncPreferences(): void {
+    const options = this.options;
+    if (this.browsing && options?.preferences) {
+      syncBrowsing(this.browsing, options.labels, options.preferences);
+    }
   }
 
   /** Point the About logo at the variant for the theme shown now (UI-S-015). */
@@ -132,15 +150,17 @@ export class FsSettings extends HTMLElement {
     const options = this.options;
     if (!root || !options) return;
     const style = document.createElement("style");
-    style.textContent = A11Y_STYLE + CONTROL_STYLE + STYLE;
+    style.textContent = A11Y_STYLE + CONTROL_STYLE + STYLE + BROWSING_STYLE;
     const page = document.createElement("div");
     page.className = "page";
     const heading = document.createElement("h2");
     heading.className = "page-title";
     heading.textContent = options.labels.settings;
+    const browsing = this.browsingSection(options);
     page.append(
       heading,
       appearanceSection(options),
+      ...(browsing ? [browsing] : []),
       privacySection(options),
       aboutSection(options),
     );
@@ -148,6 +168,18 @@ export class FsSettings extends HTMLElement {
     this.follow(options.theme);
     this.showLogo();
     void this.loadHealth();
+  }
+
+  /** The Browsing section, or undefined when the page has no preferences to show. */
+  private browsingSection(options: SettingsOptions): HTMLElement | undefined {
+    this.options?.preferences?.removeEventListener("change", this.onPreferences);
+    this.browsing = undefined;
+    if (!options.preferences) return undefined;
+    const { section: element } = section("browsing", options.labels.settingsBrowsing);
+    this.browsing = browsingRows(options.labels, options.preferences);
+    element.append(...this.browsing);
+    options.preferences.addEventListener("change", this.onPreferences);
+    return element;
   }
 
   /**

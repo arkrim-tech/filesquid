@@ -14,10 +14,15 @@ export type LabelTable = Readonly<Record<string, string>>;
 export type Scheme = "light" | "dark";
 
 /**
- * True for the browser's own network line for a 503 answer from the navigation listing. The
- * desktop and server hosts answer `GET /api/v1/navigation` with 503 `unavailable` until they
- * install the navigation service (DE-1.1), and the UI shows that as its unavailable state; the
- * browser still logs the refused fetch as a console error. Only that line, from that route, is
+ * True for the browser's own network line for a refused fetch of a route the UI reads at start
+ * that the host may not serve yet. The desktop and server hosts answer `GET /api/v1/navigation`
+ * with 503 `unavailable` until they install the navigation service (DE-1.1), and the UI shows
+ * that as its unavailable state. `GET /api/v1/preferences` (UI-F2.8, API-S-011) and
+ * `GET /api/v1/libraries/recent` (API-S-038) answer 503 until a host installs a preference
+ * store or a library registry, and the production-build specs that fake other routes leave them
+ * to the preview server's proxy, which answers 500 to 504 when no host runs; the UI keeps
+ * working on both (the choices apply until the page closes, file actions stay off). The browser
+ * still logs each refused fetch as a console error. Only those lines, from those routes, are
  * excused; the app's own messages and every other route's errors still fail a test.
  *
  * @param text - The console message text.
@@ -25,7 +30,11 @@ export type Scheme = "light" | "dark";
  * @returns Whether it is that line.
  */
 export function isNavigationUnavailable(text: string, url: string): boolean {
-  return /status of 503 \(/.test(text) && /\/api\/v1\/navigation(\?|$)/.test(url);
+  const navigation = /status of 503 \(/.test(text) && /\/api\/v1\/navigation(\?|$)/.test(url);
+  const optional =
+    /status of 50[0-4] \(/.test(text) &&
+    /\/api\/v1\/(preferences|libraries\/recent)(\?|$)/.test(url);
+  return navigation || optional;
 }
 
 /**

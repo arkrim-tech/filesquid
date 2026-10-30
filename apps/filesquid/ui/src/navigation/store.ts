@@ -51,6 +51,7 @@ export interface NavigationEnvironment {
 export class NavigationStore extends EventTarget {
   private prefs: NavigationPreferences = EMPTY_NAVIGATION_PREFERENCES;
   private listening = false;
+  private remote?: (prefs: NavigationPreferences) => void;
   private readonly onStorage = (event: Event) => this.otherTabSaved(event);
 
   /**
@@ -84,8 +85,29 @@ export class NavigationStore extends EventTarget {
     this.listening = false;
   }
 
+  /**
+   * Keep the choices through the API from now on (UI-S-017, UI-F2.8): every change is handed to
+   * `write` instead of device storage, and other tabs' device saves are no longer followed.
+   *
+   * @param write Saves the whole choices through the API; it reports its own failures.
+   */
+  useRemote(write: (prefs: NavigationPreferences) => void): void {
+    this.remote = write;
+  }
+
+  /**
+   * Make `prefs` the current choices, as read from the API, and announce a change. Nothing is
+   * saved: they came from the place they are kept.
+   *
+   * @param prefs The choices the API holds.
+   */
+  replace(prefs: NavigationPreferences): void {
+    this.adopt(prefs);
+  }
+
   /** Take another tab's save of this key (or a cleared storage) as the current choices. */
   private otherTabSaved(event: Event): void {
+    if (this.remote) return;
     const key = (event as StorageEvent).key;
     if (key !== this.key && key !== null) return;
     const saved = this.readSaved();
@@ -184,8 +206,12 @@ export class NavigationStore extends EventTarget {
     return undefined;
   }
 
-  /** Write the choices to device storage. I/O: Web Storage. */
+  /** Write the choices to the API when it keeps them, else to device storage. I/O. */
   private save(): void {
+    if (this.remote) {
+      this.remote(this.prefs);
+      return;
+    }
     try {
       this.env.storage?.setItem(this.key, serializeNavigationPreferences(this.prefs));
     } catch (error) {

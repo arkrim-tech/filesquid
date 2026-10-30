@@ -24,6 +24,7 @@ import {
   type Scheme,
 } from "../support/strict-dom";
 import { LIB, OBJECTS, serveLibraries } from "../support/library-api";
+import { serveDrive } from "../support/drive-api";
 import { COLOURS, expectBox, look, renderedBorder } from "../support/fidelity";
 
 const labels = activeLabels();
@@ -33,6 +34,8 @@ const SCHEMES: readonly Scheme[] = ["light", "dark"];
 async function serveAll(page: Page): Promise<void> {
   await serveLibraries(page);
   await serveMonitor(page);
+  // The file view of a collection reads its rows through the view operation.
+  await serveDrive(page, [], undefined, ["l1", "c1", "c2", "v1"]);
 }
 
 /** The Monitor's routes: degraded health, one running and one stalled process, one E023. */

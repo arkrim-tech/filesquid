@@ -159,6 +159,56 @@ Feature: Drive-style views, sorting, selection and layout preferences
     Then I should see bytes used for the library and for each collection, including version history
     And I should be able to sort a view by size to find large files
 
+  # UI-F2.8: the Drive-style views as built against the contract of API-F2.2 (v3 mockups)
+  # - resources/ui-mockups/v3/05-all-files-list.svg, 06-all-files-grid.svg, 10 to 15, 32, 33, 44 and 56
+  # - apps/filesquid/ui/resources/srs.md UI-S-024, UI-S-025, UI-S-026 and UI-S-033
+  Scenario: The list shows the columns, rows and actions the mockup draws
+    Given a library node holds three folders and ten files
+    When I open the library
+    Then the list should have a 38 px header with Name, Size, Modified and Version
+    And each row should be 44 px tall with a checkbox, a folder icon or a coloured file-type badge, the display name, the size, a relative date and, for files, the version
+    And the actions button of a row should show only while the row is hovered or focused
+    And every colour should come from a token in light and dark
+
+  Scenario: A selection states its effective scope
+    Given a folder holding 14 files and a 412 KB file are selected
+    Then the bulk bar should read "2 selected" and "1 file and 1 folder (14 files inside) · 412 KB"
+    And the bar should offer Download ZIP, Move or copy and Remove
+
+  Scenario: Sorting and layout are the user's saved preferences
+    Given the host serves per-user preferences
+    When I click the Modified column head twice and choose the grid layout
+    Then the list should be asked for modified descending, then ascending
+    And the host should hold the grid layout and the modified sort as one complete preferences value
+
+  Scenario: A host that stores no preferences keeps working
+    Given the host answers 503 for the preferences
+    When I choose the grid layout in Settings, Browsing
+    Then the layout should apply until the page closes
+    And Settings should say that this host does not store preferences
+
+  Scenario: Move or copy offers only collections and folders and refuses honestly
+    Given I choose Move or copy for two files
+    Then the destination tree should list collections and folders inside them, never a library top level or a virtual collection
+    And Move here should stay disabled until I choose a destination
+    When the host cannot place a moved or copied file in a collection yet
+    Then the dialog should say so and change nothing
+
+  Scenario: A ZIP above its caps is refused with the cap stated
+    Given the caps are 1,000 files and 10 GiB per archive
+    When I select folders holding 1,001 files and choose Download ZIP
+    Then the dialog should state the 1,000-file cap and keep Download disabled
+    And no save path should be shown
+
+  Scenario: A view the host does not serve yet says so
+    When I open the Recent view and the host answers that the view is not available yet
+    Then the view should say so and keep the sidebar, header and title in place
+
+  Scenario: A file action the host cannot address yet is disabled with its reason
+    Given the host names no library for the rows of a view
+    When I open the actions menu of a file
+    Then Rename, Move or copy, Download and Remove should be disabled with the reason as their tooltip
+
   # Source
   # - resources/prd.md F-062
   # - resources/srs.md SRS-F-062

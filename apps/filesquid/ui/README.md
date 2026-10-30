@@ -1,6 +1,6 @@
 # @filesquid/ui
 
-FileSquid's default distribution and the component library every distribution builds on: the `FileSquidClient` API client and host adapter, vanilla TypeScript custom elements (`<fs-app-shell>`, `<fs-monitor>`, `<fs-ocfl-findings>`, `<fs-nav-tree>`, `<fs-breadcrumb>`, `<fs-states>`, `<fs-host-indicator>`, `<fs-file-browser>`, `<fs-file-preview>`, `<fs-file-panel>`, `<fs-details-panel>`, `<fs-versions-panel>`, `<fs-library-start>`, `<fs-library-detail>`, `<fs-library-repair>`), design tokens and label tables ([ADR 031](../../../resources/architecture/031-vanilla-typescript-ui-and-white-label-theming.md)). Requirements: [SRS](./resources/srs.md). Plan: [plan](./resources/plan.md).
+FileSquid's default distribution and the component library every distribution builds on: the `FileSquidClient` API client and host adapter, vanilla TypeScript custom elements (`<fs-app-shell>`, `<fs-monitor>`, `<fs-ocfl-findings>`, `<fs-nav-tree>`, `<fs-breadcrumb>`, `<fs-states>`, `<fs-host-indicator>`, `<fs-file-browser>`, `<fs-drive-view>`, `<fs-new-menu>`, `<fs-destination-picker>`, `<fs-file-preview>`, `<fs-file-panel>`, `<fs-details-panel>`, `<fs-versions-panel>`, `<fs-library-start>`, `<fs-library-detail>`, `<fs-library-repair>`), design tokens and label tables ([ADR 031](../../../resources/architecture/031-vanilla-typescript-ui-and-white-label-theming.md)). Requirements: [SRS](./resources/srs.md). Plan: [plan](./resources/plan.md).
 
 ## Develop and test
 
@@ -153,6 +153,16 @@ shell.append(browser);
 - **Events** (bubbling, composed): `fs-location-change` (`detail.location`), `fs-file-open` (`detail.file`, null on close), `fs-files-change` (`detail.operation`, `detail.commit`).
 - **Large folders.** Only the rows near the viewport are in the DOM (5 rows of overscan; rows are `3rem` tall in the list and `9rem` in the grid, so text scaling holds), rows are keyed by logical path and keep their element and focus, and pages of 200 entries load as the window nears the end, up to 500 pages.
 - **Keyboard.** The listing is one Tab stop; ArrowUp, ArrowDown, Home, End, PageUp and PageDown move the active row (the sideways arrows too in the grid), Enter opens it, F2 renames and Delete removes it. Rename and Remove in the toolbar act on the row that last had focus, or on the open file.
+
+## Drive-style views and preferences
+
+`<fs-drive-view>` (Task UI-F2.8; [UI-S-006, UI-S-017, UI-S-024 to UI-S-026, UI-S-033](./resources/srs.md); walkthrough: [Task-UI-F2.8-Walkthrough.md](./resources/tasks/Task-UI-F2.8-Walkthrough.md)) shows one view of one library, collection or virtual collection through the view operation of API-S-011 (`ViewSource`: `ClientViewSource` over `FileSquidClient`, `MemoryViewSource` for tests and demos). It is the navigation view's file listing (`#/navigation/<node>`), All files (`#/files`) and Recent (`#/recent`):
+
+- **List and grid** (list by default): a 38 px header with the header checkbox and the Name, Size, Modified and Version heads; 44 px rows with a checkbox, a folder icon or a coloured file-type badge, the display name, size, a relative date and the version; tiles of 214 x 218 px in the grid. A column head sorts and a second click reverses; the grid has the Sort menu; folders on top or mixed. Every name is the API's display name.
+- **Selection**: row and header checkboxes (partial state, Shift-click ranges, Space on the focused row) share the `Selection` model; the bulk bar states the effective scope and offers Download ZIP (refused above 1,000 files or 10 GiB, with the cap stated), Move or copy (the shared `<fs-destination-picker>`: collections and folders only) and Remove.
+- **Menus and dialogs**: the New menu (`<fs-new-menu>`, opened by the shell's New button; its upload items need a collection or folder), the per-item menu (actions button, right click, menu key), rename with its refusals, remove with Undo, and an optional hover card (off on touch and under reduced motion).
+- **Preferences**: layout, sort, folder placement, start view and the hover card are the user's preferences on the host (`PreferencesService` over `GET` and `PUT /api/v1/preferences`), changed in Settings, Browsing or in the view. The navigation tree's pins, section order and collapse state move there too: a `filesquid.navigation` value on the device is copied once and the key is removed (UI-S-017). A host that stores no preferences answers 503: the choices then apply until the page closes and Settings says so.
+- **Gaps the platform still has to close** (the UI does not guess): the view rows name no library and no version, so file actions need exactly one open library (`singleOpenLibrary`) and the Version column stays empty; move and copy into a collection wait for API-F2.14; the ZIP download has no route; the views home, personal, favorites, shares and tags and Recent are refused by the API as not available yet.
 
 ## File panel
 
