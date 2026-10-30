@@ -4,7 +4,7 @@
 //! the router against a real OCFL root on the local filesystem.
 
 use crate::files_fixture::{
-    command_body, operation_id, upload_facts, Answer, FilesRig, LIBRARY, OBJECT,
+    command_body, operation_id, upload_facts, Answer, FilesRig, HOME_COLLECTION, LIBRARY, OBJECT,
 };
 use crate::MonitorWorld;
 use axum::http::{Method, StatusCode};
@@ -184,7 +184,9 @@ async fn operation_with_id(w: &mut MonitorWorld, operation: String) {
             w.linkage.keep(id, &answer);
         }
         "copies the uploaded file" => {
-            let input = json!({ "library_id": LIBRARY, "file_id": file_id });
+            let input = json!({
+                "library_id": LIBRARY, "file_id": file_id, "collection_id": HOME_COLLECTION
+            });
             command(w, Method::POST, "/api/v1/files/copies", input).await;
         }
         "renames the uploaded file" => {
@@ -300,7 +302,7 @@ async fn carries_label(w: &mut MonitorWorld, label: String) {
 
 #[then(expr = "the move should be journaled once as refused with its operation ID")]
 fn refused_once(w: &mut MonitorWorld) {
-    let refusals = journaled_for(w.linkage.rig(), "files.move", &w.linkage.operation);
+    let refusals = journaled_for(w.linkage.rig(), "file.move", &w.linkage.operation);
     assert_eq!(refusals.len(), 1, "{refusals:?}");
     assert_eq!(refusals[0].outcome, Outcome::Failed);
 }

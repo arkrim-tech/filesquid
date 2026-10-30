@@ -8,7 +8,7 @@
 # numbers the request MUST be refused as path_suffix_exhausted with no change. A crash between
 # the file's object and its registration MUST resume once under the same operation ID
 # (API-S-019).
-# Task API-F2.14 (contract 0.33.0).
+# Task API-F2.14 (contract 0.34.0).
 Feature: Home collections for uploads and copies
   As a library owner
   I want every file I upload or copy to land in the collection and folder I chose

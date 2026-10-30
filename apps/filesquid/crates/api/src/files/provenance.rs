@@ -106,7 +106,7 @@ pub(super) struct Write<'a> {
     pub kind: OperationKind,
     /// The caller's version label, already checked with [`label_of`].
     pub label: Option<String>,
-    /// The route's journal operation, such as `files.move`.
+    /// The route's journal operation, such as `file.move`.
     pub operation: &'static str,
     /// The library written.
     pub library_id: &'a str,

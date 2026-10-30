@@ -2634,7 +2634,7 @@ export interface components {
             /** @description The version label: 1 to 512 bytes, not blank, without control characters, written as the `label` member of the version's filesquid.operation.v1 message (API-S-028, PRD F-065). */
             message?: string;
             /** @description The destination collection, a collection of the library (API-S-011 Destination; owner decision 2026-10-22, "Must choose", ADR 041). Required: a request without it is refused 400 invalid_request with the journal code `destination_required` before any byte is staged, so nothing goes to a library's top level and no default collection is chosen; an unknown collection, one of another library or one the caller may not read is refused 404 not_found (`collection_not_found`). The new file is registered in this collection's snapshot under the request's operation ID. */
-            collection_id?: string;
+            collection_id: string;
             /** @description The destination folder inside the collection: a collection logical path (1 to 1,024 UTF-8 bytes in NFC, `/`-separated segments of 1 to 255 bytes without `\`, NUL or control characters, never `.` or `..`), not inside the reserved `provenance` or `.filesquid` folders; the collection's root when absent. A folder outside the rule is refused 400 invalid_request (`invalid_path`). */
             folder?: string;
         };
@@ -2947,7 +2947,7 @@ export interface components {
             /** @description The version label: 1 to 512 bytes, not blank, without control characters, written as the `label` member of the version's filesquid.operation.v1 message (API-S-028, PRD F-065). */
             message?: string | null;
             /** @description The destination collection, a collection of the library (API-S-011 Destination; owner decision 2026-10-22, "Must choose", ADR 041). Required: a request without it is refused 400 invalid_request with the journal code `destination_required` before any byte is staged, so nothing goes to a library's top level and no default collection is chosen; an unknown collection, one of another library or one the caller may not read is refused 404 not_found (`collection_not_found`). The new file is registered in this collection's snapshot under the request's operation ID. */
-            collection_id?: string | null;
+            collection_id: string | null;
             /** @description The destination folder inside the collection: a collection logical path (1 to 1,024 UTF-8 bytes in NFC, `/`-separated segments of 1 to 255 bytes without `\`, NUL or control characters, never `.` or `..`), not inside the reserved `provenance` or `.filesquid` folders; the collection's root when absent. A folder outside the rule is refused 400 invalid_request (`invalid_path`). */
             folder?: string | null;
         };
