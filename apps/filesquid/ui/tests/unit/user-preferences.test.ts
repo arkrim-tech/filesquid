@@ -181,6 +181,23 @@ describe("PreferencesService with a host that stores preferences", () => {
     expect(MAX_FLUSHES).toBeGreaterThanOrEqual(2);
   });
 
+  it("keeps writing a long burst in bounded flushes and ends with the last value saved", async () => {
+    const { service, source } = await started(DEFAULT_PREFERENCES);
+    const keys = ["size", "name", "modified"] as const;
+    const total = MAX_FLUSHES * 2 + 3;
+    const write = source.write.bind(source);
+    let calls = 0;
+    source.write = (prefs) => {
+      calls += 1;
+      if (calls < total) service.update({ sort_key: keys[calls % keys.length] ?? "name" });
+      return write(prefs);
+    };
+    service.update({ sort_key: "size" });
+    await service.settled();
+    expect(source.writes.length).toBeLessThanOrEqual(total);
+    expect(source.writes.at(-1)?.sort_key).toBe(service.preferences.sort_key);
+  });
+
   it("keeps the choice and says the save failed when the PUT is refused", async () => {
     const { service, source } = await started(DEFAULT_PREFERENCES);
     source.write = () =>
@@ -299,6 +316,31 @@ describe("the one-time copy of the device navigation value (UI-S-017)", () => {
   it("survives refused device storage", async () => {
     const { service } = await started(DEFAULT_PREFERENCES, storage({}, true));
     expect(service.mode).toBe("api");
+  });
+});
+
+describe("why the choices are not saved", () => {
+  it("says the host stores none for a 503, and that it could not be read for any other failure", async () => {
+    const fail = (status: number): PreferencesSource => {
+      const refuse = () =>
+        Promise.reject(
+          new ApiError(status, "/api/v1/preferences", {
+            code: status === 503 ? "unavailable" : "unauthorized",
+          }),
+        );
+      return { read: refuse, write: refuse };
+    };
+    const none = new PreferencesService({ source: fail(503), navigation: new NavigationStore({}) });
+    await none.start();
+    expect(none.deviceReason).toBe("unsupported");
+    const denied = new PreferencesService({
+      source: fail(401),
+      navigation: new NavigationStore({}),
+    });
+    await denied.start();
+    expect(denied.deviceReason).toBe("unreadable");
+    const { service } = await started(DEFAULT_PREFERENCES);
+    expect(service.deviceReason).toBeUndefined();
   });
 });
 

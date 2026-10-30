@@ -287,6 +287,23 @@ describe("<fs-drive-view> item menu", () => {
     expect(menu.querySelector(".remove")).not.toBeNull();
   });
 
+  it("offers Open on a file only when the host names its library, and says why otherwise", async () => {
+    const rows = ROWS.map((row) => ({ ...row, libraryId: undefined }));
+    const source = new MemoryViewSource(new Map([["node-library", { all: rows, deleted: [] }]]));
+    const { element } = await mount({ source });
+    const opened = vi.fn();
+    element.addEventListener("fs-drive-open", opened);
+    await click(
+      rowNamed(element, "budget-2026.xlsx").querySelector("button.actions") as HTMLElement,
+    );
+    const open = item(element, labels.fileOpen);
+    expect(open.getAttribute("aria-disabled")).toBe("true");
+    expect(open.getAttribute("title")).toBe(labels.fileActionUnavailable);
+    await click(rowNamed(element, "budget-2026.xlsx").querySelector(".name") as HTMLElement);
+    expect(opened).not.toHaveBeenCalled();
+    expect(one(element, ".toast[role=alert]").textContent).toBe(labels.fileActionUnavailable);
+  });
+
   it("opens the same menu on a right click", async () => {
     const { element } = await mount();
     const row = rowNamed(element, "budget-2026.xlsx");
@@ -400,15 +417,17 @@ describe("<fs-drive-view> rename and remove", () => {
 
   it("removes the selected files in turn and stops at the first failure, keeping the selection", async () => {
     const { element, files } = await mount();
-    const remove = files.remove as unknown as ReturnType<typeof vi.fn<() => Promise<unknown>>>;
-    const first = await remove();
+    const remove = files.remove as unknown as ReturnType<typeof vi.fn>;
+    const receipt = { library_id: "lib-1", object_id: "x", version: "v3", created: "t" };
     remove.mockReset();
-    remove.mockResolvedValueOnce(first).mockRejectedValueOnce(new Error("refused"));
+    remove.mockResolvedValueOnce(receipt).mockRejectedValueOnce(new Error("refused"));
     await tick(element, "budget-2026.xlsx");
     await tick(element, "facade-study.jpg");
     await tick(element, "survey-points.csv");
     await click(one(element, ".bulk-remove"));
     expect(remove).toHaveBeenCalledTimes(2);
+    expect(remove.mock.calls[0]?.[0]).toMatchObject({ object_id: "urn:uuid:f-xlsx" });
+    expect(remove.mock.calls[1]?.[0]).toMatchObject({ object_id: "urn:uuid:f-jpg" });
     expect(one(element, ".toast[role=alert]").textContent).toBe(labels.fileActionFailed);
     expect(one(element, ".bulk-count").textContent).toBe("3 selected");
   });
@@ -432,6 +451,25 @@ describe("<fs-drive-view> rename and remove", () => {
     const rename = item(element, labels.fileRename);
     expect(rename.getAttribute("aria-disabled")).toBe("true");
     expect(rename.getAttribute("title")).toBe(labels.fileActionUnavailable);
+  });
+});
+
+describe("<fs-drive-view> order", () => {
+  it("keeps the nodes in item order after the sort is reversed", async () => {
+    const { element, prefs } = await mount();
+    prefs.update({ sort_direction: "descending" });
+    await settle();
+    await settle();
+    expect(names(element)).toEqual([
+      "Drawings",
+      "Contracts",
+      "survey-points.csv",
+      "harbour-masterplan-v7.pdf",
+      "facade-study.jpg",
+      "budget-2026.xlsx",
+    ]);
+    const indexes = all(element, ".row").map((row) => Number(row.dataset.index));
+    expect(indexes).toEqual([...indexes].sort((a, b) => a - b));
   });
 });
 
@@ -568,6 +606,15 @@ describe("<fs-drive-view> ZIP and move or copy", () => {
     expect(files.remove).not.toHaveBeenCalled();
   });
 
+  it("says the move is not available, and keeps Move here disabled, when there is no destination source", async () => {
+    const { element } = await mount();
+    await tick(element, "budget-2026.xlsx");
+    await click(one(element, ".bulk-move"));
+    const dialog = one(element, "[role=dialog]");
+    expect(dialog.querySelector(".form-error")?.textContent).toBe(labels.fileMoveCopyUnavailable);
+    expect(dialog.querySelector("button.start")?.hasAttribute("disabled")).toBe(true);
+  });
+
   it("opens the move or copy dialog with the mode control and the mode's explanation", async () => {
     const { element } = await mount();
     await tick(element, "budget-2026.xlsx");
@@ -659,7 +706,7 @@ describe("<fs-drive-view> states", () => {
     expect(element.dataset.state).toBe("ready");
   });
 
-  it("shows a gone node as the empty state with its reason", async () => {
+  it("shows a gone node as the empty state", async () => {
     const { element } = await mount({ source: new MemoryViewSource(new Map()) });
     expect(element.dataset.state).toBe("empty");
   });

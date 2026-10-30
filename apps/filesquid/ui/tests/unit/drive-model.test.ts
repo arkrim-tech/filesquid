@@ -12,7 +12,7 @@ import {
   defaultDirection,
   driveRow,
   driveSummary,
-  extensionOf,
+  badgeExtensionOf,
   nextSort,
   recentGroup,
   recentTimeText,
@@ -110,12 +110,12 @@ describe("sorting", () => {
 
 describe("file-type badges", () => {
   it("takes the extension from the display name, lower case, at most five characters", () => {
-    expect(extensionOf("Report.PDF")).toBe("pdf");
-    expect(extensionOf(".env")).toBe("env");
-    expect(extensionOf("archive.tar.gz")).toBe("gz");
-    expect(extensionOf("README")).toBe("");
-    expect(extensionOf("trailing.")).toBe("");
-    expect(extensionOf("odd.extension1")).toBe("");
+    expect(badgeExtensionOf("Report.PDF")).toBe("pdf");
+    expect(badgeExtensionOf(".env")).toBe("env");
+    expect(badgeExtensionOf("archive.tar.gz")).toBe("gz");
+    expect(badgeExtensionOf("README")).toBe("");
+    expect(badgeExtensionOf("trailing.")).toBe("");
+    expect(badgeExtensionOf("odd.extension1")).toBe("");
   });
   it("colours documents, data and media as UI-S-026 lists them", () => {
     for (const ext of ["pdf", "docx", "txt"]) expect(badgeClass(ext)).toBe("document");

@@ -52,6 +52,14 @@ describe("singleOpenLibrary", () => {
     expect(request).toHaveBeenCalledTimes(2);
   });
 
+  it("answers nothing when the list is at its cap of 20, since an open library may be out of sight", async () => {
+    const full = Array.from({ length: 20 }, (_, i) => library(`l${i}`, i === 0));
+    const request = vi.fn().mockResolvedValue({ libraries: full });
+    expect(await singleOpenLibrary({ request } as never)()).toBeUndefined();
+    const short = vi.fn().mockResolvedValue({ libraries: full.slice(0, 19) });
+    expect(await singleOpenLibrary({ request: short } as never)()).toBe("l0");
+  });
+
   it("answers nothing when several libraries are open or none is", async () => {
     const two = vi.fn().mockResolvedValue({ libraries: [library("a", true), library("b", true)] });
     expect(await singleOpenLibrary({ request: two } as never)()).toBeUndefined();
@@ -121,6 +129,12 @@ describe("the storage block", () => {
     expect(summary).not.toHaveProperty("freeBytes");
   });
 
+  it("says nothing when the recent list is at its cap of 20", async () => {
+    const full = Array.from({ length: 20 }, (_, i) => library(`l${i}`, i === 0));
+    const request = vi.fn().mockResolvedValue({ libraries: full });
+    expect(await readStorage({ request } as never)).toBeUndefined();
+  });
+
   it("says nothing with several open libraries, or when a read fails", async () => {
     const two = vi.fn().mockResolvedValue({ libraries: [library("a", true), library("b", true)] });
     expect(await readStorage({ request: two } as never)).toBeUndefined();
@@ -149,7 +163,7 @@ describe("the storage block", () => {
         ? { libraries: [library("lib", true, 4096)] }
         : { library_id: "lib", objects: 1, contents: 1, bytes, truncated: false },
     );
-    bindStorage(shell, { request } as never);
+    bindStorage(shell, { request } as never, 0);
     expect(request).not.toHaveBeenCalled();
     shell.dispatchEvent(
       new CustomEvent("fs-summary", { detail: { text: "x" }, bubbles: true, composed: true }),
@@ -166,6 +180,31 @@ describe("the storage block", () => {
     shell.remove();
   });
 
+  it("reads the storage once after a burst of writes", async () => {
+    defineElements();
+    const shell = document.createElement("fs-app-shell") as FsAppShell;
+    const request = vi.fn(async (path: string) =>
+      path.startsWith("/api/v1/libraries/recent")
+        ? { libraries: [library("lib", true)] }
+        : { library_id: "lib", objects: 1, contents: 1, bytes: 1, truncated: false },
+    );
+    vi.useFakeTimers();
+    try {
+      bindStorage(shell, { request } as never, 300);
+      for (let i = 0; i < 5; i += 1) {
+        shell.dispatchEvent(new CustomEvent("fs-drive-change"));
+        await vi.advanceTimersByTimeAsync(50);
+      }
+      expect(request).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(400);
+      expect(
+        request.mock.calls.filter(([path]) => String(path).includes("history-size")),
+      ).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("keeps the newest summary when an older read finishes last", async () => {
     defineElements();
     const shell = document.createElement("fs-app-shell") as FsAppShell;
@@ -180,10 +219,11 @@ describe("the storage block", () => {
       set: (value) => seen.push(value),
       configurable: true,
     });
-    bindStorage(shell, { request } as never);
+    bindStorage(shell, { request } as never, 0);
     shell.dispatchEvent(new CustomEvent("fs-summary", { detail: { text: "x" } }));
+    await new Promise((resolve) => setTimeout(resolve, 5));
     shell.dispatchEvent(new CustomEvent("fs-drive-change"));
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 5));
     expect(answers).toHaveLength(2);
     answers[1]?.(2000);
     await new Promise((resolve) => setTimeout(resolve, 0));

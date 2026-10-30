@@ -45,12 +45,29 @@ export function singleOpenLibrary(
   };
 }
 
+/** The most libraries `GET /api/v1/libraries/recent` lists (API-S-038). */
+export const RECENT_LIBRARIES_CAP = 20;
+
+/**
+ * The one open library of a recent-libraries answer. A list at its cap may hide further open
+ * libraries, so it proves nothing about "only one" and answers undefined. Pure.
+ *
+ * @param answer The answer of `GET /api/v1/libraries/recent`.
+ * @returns The open library, or undefined when none, several or possibly more are open.
+ */
+export function onlyOpenLibrary(
+  answer: RecentLibraries,
+): RecentLibraries["libraries"][number] | undefined {
+  const libraries = Array.isArray(answer.libraries) ? answer.libraries : [];
+  if (libraries.length >= RECENT_LIBRARIES_CAP) return undefined;
+  const open = libraries.filter((library) => library.open);
+  return open.length === 1 ? open[0] : undefined;
+}
+
 /** Read the libraries and pick the only open one; a failure is logged and answers undefined. */
 async function read(client: LibraryLookupClient): Promise<string | undefined> {
   try {
-    const answer = await client.request<RecentLibraries>(PATH);
-    const open = Array.isArray(answer.libraries) ? answer.libraries.filter((l) => l.open) : [];
-    return open.length === 1 ? open[0]?.library_id : undefined;
+    return onlyOpenLibrary(await client.request<RecentLibraries>(PATH))?.library_id;
   } catch (error) {
     console.warn("FileSquid could not tell which library is open; file actions stay off", error);
     return undefined;

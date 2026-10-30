@@ -8,7 +8,7 @@
  */
 import {
   badgeClass,
-  extensionOf,
+  badgeExtensionOf,
   recentGroup,
   recentTimeText,
   relativeTime,
@@ -92,6 +92,9 @@ export const STYLE = `
   .placeholder-row::after { content: ""; position: absolute; inset-block: 0.875rem; inset-inline: 3.25rem 40%; border-radius: var(--fs-radius-item); background: var(--fs-surface-raised); }
   @media (max-width: 40rem) {
     .table { --cols: 1.5rem 0.5rem 3.25rem minmax(0, 1fr) 5rem 0 0 0 0 1.875rem; }
+    .table.recent { --cols: 1.5rem 0.5rem 3.25rem minmax(0, 1fr) minmax(0, 8rem) 0 0 0 0 1.875rem; }
+    .recent .row .collection { display: none; }
+    .recent .row .activity { grid-column: 5 / 10; }
     .head .col-modified, .head .col-version, .row .modified, .row .version { display: none; }
   }
 `;
@@ -124,7 +127,7 @@ function folderIcon(row: DriveRow): SVGSVGElement {
 /** The file-type badge of a file, or the folder icon of a folder. */
 function badgeOf(row: DriveRow): SVGSVGElement | HTMLElement {
   if (row.kind === "folder") return folderIcon(row);
-  const ext = extensionOf(row.name);
+  const ext = badgeExtensionOf(row.name);
   const badge = document.createElement("span");
   badge.className = `badge ${badgeClass(ext)}`;
   badge.textContent = ext === "" ? "FILE" : ext.toUpperCase();

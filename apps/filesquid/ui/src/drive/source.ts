@@ -67,7 +67,9 @@ function validRow(row: unknown): row is ViewRow {
     typeof row.display_name === "string" &&
     typeof row.media_type === "string" &&
     typeof row.size === "number" &&
-    typeof row.modified === "string"
+    typeof row.modified === "string" &&
+    (row.modified_by_me === null || typeof row.modified_by_me === "string") &&
+    (row.opened_by_me === null || typeof row.opened_by_me === "string")
   );
 }
 

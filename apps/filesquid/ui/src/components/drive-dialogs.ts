@@ -454,6 +454,8 @@ export function moveDialog(options: MoveDialogOptions): OpenDialog {
   );
   if (options.navigation)
     picker.configure({ labels, source: options.navigation, current: options.current });
+  // Without a destination source nothing can be chosen: say so rather than show an empty tree.
+  else error.textContent = labels.fileMoveCopyUnavailable;
   wireMoveDialog({ options, mode, explain, start, line, picker, error, state, open });
   cancel.addEventListener("click", () => open.close());
   return open;

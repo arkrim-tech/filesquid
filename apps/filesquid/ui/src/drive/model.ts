@@ -255,13 +255,15 @@ export function clampFilter(text: string): string {
 }
 
 /**
- * The extension to show in a badge: the last dot-separated part of the display name, upper
- * case, at most 5 characters; a leading-dot name such as `.env` is its own extension. Pure.
+ * The extension to show in a list badge: the last dot-separated part of the display name, lower
+ * case, at most 5 characters; a leading-dot name such as `.env` is its own extension, because
+ * UI-S-026 lists ENV among the data badges. This differs on purpose from `files/badge.ts`
+ * `extensionOf` (the preview and the file panel), which gives a leading-dot name none. Pure.
  *
  * @param name The display name.
  * @returns The extension in lower case, or an empty string when there is none.
  */
-export function extensionOf(name: string): string {
+export function badgeExtensionOf(name: string): string {
   const dot = name.lastIndexOf(".");
   if (dot < 0 || dot === name.length - 1) return "";
   const ext = name.slice(dot + 1).toLowerCase();

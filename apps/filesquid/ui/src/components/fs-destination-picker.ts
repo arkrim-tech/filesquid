@@ -199,10 +199,11 @@ export class FsDestinationPicker extends HTMLElement {
   private async expand(node: string): Promise<void> {
     if (!this.levels.has(node)) {
       const generation = this.generation;
-      const staged = new Map(this.levels);
+      const staged = new Map<string, readonly NavigationNode[]>();
       await this.level(node, staged);
       if (generation !== this.generation) return;
-      this.levels = staged;
+      // Merge into the current map: another expand may have finished while this one read.
+      this.levels = new Map([...this.levels, ...staged]);
     }
     this.expanded.add(node);
   }
@@ -377,7 +378,8 @@ export class FsDestinationPicker extends HTMLElement {
       if (items[here]?.dataset.selectable === "false") void this.toggle(node);
       else this.choose(node);
     }
-    if (event.key === "ArrowRight" && !this.expanded.has(node)) void this.toggle(node);
-    if (event.key === "ArrowLeft" && this.expanded.has(node)) void this.toggle(node);
+    const state = items[here]?.getAttribute("aria-expanded");
+    if (event.key === "ArrowRight" && state === "false") void this.toggle(node);
+    if (event.key === "ArrowLeft" && state === "true") void this.toggle(node);
   }
 }

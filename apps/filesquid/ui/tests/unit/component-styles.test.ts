@@ -31,6 +31,7 @@ const ELEMENTS = [
   "fs-metadata-panel.ts",
   "fs-monitor.ts",
   "fs-nav-tree.ts",
+  "fs-new-menu.ts",
   "fs-ocfl-findings.ts",
   "fs-settings.ts",
   "fs-states.ts",
@@ -93,6 +94,21 @@ describe("Drive layout constants", () => {
   it("ends the Recent activity text before the actions column (track 10)", () => {
     expect(css("drive-row-view.ts")).toMatch(/\.recent \.row \.activity \{ grid-column: 7 \/ 10;/);
     expect(css("drive-row-view.ts")).toMatch(/\.row \.actions-cell \{ grid-column: 10;/);
+  });
+  it("keeps the Recent activity text in visible columns on a narrow screen", () => {
+    const rowView = css("drive-row-view.ts");
+    expect(rowView).toMatch(
+      /@media \(max-width: 40rem\)[^@]*\.recent \.row \.activity \{ grid-column: 5 \/ 10;/,
+    );
+    expect(rowView).toMatch(
+      /@media \(max-width: 40rem\)[^@]*\.recent \.row \.collection \{ display: none;/,
+    );
+  });
+  it("keeps the Browsing status note rendered, so a live region announces what is put in it", () => {
+    expect(css("settings-browsing.ts")).not.toMatch(/\.pref-note:empty\s*\{\s*display: none/);
+    expect(css("settings-browsing.ts")).toMatch(
+      /\.pref-note:not\(\.pref-status\):empty \{ display: none/,
+    );
   });
   it("lets the Browsing rows shrink and stack so text scaling never scrolls sideways", () => {
     const browsing = css("settings-browsing.ts");
@@ -242,16 +258,13 @@ describe("UI-S-016 accessibility contracts in component stylesheets", () => {
   it("the shared stylesheet draws focus in Highlight under forced colours", () => {
     expect(mediaBlock(shared, "forced-colors: active")).toMatch(/outline-color:\s*Highlight/);
   });
-  it.each([...ELEMENTS, "fs-new-menu.ts"])(
-    "%s includes the shared accessibility stylesheet",
-    (name) => {
-      // The rendering expression, not just the import: the shared rules go first in the style,
-      // optionally followed by the shared control stylesheet (UI-S-024).
-      expect(sources.find((s) => s.name === name)?.source).toMatch(
-        /A11Y_STYLE\s*\+\s*(?:CONTROL_STYLE\s*\+\s*)?STYLE|\$\{A11Y_STYLE\}(?:\$\{CONTROL_STYLE\})?\$\{STYLE\}/,
-      );
-    },
-  );
+  it.each(ELEMENTS)("%s includes the shared accessibility stylesheet", (name) => {
+    // The rendering expression, not just the import: the shared rules go first in the style,
+    // optionally followed by the shared control stylesheet (UI-S-024).
+    expect(sources.find((s) => s.name === name)?.source).toMatch(
+      /A11Y_STYLE\s*\+\s*(?:CONTROL_STYLE\s*\+\s*)?STYLE|\$\{A11Y_STYLE\}(?:\$\{CONTROL_STYLE\})?\$\{STYLE\}/,
+    );
+  });
   it.each(sources)("$name uses logical properties only", ({ css }) => {
     expect(css.match(PHYSICAL)?.[0]).toBeUndefined();
   });

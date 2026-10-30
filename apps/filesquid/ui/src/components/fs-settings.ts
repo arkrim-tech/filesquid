@@ -1,6 +1,7 @@
 /**
  * `<fs-settings>`: the Settings page (UI-S-033, UI-S-015, UI-S-004, UI-S-018; mockup
- * `resources/ui-mockups/v3/32-settings.svg`). Three sections, each with a 22 px heading:
+ * `resources/ui-mockups/v3/32-settings.svg`). Appearance, Privacy and About, and Browsing between Appearance and Privacy when the page is
+ * given the shared preferences, each section with a 22 px heading:
  *
  * - **Appearance**: the only `<fs-theme-control>` (owner answer 7, verbatim "Settings ->
  *   Appaerance") and its help text;

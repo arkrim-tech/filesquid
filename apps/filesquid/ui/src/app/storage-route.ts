@@ -10,7 +10,11 @@
  */
 import type { FileSquidClient } from "../api/client";
 import type { components } from "../api/schema";
+import { onlyOpenLibrary } from "../drive/library";
 import type { FsAppShell, StorageSummary } from "../components/fs-app-shell";
+
+/** How long after the last committed write the storage is read again. */
+export const STORAGE_REFRESH_DELAY_MS = 400;
 
 /** The part of `FileSquidClient` the block needs (injectable in tests). */
 export type StorageClient = Pick<FileSquidClient, "request">;
@@ -28,8 +32,7 @@ type LibraryHistorySize = components["schemas"]["LibraryHistorySize"];
 export async function readStorage(client: StorageClient): Promise<StorageSummary | undefined> {
   try {
     const recent = await client.request<RecentLibraries>("/api/v1/libraries/recent");
-    const open = recent.libraries.filter((library) => library.open);
-    const only = open.length === 1 ? open[0] : undefined;
+    const only = onlyOpenLibrary(recent);
     if (!only) return undefined;
     const path = `/api/v1/files/library-history-size?library_id=${encodeURIComponent(only.library_id)}`;
     const size = await client.request<LibraryHistorySize>(path);
@@ -49,17 +52,29 @@ export async function readStorage(client: StorageClient): Promise<StorageSummary
  *
  * @param shell The app shell.
  * @param client The API client.
+ * @param delayMs Quiet time after the last write before storage is read again.
  * @returns A function that stops following writes.
  */
-export function bindStorage(shell: FsAppShell, client: StorageClient): () => void {
+export function bindStorage(
+  shell: FsAppShell,
+  client: StorageClient,
+  delayMs: number = STORAGE_REFRESH_DELAY_MS,
+): () => void {
   let started = false;
   let latest = 0;
-  const refresh = () => {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const read = () => {
     const mine = ++latest;
     // Only the newest read may set the block; an older one that finishes later is dropped.
     void readStorage(client).then((summary) => {
       if (mine === latest) shell.storage = summary;
     });
+  };
+  // Each read scans the library's history on the host, so a burst of writes (a bulk remove)
+  // asks once, after the last of them.
+  const refresh = () => {
+    clearTimeout(timer);
+    timer = setTimeout(read, delayMs);
   };
   const first = () => {
     if (started) return;
@@ -69,6 +84,7 @@ export function bindStorage(shell: FsAppShell, client: StorageClient): () => voi
   shell.addEventListener("fs-summary", first);
   shell.addEventListener("fs-drive-change", refresh);
   return () => {
+    clearTimeout(timer);
     shell.removeEventListener("fs-summary", first);
     shell.removeEventListener("fs-drive-change", refresh);
   };

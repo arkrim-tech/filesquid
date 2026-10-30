@@ -18,7 +18,7 @@ npm run contract:types # regenerate src/api/schema.d.ts and src/api/contract-ver
 
 `npm run test:e2e` builds the UI and starts `filesquid-server` with Cargo, so it needs the Rust toolchain and a Playwright browser (`npx playwright install chromium`). The repository's pre-commit hook runs it when `FILESQUID_E2E=1` is set. During the FileSquid MVP this package's lint, typecheck and tests are the only npm suite the hook runs, and they run when the change scope includes this package: a change here or confined to ImageSquid gives `npm:apps/filesquid/ui`, a `full` scope runs them with everything else, and a `docs` scope runs no npm suite ([change-aware test scope](../../../.agents/rules/local-verification.md#change-aware-test-scope)). The hook's format step checks ImageSquid on every commit whatever the scope, with this package's Prettier. The second suite, `tests/e2e/preview/`, serves the static build with `vite preview` on port 4173 and needs no server; both use `tests/e2e/support/strict-dom.ts` for strict DOM assertions (defined elements, labels from the label table, computed tokens in light and dark, no console errors).
 
-The tests run in UTC, because the Drive view words dates by local calendar day: Vitest pins `TZ` in a global setup (`tests/support/pin-timezone.mjs`) and the preview Playwright config sets `timezoneId` to `UTC`.
+Vitest and the preview Playwright tests run in UTC, because the Drive view words dates by local calendar day: Vitest pins `TZ` in a global setup (`tests/support/pin-timezone.mjs`) and the preview Playwright config sets `timezoneId` to `UTC`.
 
 ## Theme, tokens and brand
 

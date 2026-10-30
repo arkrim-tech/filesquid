@@ -115,6 +115,22 @@ describe("ClientViewSource", () => {
     expect(parseViewPage({ ...body, complete: false }).complete).toBe(false);
   });
 
+  it("rejects a file row whose own-journal times are missing or mistyped", () => {
+    const fileRow = body.rows[1] as Record<string, unknown>;
+    for (const patch of [
+      { modified_by_me: 5 },
+      { opened_by_me: false },
+      { modified_by_me: undefined },
+      { opened_by_me: undefined },
+    ]) {
+      expect(() => parseViewPage({ ...body, rows: [{ ...fileRow, ...patch }] })).toThrow(TypeError);
+    }
+    expect(
+      parseViewPage({ ...body, rows: [{ ...fileRow, modified_by_me: "2026-10-16T10:00:00Z" }] })
+        .rows,
+    ).toHaveLength(1);
+  });
+
   it("rejects a folder row whose kind is not one of the contract's two", () => {
     const folderRow = (node_kind: unknown) => ({ kind: "folder", node: "c", node_kind, name: "x" });
     expect(() => parseViewPage({ ...body, rows: [folderRow("library")] })).toThrow(TypeError);

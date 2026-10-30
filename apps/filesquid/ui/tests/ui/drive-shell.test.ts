@@ -16,6 +16,7 @@ import {
 } from "../../src/index";
 import { FsNavigationView } from "../../src/components/fs-navigation-view";
 import { MemoryNavigationSource, type FixtureNode } from "../../src/navigation/source";
+import { ApiError } from "../../src/api/client";
 import { PreferencesService } from "../../src/preferences/service";
 import { NavigationStore } from "../../src/navigation/store";
 import { ROWS, preferences, settle, viewSource, LIBRARY } from "../support/drive-fakes";
@@ -27,7 +28,10 @@ beforeEach(() => {
   defineElements();
   vi.spyOn(console, "warn").mockImplementation(() => undefined);
 });
+/** Route bindings made by a test, undone after it so no `hashchange` listener leaks. */
+const stops: (() => void)[] = [];
 afterEach(() => {
+  for (const stop of stops.splice(0)) stop();
   vi.restoreAllMocks();
   document.body.replaceChildren();
   window.location.hash = "";
@@ -141,6 +145,83 @@ describe("<fs-destination-picker>", () => {
     expect(picker.selected).toBeUndefined();
     expect(seen).toHaveBeenCalledWith(null);
     expect(rows(picker).every((li) => li.getAttribute("aria-selected") === "false")).toBe(true);
+  });
+
+  it("does not expand a row that has no children when Right is pressed", async () => {
+    const source = new MemoryNavigationSource(TREE);
+    const list = vi.spyOn(source, "list");
+    const picker = document.createElement("fs-destination-picker") as FsDestinationPicker;
+    picker.configure({ labels, source });
+    document.body.append(picker);
+    await settle();
+    (rows(picker)[1]?.querySelector(".chevron") as HTMLElement).click();
+    await settle();
+    const leaf = rows(picker)[2] as HTMLElement;
+    leaf.focus();
+    const before = list.mock.calls.length;
+    picker.shadowRoot
+      ?.querySelector("ul")
+      ?.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
+    await settle();
+    expect(list.mock.calls.length).toBe(before);
+    expect(leaf.hasAttribute("aria-expanded")).toBe(false);
+  });
+
+  it("keeps the children of every node when two expands overlap", async () => {
+    const two: FixtureNode = {
+      node: "r",
+      kind: "repository",
+      name: null,
+      children: [
+        {
+          node: "lib",
+          kind: "library",
+          name: "Family",
+          children: [
+            {
+              node: "a",
+              kind: "collection",
+              name: "A",
+              children: [{ node: "a1", kind: "folder", name: "A1" }],
+            },
+            {
+              node: "b",
+              kind: "collection",
+              name: "B",
+              children: [{ node: "b1", kind: "folder", name: "B1" }],
+            },
+          ],
+        },
+      ],
+    };
+    const source = new MemoryNavigationSource(two);
+    const list = source.list.bind(source);
+    const gates = new Map<string, () => void>();
+    let hold = false;
+    source.list = async (parent, cursor, limit) => {
+      if (hold && (parent === "a" || parent === "b")) {
+        await new Promise<void>((resolve) => gates.set(parent, resolve));
+      }
+      return list(parent, cursor, limit);
+    };
+    const picker = document.createElement("fs-destination-picker") as FsDestinationPicker;
+    picker.configure({ labels, source });
+    document.body.append(picker);
+    await settle();
+    hold = true;
+    for (const li of rows(picker).slice(1)) (li.querySelector(".chevron") as HTMLElement).click();
+    await settle();
+    gates.get("a")?.();
+    await settle();
+    gates.get("b")?.();
+    await settle();
+    expect(rows(picker).map((li) => li.textContent?.trim())).toEqual([
+      "Family",
+      "A",
+      "A1",
+      "B",
+      "B1",
+    ]);
   });
 
   it("shows the error state with Try again when a lazy read of a node fails", async () => {
@@ -372,8 +453,10 @@ describe("Settings, Browsing", () => {
   it("says the choices apply until the page closes when the host stores none", async () => {
     const service = new PreferencesService({
       source: {
-        read: () => Promise.reject(new Error("503")),
-        write: () => Promise.reject(new Error("503")),
+        read: () =>
+          Promise.reject(new ApiError(503, "/api/v1/preferences", { code: "unavailable" })),
+        write: () =>
+          Promise.reject(new ApiError(503, "/api/v1/preferences", { code: "unavailable" })),
       },
       navigation: new NavigationStore({}),
     });
@@ -381,6 +464,22 @@ describe("Settings, Browsing", () => {
     const settings = await mountSettings(service);
     expect(settings.shadowRoot?.querySelector(".pref-status")?.textContent).toBe(
       labels.settingsBrowsingDeviceOnly,
+    );
+  });
+
+  it("says the preferences could not be read, not that the host keeps none, after another failure", async () => {
+    const service = new PreferencesService({
+      source: {
+        read: () =>
+          Promise.reject(new ApiError(401, "/api/v1/preferences", { code: "unauthorized" })),
+        write: () => Promise.reject(new Error("no")),
+      },
+      navigation: new NavigationStore({}),
+    });
+    await service.start();
+    const settings = await mountSettings(service);
+    expect(settings.shadowRoot?.querySelector(".pref-status")?.textContent).toBe(
+      labels.settingsBrowsingUnreadable,
     );
   });
 
@@ -423,6 +522,7 @@ describe("Drive routes", () => {
       drive: { source, preferences: service },
       newMenu,
     });
+    stops.push(stop);
     await settle();
     await settle();
     return { shell, source, stop, newMenu };
@@ -488,11 +588,13 @@ describe("Drive routes", () => {
       first = false;
       return new Promise((_, reject) => (fail = reject));
     };
-    bindDriveRoute(shell, {
-      labels,
-      navigation,
-      drive: { source: viewSource(), preferences: service },
-    });
+    stops.push(
+      bindDriveRoute(shell, {
+        labels,
+        navigation,
+        drive: { source: viewSource(), preferences: service },
+      }),
+    );
     window.location.hash = "#/recent";
     window.dispatchEvent(new HashChangeEvent("hashchange"));
     await settle();
@@ -510,16 +612,18 @@ describe("Drive routes", () => {
     const shell = document.createElement("fs-app-shell") as FsAppShell;
     document.body.append(shell);
     const { service } = await preferences();
-    bindDriveRoute(shell, {
-      labels,
-      navigation: new MemoryNavigationSource({
-        node: "r",
-        kind: "repository",
-        name: null,
-        children: [],
+    stops.push(
+      bindDriveRoute(shell, {
+        labels,
+        navigation: new MemoryNavigationSource({
+          node: "r",
+          kind: "repository",
+          name: null,
+          children: [],
+        }),
+        drive: { source: viewSource(), preferences: service },
       }),
-      drive: { source: viewSource(), preferences: service },
-    });
+    );
     await settle();
     await settle();
     expect(shell.querySelector<HTMLElement>("fs-drive-view")?.dataset.state).toBe("empty");

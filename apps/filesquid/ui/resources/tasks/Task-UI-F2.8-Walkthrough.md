@@ -30,6 +30,8 @@ PRD: [F-062](../../../../../resources/prd.md#f-062-drive-style-views-sorting-sel
 ## Decisions to confirm
 
 - **Merge, not overwrite** (UI-S-017 says "copy that value there once"): when the API already holds navigation choices and the device holds a value too, the two are merged (the API's pins first, then the device's pins it lacks; the API's section order unless it has none; the union of collapsed nodes, each list inside its bound), written once, and the device key is removed. Neither side loses a choice. Changed after review round 1.
+- **Library lookup at the cap**: `GET /api/v1/libraries/recent` lists at most 20 libraries, so a full list proves nothing about "only one open"; the file actions and the storage block then treat the library as unknown. The stop-gap goes when the view page names its library.
+- **Storage read after a burst of writes**: the storage block reads once, 400 ms after the last committed write, because each read scans the library's history on the host.
 - **Whole-choices saves, last writer wins**: each save is one complete `PUT` (the contract has no merge), so when two tabs change the navigation choices the last save wins; a tab reads the API's choices again when it starts. Documented in the README and `NavigationStore.useRemote`.
 - **Folder contents in a ZIP are not byte-counted**: the view contract gives a folder row neither a size nor (yet) a file count, so the 10 GiB cap is checked against the selected files' own bytes and left to the ZIP route to enforce for folder contents (the dialog says the download is not available until that route exists).
 - **Download in the item menu stays disabled with the label-table reason**: the mockup draws the item, and a single-file download needs the head version, which the view rows do not name yet (item 1 below).
@@ -103,7 +105,7 @@ Playwright against `vite build` plus `vite preview` (`FILESQUID_E2E=1`). The pin
   144 passed (1.0m)
 ```
 
-Re-run after review round 1 (Vitest 77 files, 1788 passed and 1 skipped; Playwright again 144 passed against `vite build` plus `vite preview`; `browsingRows` was split so no function exceeds 60 lines).
+Re-run after review round 2 (Vitest 77 files, 1823 passed and 1 skipped; Playwright again 144 passed against `vite build` plus `vite preview`; `browsingRows` was split so no function exceeds 60 lines).
 
 Hook, ordinary `bash scripts/pre-commit.sh` (the change scope against `origin/main` is `npm:apps/filesquid/ui`, so no Cargo step runs):
 

@@ -27,7 +27,7 @@ export const STYLE = `
   .pref-row select.input { inline-size: 100%; }
   .pref-row input[type="checkbox"] { appearance: auto; inline-size: 0.90625rem; block-size: 0.90625rem; margin: 0; accent-color: var(--fs-primary); }
   .pref-note { margin: 0; font-size: var(--fs-font-size-small); color: var(--fs-on-surface-variant); }
-  .pref-note:empty { display: none; }
+  .pref-note:not(.pref-status):empty { display: none; }
 `;
 
 /** A `<select>` of `options` (value, text) with the id its label points at. */
@@ -189,10 +189,10 @@ export function syncBrowsing(
   const status = parts[2];
   if (!status) return;
   const failed = service.saveFailed;
-  const deviceOnly = service.mode === "device";
-  status.textContent = failed
-    ? labels.settingsBrowsingSaveFailed
-    : deviceOnly
-      ? labels.settingsBrowsingDeviceOnly
-      : "";
+  const device = service.mode === "device";
+  const why =
+    service.deviceReason === "unreadable"
+      ? labels.settingsBrowsingUnreadable
+      : labels.settingsBrowsingDeviceOnly;
+  status.textContent = failed ? labels.settingsBrowsingSaveFailed : device ? why : "";
 }

@@ -446,7 +446,7 @@ for (const scheme of SCHEMES) {
       await view.getByRole("menuitem", { name: label(labels, "fileRemove") }).click();
       const toast = view.locator(".toast");
       await expect(toast.locator(".text")).toHaveText(
-        "harbour-masterplan-v7.pdf removed. Version v5 committed.",
+        fill("fileRemoved", { name: "harbour-masterplan-v7.pdf", version: "v5" }),
       );
       await expectBox(toast, { width: 440, height: 44 });
       expect(await look(toast)).toMatchObject({
@@ -582,7 +582,7 @@ test("the loading state (mockup 33): placeholder rows and the footer line", asyn
   );
   await expect(view).toHaveAttribute("data-state", "ready", { timeout: 8000 });
   await expect(page.locator('fs-app-shell [slot="summary"]')).toContainText(
-    "Folders: 3 · Files: 10",
+    fill("fileSummary", { folders: 3, files: 10, size: "" }).split(" · Loaded")[0] as string,
   );
   await expect(page.locator('fs-app-shell [slot="commit-state"]')).toHaveText(
     label(labels, "fileCommitted"),

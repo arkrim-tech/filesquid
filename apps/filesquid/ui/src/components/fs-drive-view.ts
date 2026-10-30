@@ -581,8 +581,8 @@ export class FsDriveView extends HTMLElement {
 
   /** Whether the item menu may offer an action for a row on this host. */
   private menuAllowed(id: string, row: DriveRow): boolean {
-    if (id === "open" || id === "download" || id === "details")
-      return id === "open" || (row.kind === "file" && !!row.libraryId);
+    if (id === "open") return row.kind === "folder" || !!row.libraryId;
+    if (id === "download" || id === "details") return row.kind === "file" && !!row.libraryId;
     return this.canWrite(row);
   }
 
@@ -602,6 +602,8 @@ export class FsDriveView extends HTMLElement {
       if (target !== "") window.location.hash = target.replace(/^#/, "");
       return;
     }
+    // A file the host does not name a library for cannot be opened: say so, never do nothing.
+    if (!row.libraryId) return this.showActionFailure(new UnavailableActionError());
     this.dispatchEvent(
       new CustomEvent("fs-drive-open", { detail: { row, intent }, bubbles: true, composed: true }),
     );

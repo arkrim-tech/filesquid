@@ -25,15 +25,16 @@ export class Selection extends EventTarget {
 
   /**
    * The selected keys, in the order they were added. A range is added in display order, so the
-   * last key is not the last row clicked: use {@link anchor} for that.
+   * last key says nothing about which row was clicked; {@link anchor} is where a range starts.
    */
   keys(): string[] {
     return [...this.chosen];
   }
 
   /**
-   * The row last ticked or unticked by itself, where a Shift-click range starts; undefined
-   * when none, after a clear, or when that row left the view.
+   * The row last ticked or unticked by itself, where a Shift-click range starts. A range does
+   * not move it, so several ranges can start from one row. Undefined when none, after a clear,
+   * or when that row left the view.
    */
   get anchor(): string | undefined {
     return this.anchorKey;

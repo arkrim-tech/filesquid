@@ -537,6 +537,7 @@ export const REQUIRED_LABEL_KEYS = [
   "settingsStartView",
   "settingsHoverCard",
   "settingsBrowsingHelp",
+  "settingsBrowsingUnreadable",
   "settingsBrowsingDeviceOnly",
   "settingsBrowsingSaveFailed",
   "sortOptionNameAscending",

@@ -34,6 +34,7 @@ export interface NewMenuOptions {
 
 const STYLE = `
   :host { display: contents; }
+  .layer { color: var(--fs-on-surface); font-family: var(--fs-font-sans); }
 `;
 
 /** Custom element that opens the New menu for the shell's New button. */

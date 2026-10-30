@@ -34,6 +34,9 @@ import type { PreferencesSource } from "./source";
 /** Where the choices live. */
 export type PreferencesMode = "pending" | "api" | "device";
 
+/** Why the choices are on the device: the host keeps none (503), or its answer could not be read. */
+export type DeviceReason = "unsupported" | "unreadable";
+
 /** The browsing choices a caller may change; navigation choices go through the tree's store. */
 export type BrowsingChoices = Partial<Omit<UserPreferences, "schema" | "navigation">>;
 
@@ -60,6 +63,7 @@ export class PreferencesService extends EventTarget {
   private dirty = false;
   private flushing?: Promise<void>;
   private starting?: Promise<void>;
+  private reason?: DeviceReason;
   /** Choices made while the mode is not "api"; applied over what the API holds when it starts. */
   private session: BrowsingChoices = {};
 
@@ -76,6 +80,11 @@ export class PreferencesService extends EventTarget {
   /** Where the choices live: pending until `start()` resolves. */
   get mode(): PreferencesMode {
     return this.current;
+  }
+
+  /** Why the mode is "device"; undefined in any other mode. */
+  get deviceReason(): DeviceReason | undefined {
+    return this.current === "device" ? this.reason : undefined;
   }
 
   /** True while the last save was refused or failed (the choices still apply this session). */
@@ -148,8 +157,9 @@ export class PreferencesService extends EventTarget {
     try {
       return await this.env.source.read();
     } catch (error) {
-      const served = !(error instanceof ApiError && error.status === 503);
-      const why = served ? "could not read" : "does not store";
+      const unsupported = error instanceof ApiError && error.status === 503;
+      this.reason = unsupported ? "unsupported" : "unreadable";
+      const why = unsupported ? "does not store" : "could not read";
       console.warn(`FileSquid host ${why} preferences; choices apply until the page closes`, error);
       return undefined;
     }

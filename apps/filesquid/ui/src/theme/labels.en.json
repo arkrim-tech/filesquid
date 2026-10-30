@@ -531,6 +531,7 @@
   "settingsStartView": "Start view",
   "settingsHoverCard": "Show a card when pointing at a file",
   "settingsBrowsingHelp": "These preferences are stored in your library and come back on every launch.",
+  "settingsBrowsingUnreadable": "Your preferences could not be read from this host. They apply until you close the page.",
   "settingsBrowsingDeviceOnly": "This host does not store preferences. They apply until you close the page.",
   "settingsBrowsingSaveFailed": "Your preferences could not be saved. They apply until you close the page.",
   "sortOptionNameAscending": "Name, A to Z",

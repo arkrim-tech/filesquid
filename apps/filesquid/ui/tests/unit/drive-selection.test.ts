@@ -29,12 +29,22 @@ describe("Selection", () => {
     expect(selection.state(0)).toBe("some");
   });
 
-  it("selects the rows between two keys in display order, either way round", () => {
+  it("selects the rows between two keys in display order, from the first to the second", () => {
+    const selection = new Selection();
+    selection.selectRange(["a", "b", "c", "d", "e"], "b", "d");
+    expect(selection.keys()).toEqual(["b", "c", "d"]);
+  });
+
+  it("selects the same rows when the second key comes before the first", () => {
     const selection = new Selection();
     selection.selectRange(["a", "b", "c", "d", "e"], "d", "b");
     expect(selection.keys()).toEqual(["b", "c", "d"]);
+  });
+
+  it("selects just the clicked row when the anchor is not in the view", () => {
+    const selection = new Selection();
     selection.selectRange(["a", "b"], "x", "a");
-    expect(selection.has("a")).toBe(true);
+    expect(selection.keys()).toEqual(["a"]);
   });
 
   it("remembers the last row clicked as the anchor of a range, not the last key added", () => {
