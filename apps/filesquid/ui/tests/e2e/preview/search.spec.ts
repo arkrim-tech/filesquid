@@ -40,6 +40,13 @@ function fill(key: string, values: Record<string, string | number>): string {
   );
 }
 
+/** The start of a count chip that lists files with their size: "3 files · ", from the labels. */
+function countPrefix(count: number): RegExp {
+  const files = fill(count === 1 ? "fileCountOne" : "fileCountOther", { count });
+  const text = fill("searchCountSize", { count: files, size: "\u0000" }).split("\u0000")[0] ?? "";
+  return new RegExp("^" + text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+}
+
 /** The refusals of the search operation the browser logs as console errors. */
 const REFUSED_SEARCH = (text: string, url: string) =>
   /status of (400|503)/.test(text) && /\/api\/v1\/files\/search/.test(url);
@@ -327,7 +334,7 @@ for (const scheme of SCHEMES) {
         background: rgbOf(c.raised),
         radius: "5px",
       });
-      await expect(view.locator(".count-chip")).toContainText(/^3 files · /);
+      await expect(view.locator(".count-chip")).toHaveText(countPrefix(3));
       await expect(view.locator(".row .name")).toHaveText([
         "harbour-2025-report.pdf",
         "harbour-masterplan-v7.pdf",
@@ -471,7 +478,7 @@ test("the sidebar filter shows its scope and count as chips and narrows only the
   await expect(view.locator(".scope-chip")).toHaveText(
     fill("searchScopeIn", { name: label(labels, "fileRoot") }),
   );
-  await expect(view.locator(".count-chip")).toContainText(/^1 file · /);
+  await expect(view.locator(".count-chip")).toHaveText(countPrefix(1));
   expect(search.calls).toEqual([]);
   await page.locator("fs-app-shell nav input.filter").fill("");
   await expect(view.locator(".scope-chip")).toHaveCount(0);
@@ -503,32 +510,41 @@ test("Back and Forward bring the search and its chips back, and All files clears
   expect(errors).toEqual([]);
 });
 
-test("a file chosen in the drop-down opens as a Drive row does, and Clear all runs no search", async ({
-  page,
-}) => {
+test("a file chosen in the drop-down opens as a Drive row does", async ({ page }) => {
   const errors = trackErrors(page);
   await open(page, "#/files");
-  // Catch the open request before the shell turns it into the file browser's address.
-  await page.evaluate(() => {
-    document.addEventListener(
-      "fs-drive-open",
-      (event) => {
-        const detail = (event as CustomEvent<{ row: { name: string } }>).detail;
-        (window as unknown as { opened?: string }).opened = detail.row.name;
-        event.stopPropagation();
-      },
-      true,
-    );
-  });
   await field(page).fill("masterplan");
   await bar(page).locator(".file-option").first().click();
-  expect(await page.evaluate(() => (window as unknown as { opened?: string }).opened)).toBe(
-    "harbour-masterplan-v7.pdf",
-  );
+  await expect(page).toHaveURL(/#\/files\/lib-1\/urn%3Auuid%3Af1\/original$/);
+  expect(errors).toEqual([]);
+});
+
+test("Clear all empties the field and runs no search", async ({ page }) => {
+  const errors = trackErrors(page);
+  const { search } = await open(page, "#/files");
   await field(page).fill("harbour");
+  await expect(bar(page).locator(".file-option")).toHaveCount(3);
+  const before = search.calls.length;
   await bar(page).locator("button.clear-all").click();
   await expect(field(page)).toHaveValue("");
   await expect(page).not.toHaveURL(/#\/search\//);
+  expect(search.calls.length).toBe(before);
+  expect(errors).toEqual([]);
+});
+
+test("the Location chip limits the search to a collection", async ({ page }) => {
+  const errors = trackErrors(page);
+  const { search } = await open(page, "#/files");
+  await field(page).click();
+  await bar(page).locator("button.filter-chip[data-filter=in]").click();
+  await bar(page).locator(".suggestion", { hasText: "Harbour project" }).click();
+  await field(page).fill("harbour");
+  await field(page).press("Enter");
+  await expect(results(page).locator(".row .name")).toHaveText([
+    "harbour-2025-report.pdf",
+    "harbour-masterplan-v7.pdf",
+  ]);
+  expect(search.calls.at(-1)?.query.q).toBe('in:"Harbour project" harbour');
   expect(errors).toEqual([]);
 });
 

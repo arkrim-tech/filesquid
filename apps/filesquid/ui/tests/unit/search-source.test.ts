@@ -118,8 +118,16 @@ describe("ClientSearchSource", () => {
 
 describe("MemorySearchSource", () => {
   const rows = [
-    file("f1", "harbour-masterplan-v7.pdf", { modified: "2026-10-16T10:00:00Z", size: 30 }),
-    file("f2", "harbour-2025-report.pdf", { modified: "2026-09-02T10:00:00Z", size: 20 }),
+    file("f1", "harbour-masterplan-v7.pdf", {
+      modified: "2026-10-16T10:00:00Z",
+      size: 30,
+      collection: "Harbour project",
+    }),
+    file("f2", "harbour-2025-report.pdf", {
+      modified: "2026-09-02T10:00:00Z",
+      size: 20,
+      collection: "Documents",
+    }),
     file("f3", "facade-study.jpg", { mediaType: "image/jpeg", size: 10 }),
     file("f4", "old-draft.pdf"),
     { key: "c1", kind: "folder", name: "Harbour project", node: "c1", nodeKind: "collection" },
@@ -194,6 +202,55 @@ describe("MemorySearchSource", () => {
       code: "invalid_request",
     });
     await expect(names('"open')).rejects.toMatchObject({ status: 400 });
+  });
+
+  it("applies in: to the collection a file is in, without case", async () => {
+    expect(await names('in:"harbour PROJECT"')).toEqual(["harbour-masterplan-v7.pdf"]);
+    expect(await names("in:Documents")).toEqual(["harbour-2025-report.pdf"]);
+    expect(await names("in:Nowhere")).toEqual([]);
+  });
+
+  it("counts a day in the caller's zone for before: and after:", async () => {
+    const at = async (zone: string, q: string) =>
+      (await source().search({ ...QUERY, q, zone })).rows.map((row) => row.name);
+    // 2026-10-16T10:00Z is already the 17th at +14:00 and still the 16th at -08:00.
+    expect(await at("+14:00", "after:2026-10-17 type:document")).toEqual([
+      "harbour-masterplan-v7.pdf",
+    ]);
+    expect(await at("-08:00", "after:2026-10-17 type:document")).toEqual([]);
+    expect(await at("Z", "before:2026-10-16 type:document")).toEqual(["harbour-2025-report.pdf"]);
+  });
+
+  it("refuses an empty query and a page size that is not a whole number from 1 to 1,000", async () => {
+    await expect(names("   ")).rejects.toMatchObject({ status: 400 });
+    for (const limit of [0, 1.5, 1001, Number.NaN]) {
+      await expect(source().search({ ...QUERY, q: "harbour" }, null, limit)).rejects.toMatchObject({
+        status: 400,
+      });
+    }
+  });
+
+  it("refuses a malformed cursor and one of another zone, and answers 409 for changed rows", async () => {
+    const live = source();
+    const query = { ...QUERY, q: "harbour", zone: "Z" };
+    const first = await live.search(query, null, 1);
+    const cursor = first.nextCursor as string;
+    for (const bad of [
+      "x",
+      "-1:0:" + cursor,
+      "NaN:0:y",
+      "1.5:0:" + cursor.split(":").slice(2).join(":"),
+    ]) {
+      await expect(live.search(query, bad, 1)).rejects.toMatchObject({ status: 400 });
+    }
+    await expect(live.search({ ...query, zone: "+01:00" }, cursor, 1)).rejects.toMatchObject({
+      status: 400,
+    });
+    live.replace("lib-node", rows.slice(0, 2));
+    await expect(live.search(query, cursor, 1)).rejects.toMatchObject({
+      status: 409,
+      code: "conflict",
+    });
   });
 
   it("answers 404 for a scope it does not know and pages with a stable cursor", async () => {

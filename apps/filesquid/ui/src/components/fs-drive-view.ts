@@ -256,7 +256,7 @@ export class FsDriveView extends HTMLElement {
       request?.node === this.request?.node &&
       request?.scope === this.request?.scope;
     if (same) return;
-    if (request?.q !== this.request?.q) this.searchSort = RELEVANCE;
+    this.searchSort = RELEVANCE;
     if (this.request && !request) this.target = { ...this.target, node: "" };
     this.request = request;
     this.toggleAttribute("data-search", request !== undefined);
@@ -368,9 +368,20 @@ export class FsDriveView extends HTMLElement {
     const options = this.options as DriveViewOptions;
     if (!this.request) return options.source.view(this.query(), cursor, VIEW_PAGE_SIZE, { signal });
     if (!options.search) return Promise.reject(new TypeError("This view has no search source"));
-    return options.search.search(this.searchQuery(this.request), cursor, VIEW_PAGE_SIZE, {
+    const search = options.search.search(this.searchQuery(this.request), cursor, VIEW_PAGE_SIZE, {
       signal,
     });
+    return search.then((page) => this.narrowed(page));
+  }
+
+  /**
+   * The sidebar filter in search results: the search operation has no name filter, so the rows
+   * read are narrowed here (UI-S-007: the filter narrows only the view it is in).
+   */
+  private narrowed(page: DrivePage): DrivePage {
+    const text = this.target.filter.toLowerCase();
+    if (text === "") return page;
+    return { ...page, rows: page.rows.filter((row) => row.name.toLowerCase().includes(text)) };
   }
 
   /** The query of a search: its scope, the order of this search and the caller's zone. */
@@ -914,6 +925,7 @@ export class FsDriveView extends HTMLElement {
   private showLoading(): void {
     const { labels } = this.options as DriveViewOptions;
     this.counted = false;
+    this.drawChips();
     this.setState({ kind: "loading" }, true);
     this.list?.showPlaceholders(PLACEHOLDER_ROWS);
     this.announce(formatLabel(labels.fileLoadingName, { name: this.titleText }));
@@ -1055,14 +1067,14 @@ export class FsDriveView extends HTMLElement {
   }
 
   /** Show a failed read: a refused search, view not available, gone, or the failure states. */
-  private fail(error: unknown): void {
+  private fail(error: unknown, lookup = false): void {
     const { labels } = this.options as DriveViewOptions;
     console.warn("FileSquid could not read a view", error instanceof Error ? error.name : error);
     this.rows = [];
     this.cursor = null;
     this.counted = false;
     this.drawBulk();
-    const refusal = this.request ? refusalOf(error, this.request.q) : undefined;
+    const refusal = this.request && !lookup ? refusalOf(error, this.request.q) : undefined;
     if (refusal) return this.showRefusal(refusal);
     this.drawChips();
     const online = (this.options as DriveViewOptions).online ?? (() => navigator.onLine);
@@ -1112,7 +1124,23 @@ export class FsDriveView extends HTMLElement {
   showFailure(error: unknown): void {
     this.abort?.abort();
     this.generation += 1;
-    this.fail(error);
+    this.fail(error, true);
+  }
+
+  /**
+   * Drop what the view shows while a route finds out what to show next (the library of a search
+   * address): reads in flight are cancelled, the rows, the count and the summary are cleared and
+   * the loading state is shown, so an old answer never stands under the new address.
+   */
+  showPending(): void {
+    if (!this.options) return;
+    this.abort?.abort();
+    this.generation += 1;
+    this.rows = [];
+    this.cursor = null;
+    this.chosen.clear();
+    this.drawBulk();
+    this.showLoading();
   }
 
   /** Focus the title area after a route change (the shell moves focus to main). */

@@ -268,12 +268,17 @@ export class FsNavigationView extends HTMLElement {
   private announceContext(node: NavigationNode | undefined): void {
     const labels = (this.options as NavigationViewOptions).labels;
     const detail = node
-      ? { node: node.node, kind: node.kind, name: nodeName(node, labels) }
+      ? { node: node.node, kind: node.kind, name: collectionName(node, labels) }
       : undefined;
     this.dispatchEvent(
       new CustomEvent("fs-destination-context", { detail, bubbles: true, composed: true }),
     );
   }
+}
+
+/** The name of a collection (the only kind `in:` takes a title of), else undefined. */
+function collectionName(node: NavigationNode, labels: LabelTable): string | undefined {
+  return node.kind === "collection" ? nodeName(node, labels) : undefined;
 }
 
 /** The heading and files note of a destination that was read. */

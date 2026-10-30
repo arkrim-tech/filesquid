@@ -582,7 +582,7 @@
   "searchResultCountOther": "{count} results",
   "searchCountSize": "{count} · {size}",
   "searchUnavailable": "{operator} is not available on this device.",
-  "searchUnavailableHelp": "FileSquid on this device has no sharing, so the search was refused, not run without it. Remove {operator} to search.",
+  "searchUnavailableHelp": "ImageSquid on this device has no sharing, so the search was refused, not run without it. Remove {operator} to search.",
   "searchUnknownOperator": "{operator} is not a search operator.",
   "searchUnknownOperatorHelp": "The search was refused as an invalid request. Check the spelling, or use one of the operators below.",
   "searchNothingSearched": "Nothing was searched. Change the query to search again.",

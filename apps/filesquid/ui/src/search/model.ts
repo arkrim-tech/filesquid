@@ -101,6 +101,8 @@ const SERVER_OPERATORS = new Set(["sharedwith", "to", "from", "pendingowner"]);
 export interface QueryToken {
   /** The token as typed, quotes included. */
   readonly raw: string;
+  /** Where the token ends in the query (an index after its last character). */
+  readonly end: number;
   /** The text with its quotes removed. */
   readonly text: string;
   /** Whether a leading minus excludes what the term matches. */
@@ -228,9 +230,31 @@ export function chipTerm(chip: SearchChip, now: Date): string {
  * @returns The query, or an empty string when there is neither a chip nor text.
  */
 export function composeQuery(chips: readonly SearchChip[], text: string, now: Date): string {
-  const terms = chips.slice(0, MAX_CHIPS).map((chip) => chipTerm(chip, now));
-  const query = [...terms, text.trim()].filter((part) => part !== "").join(" ");
-  return cutToBytes(query, MAX_QUERY_BYTES);
+  const encoder = new TextEncoder();
+  const kept: string[] = [];
+  let bytes = 0;
+  for (const chip of chips.slice(0, MAX_CHIPS)) {
+    const term = chipTerm(chip, now);
+    const size = encoder.encode(term).length + 1;
+    // A chip term is kept whole or left out: a cut through its quotes would be malformed grammar.
+    if (bytes + size > MAX_QUERY_BYTES) continue;
+    kept.push(term);
+    bytes += size;
+  }
+  const room = Math.max(0, MAX_QUERY_BYTES - bytes);
+  return [...kept, cutAtTerm(text.trim(), room)].filter((part) => part !== "").join(" ");
+}
+
+/**
+ * `text` cut to `limit` bytes without leaving a quote open: when the cut falls inside a quoted
+ * phrase, the phrase is dropped from its opening quote on. Pure.
+ */
+function cutAtTerm(text: string, limit: number): string {
+  const cut = cutToBytes(text, limit);
+  if (cut === text) return cut;
+  const quotes = [...cut].filter((character) => character === '"').length;
+  if (quotes % 2 === 0) return cut.trimEnd();
+  return cut.slice(0, cut.lastIndexOf('"')).trimEnd();
 }
 
 /**
@@ -306,15 +330,20 @@ function operatorOf(
 }
 
 /** One token of the query with its quotes handled as the API handles them. */
-function tokenOf(raw: string, text: string, quotedFrom: number | undefined): QueryToken {
+function tokenOf(
+  raw: string,
+  text: string,
+  quotedFrom: number | undefined,
+  end: number,
+): QueryToken {
   const negated = text.startsWith("-") && quotedFrom !== 0;
   const body = negated ? text.slice(1) : text;
   const quotedAt =
     quotedFrom === undefined ? undefined : Math.max(0, quotedFrom - (negated ? 1 : 0));
   const operator = operatorOf(body, quotedAt);
   return operator
-    ? { raw, text, negated, operator: operator.name, value: operator.value }
-    : { raw, text, negated, value: body };
+    ? { raw, end, text, negated, operator: operator.name, value: operator.value }
+    : { raw, end, text, negated, value: body };
 }
 
 /**
@@ -334,7 +363,7 @@ export function tokenizeQuery(query: string): QueryToken[] {
   let inQuotes = false;
   const flush = (end: number) => {
     if (start >= 0 && tokens.length < MAX_QUERY_TERMS) {
-      tokens.push(tokenOf(query.slice(start, end), text, quotedFrom));
+      tokens.push(tokenOf(query.slice(start, end), text, quotedFrom, end));
     }
     start = -1;
     text = "";
@@ -393,11 +422,16 @@ function taken(chips: readonly SearchChip[], chip: SearchChip): boolean {
 export function parseQuery(query: string, now: Date): { chips: SearchChip[]; text: string } {
   const chips: SearchChip[] = [];
   const rest: string[] = [];
-  for (const token of tokenizeQuery(query)) {
+  const tokens = tokenizeQuery(query);
+  for (const token of tokens) {
     const chip = chipOf(token, now);
     if (chip && !taken(chips, chip)) chips.push(chip);
     else rest.push(token.raw);
   }
+  // Terms past the bound are kept as typed, so the address never loses part of its query.
+  const last = tokens.at(-1);
+  const beyond = tokens.length >= MAX_QUERY_TERMS && last ? query.slice(last.end).trim() : "";
+  if (beyond !== "") rest.push(beyond);
   return { chips, text: rest.join(" ") };
 }
 
@@ -466,7 +500,10 @@ export function refusalOf(error: unknown, query: string): SearchRefusal | undefi
  */
 export function typeClassOf(mediaType: string): TypeClass | undefined {
   const type = mediaType.toLowerCase();
-  const documents = /^application\/(pdf|rtf|msword|vnd\.(ms-|openxmlformats|oasis\.opendocument))/;
+  // The allowlist of API-S-012: PDF, RTF, the Microsoft Office formats (legacy and macro-enabled),
+  // OOXML and OpenDocument; other `vnd.ms-` types (a font object, say) are not documents.
+  const documents =
+    /^application\/(pdf|rtf|msword|vnd\.ms-(word|excel|powerpoint)(\.|$)|vnd\.openxmlformats-officedocument\.|vnd\.oasis\.opendocument\.)/;
   if (documents.test(type) || type === "text/rtf") return "document";
   for (const prefix of ["image", "video", "audio", "text"] as const) {
     if (type.startsWith(`${prefix}/`)) return prefix;

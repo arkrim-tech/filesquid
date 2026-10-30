@@ -402,9 +402,9 @@ export class FsSearchBar extends HTMLElement {
   /** Read the library's collections for the Location choices; one page, bounded. */
   private async loadLocations(): Promise<void> {
     const options = this.options as SearchBarOptions;
-    const scope = await options.scope();
-    if (!scope || !options.navigation) return;
     try {
+      const scope = await options.scope();
+      if (!scope || !options.navigation) return;
       const page = await options.navigation.list(scope.node, null, MAX_LOCATIONS);
       this.locations = page.nodes
         .filter((node) => node.kind === "collection" && node.name !== null)
@@ -542,11 +542,16 @@ export class FsSearchBar extends HTMLElement {
     const rows: SuggestionOption[] = [];
     const place = this.place;
     if (place) rows.push(this.row("in", place.name, "in:", place.name, labels.searchHintFolder));
-    const mediaTypes = this.found.map((row) => row.mediaType ?? "");
+    const mediaTypes = this.liveFiles().map((row) => row.mediaType ?? "");
     const type = typeSuggestions(text, mediaTypes)[0];
     if (type) rows.push(this.row("type", type, "type:", type, labels.searchHintType));
     rows.push(this.row("title", text, "title:", text, labels.searchHintTitle));
     return rows;
+  }
+
+  /** The live files, only while they answer the query in the field (never an older one). */
+  private liveFiles(): DriveRow[] {
+    return this.suggestedFor === this.query ? this.found : [];
   }
 
   /** What the drop-down shows now. */
@@ -563,7 +568,7 @@ export class FsSearchBar extends HTMLElement {
     return {
       filters,
       suggestions: this.choice ? this.choiceRows(this.choice) : this.typedRows(text),
-      files: choosing ? [] : this.found.map((row) => ({ kind: "file", row })),
+      files: choosing ? [] : this.liveFiles().map((row) => ({ kind: "file", row })),
       operators: OPERATORS_ON_HOST.map((text) => ({ kind: "operator", text })),
     };
   }

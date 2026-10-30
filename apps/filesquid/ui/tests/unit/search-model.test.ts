@@ -44,6 +44,21 @@ describe("composeQuery", () => {
     expect(composeQuery(chips, "", NOW)).toBe('in:"Harbour project" title:"say hi: now"');
   });
 
+  it("keeps a chip term whole or leaves it out, never cut through its quotes", () => {
+    const chips: SearchChip[] = [
+      { filter: "title", value: "a ".repeat(600) + "b" },
+      { filter: "type", value: "image" },
+    ];
+    expect(composeQuery(chips, "harbour", NOW)).toBe("type:image harbour");
+  });
+
+  it("drops a quoted phrase the byte limit would cut, so no quote is left open", () => {
+    const text = "w ".repeat(480) + '"exact phrase that is cut here and there"';
+    const query = composeQuery([], text, NOW);
+    expect(new TextEncoder().encode(query).length).toBeLessThanOrEqual(MAX_QUERY_BYTES);
+    expect([...query].filter((c) => c === '"').length % 2).toBe(0);
+  });
+
   it("trims the text and gives an empty query for no chips and no text", () => {
     expect(composeQuery([], "  harbour  plan ", NOW)).toBe("harbour  plan");
     expect(composeQuery([], "   ", NOW)).toBe("");
@@ -181,6 +196,13 @@ describe("parseQuery", () => {
     expect(composeQuery(parsed.chips, parsed.text, NOW)).toBe(query);
   });
 
+  it("keeps every term of a query longer than the 32-term bound", () => {
+    const words = Array.from({ length: 40 }, (_, i) => "w" + i).join(" ");
+    const query = "type:image " + words;
+    const parsed = parseQuery(query, NOW);
+    expect(composeQuery(parsed.chips, parsed.text, NOW)).toBe(query);
+  });
+
   it("keeps a second Type term in the text so nothing is dropped", () => {
     const parsed = parseQuery("type:image type:video", NOW);
     expect(parsed.chips).toEqual([{ filter: "type", value: "image" }]);
@@ -261,6 +283,36 @@ describe("operator list and type classes", () => {
     expect(typeClassOf("audio/mp4")).toBe("audio");
     expect(typeClassOf("text/plain")).toBe("text");
     expect(typeClassOf("application/octet-stream")).toBeUndefined();
+  });
+
+  it.each([
+    "application/pdf",
+    "application/rtf",
+    "text/rtf",
+    "application/msword",
+    "application/vnd.ms-excel",
+    "application/vnd.ms-powerpoint",
+    "application/vnd.ms-word.document.macroEnabled.12",
+    "application/vnd.ms-excel.sheet.macroEnabled.12",
+    "application/vnd.ms-powerpoint.presentation.macroEnabled.12",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "application/vnd.oasis.opendocument.text",
+    "application/vnd.oasis.opendocument.spreadsheet",
+    "application/vnd.oasis.opendocument.presentation",
+  ])("classes %s as a document", (mediaType) => {
+    expect(typeClassOf(mediaType)).toBe("document");
+  });
+
+  it.each([
+    "application/vnd.ms-fontobject",
+    "application/vnd.ms-cab-compressed",
+    "application/vnd.ms-outlook",
+    "application/zip",
+    "application/json",
+    "font/woff2",
+  ])("does not class %s as a document", (mediaType) => {
+    expect(typeClassOf(mediaType)).toBeUndefined();
   });
 
   it("suggests the class a typed word names, else the classes of the files found", () => {

@@ -140,6 +140,7 @@ async function showSearch(
   current: () => boolean,
 ): Promise<void> {
   view.heading = options.labels.searchResultsTitle;
+  if (view.search?.q !== q) view.showPending();
   try {
     const library = await firstLibraryScope(options.navigation);
     if (library === undefined) throw new ApiError(404, "/api/v1/navigation", { code: "not_found" });

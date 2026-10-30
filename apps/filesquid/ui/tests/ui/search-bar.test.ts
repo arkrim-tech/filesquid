@@ -152,6 +152,29 @@ describe("<fs-search-bar> drop-down sections", () => {
       .flatMap((el) => [...el.attributes].map((a) => a.value))
       .join("\n");
     expect(attributes).not.toMatch(/urn:uuid|original\//);
+    // What the user sees is the display name and, as the mockup draws it, "{collection} · {time}".
+    const shown = texts(element, ".file-option .file-name, .file-option .file-meta").join("\n");
+    expect(shown).not.toMatch(/urn:uuid|original\/|\.\.\//);
+    expect(texts(element, ".file-option .file-name")).toEqual([
+      "harbour-2025-report.pdf",
+      "harbour-masterplan-v7.pdf",
+      "harbour-walk-permit.pdf",
+    ]);
+    for (const meta of texts(element, ".file-option .file-meta")) {
+      expect(meta).toMatch(/^(Harbour project|Documents|Photos 2026) · /);
+    }
+  });
+
+  it("never shows files of an older query under the text now in the field", async () => {
+    const { element } = mountBar();
+    const input = await type(element, "harbour");
+    expect(all(element, ".file-option")).toHaveLength(3);
+    input.value = "harbour zzz";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(all(element, ".file-option")).toHaveLength(0);
+    await settle();
+    await settle();
+    expect(all(element, ".file-option")).toHaveLength(0);
   });
 
   it("asks nothing and shows no files while the field is empty", async () => {
@@ -386,6 +409,34 @@ describe("<fs-search-bar> keys and Enter", () => {
       row: { name: "harbour-masterplan-v7.pdf", libraryId: "lib-1" },
     });
     expect(one(element, ".dropdown").hidden).toBe(true);
+  });
+});
+
+describe("<fs-search-bar> Location choices", () => {
+  it("lists nothing and logs, without an unhandled rejection, when the collections cannot be read", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const { element, navigation } = mountBar();
+    navigation.failure = new Error("offline");
+    await focusField(element);
+    await click(one(element, "button.filter-chip[data-filter=in]"));
+    expect(all(element, ".suggestion")).toHaveLength(0);
+    expect(warn).toHaveBeenCalled();
+  });
+
+  it("lists nothing and logs when the scope cannot be found", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const { element, search, navigation } = mountBar();
+    element.configure({
+      labels: (await import("../../src/theme/labels.en.json")).default,
+      search,
+      navigation,
+      scope: () => Promise.reject(new Error("no library")),
+      debounceMs: 0,
+    });
+    await focusField(element);
+    await click(one(element, "button.filter-chip[data-filter=in]"));
+    expect(all(element, ".suggestion")).toHaveLength(0);
+    expect(warn).toHaveBeenCalled();
   });
 });
 

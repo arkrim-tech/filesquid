@@ -76,12 +76,26 @@ function typeClause(value: string): Clause {
   return (row) => row.kind === "file" && typeClassOf(row.mediaType ?? "") === value;
 }
 
-/** The clause of `before:` or `after:` on the day a row was modified (UTC in the fixture). */
-function dayClause(value: string, before: boolean): Clause {
+/** The offset of a zone (`Z` or `+HH:MM`) in milliseconds; UTC for anything else. */
+function zoneMs(zone: string | undefined): number {
+  const match = /^([+-])(\d{2}):(\d{2})$/.exec(zone ?? "");
+  if (!match) return 0;
+  const minutes = Number(match[2]) * 60 + Number(match[3]);
+  return (match[1] === "-" ? -minutes : minutes) * 60_000;
+}
+
+/** The calendar date of an instant in the caller's zone, as `YYYY-MM-DD`. */
+function dayInZone(instant: string, zone: string | undefined): string {
+  return new Date(Date.parse(instant) + zoneMs(zone)).toISOString().slice(0, 10);
+}
+
+/** The clause of `before:` or `after:` on the day a row was modified in the caller's zone. */
+function dayClause(value: string, before: boolean, zone: string | undefined): Clause {
   const day = dateOf(value);
   return (row) => {
     if (row.modified === undefined) return false;
-    return before ? row.modified.slice(0, 10) < day : row.modified.slice(0, 10) >= day;
+    const modified = dayInZone(row.modified, zone);
+    return before ? modified < day : modified >= day;
   };
 }
 
@@ -102,7 +116,11 @@ function sizeClause(value: string, larger: boolean): Clause {
 }
 
 /** The clause of an operator token, or the refusal the host gives. */
-function operatorClause(token: QueryToken, deleted: ReadonlySet<string>): Clause {
+function operatorClause(
+  token: QueryToken,
+  deleted: ReadonlySet<string>,
+  zone: string | undefined,
+): Clause {
   const name = token.operator as string;
   const value = fold(token.value);
   if (SERVER_OPERATORS.has(name)) throw refuse(503);
@@ -111,7 +129,7 @@ function operatorClause(token: QueryToken, deleted: ReadonlySet<string>): Clause
   if (name === "type") return typeClause(value);
   if (name === "in") return (row) => row.kind === "file" && fold(row.collection ?? "") === value;
   if (name === "title") return (row) => fold(row.name).includes(value);
-  if (name === "before" || name === "after") return dayClause(token.value, name === "before");
+  if (name === "before" || name === "after") return dayClause(token.value, name === "before", zone);
   if (name === "is") return isClause(value, deleted);
   if (name === "size>" || name === "size<") return sizeClause(value, name === "size>");
   if (name === "owner" || UNMODELLED.has(name)) return () => false;
@@ -126,7 +144,8 @@ interface Parsed {
 }
 
 /** Parse a query the way the operation does, or refuse it. */
-function parseQuery(q: string, deleted: ReadonlySet<string>): Parsed {
+function parseQuery(q: string, deleted: ReadonlySet<string>, zone: string | undefined): Parsed {
+  if (q.trim() === "") throw refuse(400);
   const quotes = [...q].filter((c) => c === '"').length;
   if (new TextEncoder().encode(q).length > MAX_QUERY_BYTES || quotes % 2 === 1) throw refuse(400);
   const clauses: Parsed["clauses"] = [];
@@ -143,14 +162,21 @@ function parseQuery(q: string, deleted: ReadonlySet<string>): Parsed {
     if (token.operator === "is" && fold(token.value) === "deleted" && !token.negated) {
       wantsDeleted = true;
     }
-    clauses.push({ clause: operatorClause(token, deleted), negated: token.negated });
+    clauses.push({ clause: operatorClause(token, deleted, zone), negated: token.negated });
   }
   return { clauses, words, wantsDeleted };
 }
 
 /** The binding a cursor carries: the parameters that decide the rows. */
 function binding(query: SearchQuery): string {
-  return JSON.stringify([query.q, query.node, query.sort, query.direction, query.folders]);
+  return JSON.stringify([
+    query.q,
+    query.node,
+    query.sort,
+    query.direction,
+    query.folders,
+    query.zone,
+  ]);
 }
 
 /** A value that sorts after every value in both directions when missing. */
@@ -169,6 +195,7 @@ function sortValue(row: DriveRow, key: SearchQuery["sort"]): Sortable {
 export class MemorySearchSource implements SearchSource {
   /** Every call, in order. */
   readonly calls: SearchCallRecord[] = [];
+  private revision = 0;
 
   /**
    * @param scopes The rows of each scope (library, collection or virtual collection), by node.
@@ -178,6 +205,17 @@ export class MemorySearchSource implements SearchSource {
     private readonly scopes: Map<string, readonly DriveRow[]>,
     private readonly options: MemorySearchOptions = {},
   ) {}
+
+  /**
+   * Replace the rows of a scope, so cursors made before it answer 409 `conflict`.
+   *
+   * @param node The scope's node.
+   * @param rows The new rows.
+   */
+  replace(node: string, rows: readonly DriveRow[]): void {
+    this.scopes.set(node, rows);
+    this.revision += 1;
+  }
 
   /**
    * Read one page.
@@ -206,10 +244,10 @@ export class MemorySearchSource implements SearchSource {
 
   /** The page, or the API's refusal. */
   private page(query: SearchQuery, cursor: string | null, limit: number): DrivePage {
-    if (limit < 1 || limit > 1000) throw refuse(400);
+    if (!Number.isInteger(limit) || limit < 1 || limit > 1000) throw refuse(400);
     const scope = this.rowsOf(query.node);
     const deleted = this.options.deleted ?? new Set<string>();
-    const parsed = parseQuery(query.q, deleted);
+    const parsed = parseQuery(query.q, deleted, query.zone);
     const matched = scope.filter((row) => this.matches(row, parsed, deleted));
     const ordered = this.arrange(matched, parsed, query);
     const start = this.offset(cursor, query);
@@ -219,7 +257,7 @@ export class MemorySearchSource implements SearchSource {
       .map((row) => ({ ...row, libraryId: row.libraryId ?? this.options.libraryId }));
     return {
       rows,
-      nextCursor: end < ordered.length ? `${end}:${binding(query)}` : null,
+      nextCursor: end < ordered.length ? `${end}:${this.revision}:${binding(query)}` : null,
       complete: true,
     };
   }
@@ -261,11 +299,15 @@ export class MemorySearchSource implements SearchSource {
     ];
   }
 
-  /** The row a cursor starts at; 0 without a cursor; 400 for a cursor of other parameters. */
+  /**
+   * The row a cursor starts at; 0 without a cursor; 400 for a malformed cursor or one of other
+   * parameters, 409 `conflict` for one of rows that changed.
+   */
   private offset(cursor: string | null, query: SearchQuery): number {
     if (cursor === null) return 0;
-    const split = cursor.indexOf(":");
-    if (cursor.slice(split + 1) !== binding(query)) throw refuse(400);
-    return Number(cursor.slice(0, split));
+    const match = /^(\d+):(\d+):([\s\S]*)$/.exec(cursor);
+    if (!match || match[3] !== binding(query)) throw refuse(400);
+    if (Number(match[2]) !== this.revision) throw new ApiError(409, PATH, { code: "conflict" });
+    return Number(match[1]);
   }
 }

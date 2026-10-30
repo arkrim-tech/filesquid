@@ -17,7 +17,7 @@ export const STYLE = `
   .chips:empty { display: none; }
   .scope-chip, .count-chip { display: inline-flex; align-items: center; box-sizing: border-box; block-size: 1.625rem; padding: 0 var(--fs-space-2); border: 1px solid var(--fs-surface-raised); border-radius: var(--fs-radius-item); background: var(--fs-surface-raised); font-size: var(--fs-font-size-small); font-weight: 500; color: var(--fs-on-surface-variant); }
   .refused[hidden] { display: none; }
-  .refusal { position: relative; inset-inline-start: calc(-1 * var(--fs-space-2)); display: flex; align-items: flex-start; gap: var(--fs-space-2); box-sizing: border-box; inline-size: calc(100% + var(--fs-space-2)); block-size: 4rem; padding: var(--fs-space-2) var(--fs-space-3); border: 1px solid var(--fs-error); border-radius: var(--fs-radius); background: var(--fs-surface-card); }
+  .refusal { position: relative; inset-inline-start: calc(-1 * var(--fs-space-2)); display: flex; align-items: flex-start; gap: var(--fs-space-2); box-sizing: border-box; inline-size: calc(100% + var(--fs-space-2)); min-block-size: 4rem; padding: var(--fs-space-2) var(--fs-space-3); border: 1px solid var(--fs-error); border-radius: var(--fs-radius); background: var(--fs-surface-card); }
   .refusal .icon { margin-block-start: var(--fs-space-2); color: var(--fs-error); }
   .refusal-text { display: grid; min-width: 0; margin-block-start: var(--fs-space-1); }
   .refusal-title, .refusal-help, .nothing-searched { margin: 0; font-size: var(--fs-font-size-small); line-height: 1.25rem; overflow-wrap: anywhere; }

@@ -172,6 +172,48 @@ describe("search results", () => {
       labels.fileSelected.replace("{count}", "1"),
     );
   });
+
+  it("opens the item menu of a result with the Drive list's items", async () => {
+    const { element } = await mountSearch("harbour");
+    const row = rowNamed(element, "harbour-masterplan-v7.pdf");
+    await click(row.querySelector("button.actions") as HTMLElement);
+    const items = all(element, "[role=menuitem] .label").map((el) => el.textContent);
+    expect(items).toEqual(
+      expect.arrayContaining([labels.fileOpen, labels.fileDetails, labels.fileRename]),
+    );
+  });
+
+  it("narrows the results by the sidebar filter, without asking the search again", async () => {
+    const search = searchSource();
+    const { element } = await mountSearch("harbour", search);
+    element.filter = "masterplan";
+    await settle();
+    expect(names(element)).toEqual(["harbour-masterplan-v7.pdf"]);
+    expect(element.summary).toBe("1 result");
+    expect(search.calls.at(-1)?.query.q).toBe("harbour");
+    element.filter = "";
+    await settle();
+    expect(names(element)).toHaveLength(3);
+  });
+
+  it("starts a new scope in relevance order even for the same query", async () => {
+    const search = searchSource();
+    const { element } = await mountSearch("harbour", search);
+    await click(one(element, "button.sort[data-sort=size]"));
+    expect(search.calls.at(-1)?.query.sort).toBe("size");
+    element.search = { q: "harbour", node: SCOPE.node, scope: "Another library" };
+    await settle();
+    expect(search.calls.at(-1)?.query.sort).toBe("relevance");
+  });
+
+  it("drops the old answer while the route finds the next search's scope", async () => {
+    const { element } = await mountSearch("harbour");
+    expect(names(element)).toHaveLength(3);
+    element.showPending();
+    expect(names(element)).toHaveLength(0);
+    expect(element.dataset.state).toBe("loading");
+    expect(all(element, ".count-chip")).toHaveLength(0);
+  });
 });
 
 describe("a refused search", () => {
@@ -238,6 +280,15 @@ describe("a refused search", () => {
     const search = refusing(new ApiError(500, "/api/v1/files/search", { code: "internal" }));
     const { element } = await mountSearch("harbour", search);
     expect(element.dataset.state).toBe("error");
+    expect(all(element, ".refusal")).toHaveLength(0);
+    const retry = one(element, "fs-states").shadowRoot?.querySelector("button");
+    expect(retry?.textContent?.trim()).toBe(labels.stateRetry);
+  });
+
+  it("does not take a failed scope lookup for a refusal of the old query", async () => {
+    const { element } = await mountSearch("harbour colour:red", refusing(refusal400()));
+    expect(all(element, ".refusal")).toHaveLength(1);
+    element.showFailure(refusal400());
     expect(all(element, ".refusal")).toHaveLength(0);
   });
 });

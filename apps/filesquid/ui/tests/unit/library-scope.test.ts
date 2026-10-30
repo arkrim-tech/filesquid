@@ -3,9 +3,26 @@
  * as node and name, and the per-route cache the search bar reads it through.
  */
 import { describe, expect, it, vi } from "vitest";
+import type { NavigationNode, NavigationPage, NavigationSource } from "../../src/navigation/model";
 import { cachedLibraryScope, firstLibraryScope } from "../../src/navigation/library-scope";
 import { MemoryNavigationSource } from "../../src/navigation/source";
 import { TREE } from "../support/search-fakes";
+
+/** A navigation source that answers each level from a table, to shape any tree. */
+function stub(levels: Record<string, readonly NavigationNode[]>): NavigationSource {
+  return {
+    async list(parent): Promise<NavigationPage> {
+      return { nodes: levels[parent ?? "root"] ?? [], ancestors: [], next_cursor: null };
+    },
+  };
+}
+
+const node = (id: string, kind: NavigationNode["kind"], name: string | null): NavigationNode => ({
+  node: id,
+  kind,
+  name,
+  has_children: true,
+});
 
 describe("firstLibraryScope", () => {
   it("answers the first library's node and name", async () => {
@@ -15,7 +32,23 @@ describe("firstLibraryScope", () => {
     });
   });
 
-  it("answers undefined when the host lists no library or no repository", async () => {
+  it("answers the first of several libraries, in the host's order", async () => {
+    const navigation = stub({
+      root: [node("r", "repository", null)],
+      r: [node("l2", "library", "Second"), node("l1", "library", "First")],
+    });
+    expect(await firstLibraryScope(navigation)).toEqual({ node: "l2", name: "Second" });
+  });
+
+  it("answers a library with no name as null, for the caller to word", async () => {
+    const navigation = stub({
+      root: [node("r", "repository", null)],
+      r: [node("l1", "library", null)],
+    });
+    expect(await firstLibraryScope(navigation)).toEqual({ node: "l1", name: null });
+  });
+
+  it("answers undefined when the host lists no library", async () => {
     const empty = new MemoryNavigationSource({
       node: "r",
       kind: "repository",
@@ -23,6 +56,12 @@ describe("firstLibraryScope", () => {
       children: [],
     });
     expect(await firstLibraryScope(empty)).toBeUndefined();
+  });
+
+  it("answers undefined, and reads no further, when the root lists no repository", async () => {
+    const list = vi.fn(async () => ({ nodes: [], ancestors: [], next_cursor: null }));
+    expect(await firstLibraryScope({ list })).toBeUndefined();
+    expect(list).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -36,6 +75,17 @@ describe("cachedLibraryScope", () => {
     await scope();
     expect(list).toHaveBeenCalledTimes(2);
     events.dispatchEvent(new Event("hashchange"));
+    await scope();
+    expect(list).toHaveBeenCalledTimes(4);
+  });
+
+  it("reads again after the navigation source reports a change to the tree", async () => {
+    const navigation = new MemoryNavigationSource(TREE);
+    const list = vi.spyOn(navigation, "list");
+    const scope = cachedLibraryScope(navigation);
+    await scope();
+    expect(list).toHaveBeenCalledTimes(2);
+    navigation.replace(TREE);
     await scope();
     expect(list).toHaveBeenCalledTimes(4);
   });

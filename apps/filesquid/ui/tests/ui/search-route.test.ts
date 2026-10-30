@@ -172,6 +172,32 @@ describe("the search route", () => {
     expect(bar.folder).toBeUndefined();
   });
 
+  it("offers no in: collection for a folder, which in: has no title for", async () => {
+    const { shell, bar } = await mountRoute("#/files");
+    shell.dispatchEvent(
+      new CustomEvent("fs-destination-context", {
+        detail: { node: "f1", kind: "folder" },
+        bubbles: true,
+        composed: true,
+      }),
+    );
+    expect(bar.folder).toBeUndefined();
+  });
+
+  it("clears the old results at once while the next search's library is looked up", async () => {
+    const { shell } = await mountRoute(searchHash("harbour"));
+    const view = shell.querySelector("fs-drive-view") as HTMLElement;
+    expect(view.shadowRoot?.querySelectorAll(".row").length).toBe(3);
+    window.location.hash = searchHash("facade");
+    window.dispatchEvent(new HashChangeEvent("hashchange"));
+    // No await: the lookup has not answered yet.
+    expect(view.shadowRoot?.querySelectorAll(".row").length).toBe(0);
+    expect(view.dataset.state).toBe("loading");
+    await settle();
+    await settle();
+    expect(view.shadowRoot?.querySelectorAll(".row").length).toBe(1);
+  });
+
   it("says the node is gone when the host lists no library", async () => {
     window.location.hash = searchHash("harbour");
     const shell = document.createElement("fs-app-shell") as FsAppShell;

@@ -95,10 +95,16 @@ Feature: Global search bar and filter chips in the FileSquid default UI
     Then the order should return to relevance
     And my saved browsing sort should be unchanged
 
-  Scenario: The address restores the bar
-    Given I searched for "type:document harbour"
-    When I go Back and then Forward
-    Then the field should be empty on All files and show the "Type: Document" chip and "harbour" again
+  Scenario: Back leaves the search and clears the bar
+    Given I searched for "type:document harbour" from All files
+    When I go Back
+    Then I should be on All files and the field should be empty with no chips
+
+  Scenario: Forward brings the search and its chips back
+    Given I went Back from the results of "type:document harbour"
+    When I go Forward
+    Then the results should be shown again
+    And the field should show the "Type: Document" chip and the text "harbour"
 
   # Unsupported operators
   Scenario: An operator the device cannot answer is refused and named
@@ -131,9 +137,15 @@ Feature: Global search bar and filter chips in the FileSquid default UI
     And no search should have run
 
   # Bounds and accessibility
-  Scenario: Query bounds are kept
+  Scenario: The query never exceeds the API's bytes and never ends in a cut term
     When I type more than the API accepts
-    Then the query asked should be at most 1,024 bytes and no more than eight chips should be applied
+    Then the query asked should be at most 1,024 bytes
+    And no quote in it should be left open
+
+  Scenario: No more than eight chips are applied
+    Given eight Title chips are applied
+    When I try to apply a ninth chip
+    Then the chip count should remain eight
 
   Scenario: The field is a combobox I can use with the keyboard
     When I press the Down arrow in the field

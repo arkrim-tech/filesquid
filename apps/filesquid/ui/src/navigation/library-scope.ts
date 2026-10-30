@@ -16,8 +16,8 @@ export interface LibraryScope {
 
 /**
  * A lookup of the library scope that reads once per route: the answer is kept until `hashchange`
- * on `events`, because creating or opening a library is a route change; a failed read is not
- * kept, so the next call tries again.
+ * on `events`, because creating or opening a library is a route change, or until the navigation
+ * source reports a change to the tree; a failed read is not kept, so the next call tries again.
  *
  * @param navigation The navigation listing.
  * @param events Where `hashchange` is announced (the window); without it the first answer is
@@ -31,6 +31,10 @@ export function cachedLibraryScope(
 ): () => Promise<LibraryScope | undefined> {
   let cached: Promise<LibraryScope | undefined> | undefined;
   events?.addEventListener("hashchange", () => {
+    cached = undefined;
+  });
+  // A change to the tree (a library added or renamed) invalidates the answer too.
+  navigation.subscribe?.(() => {
     cached = undefined;
   });
   return () => {

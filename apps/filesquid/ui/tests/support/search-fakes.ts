@@ -10,7 +10,6 @@ import type { FsSearchBar } from "../../src/components/fs-search-bar";
 import type { DriveRow } from "../../src/drive/model";
 import { MemoryNavigationSource, type FixtureNode } from "../../src/navigation/source";
 import { MemorySearchSource } from "../../src/search/memory-source";
-import type { SearchSource } from "../../src/search/source";
 import labels from "../../src/theme/labels.en.json";
 
 /** The library the search runs in and its name, as the scope chip words it. */
@@ -81,7 +80,7 @@ export const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 0
 /** What a test may change when mounting the bar. */
 export interface BarOptions {
   /** The search source; the fixture's by default. */
-  search?: SearchSource;
+  search?: MemorySearchSource;
   /** Milliseconds the live suggestions wait after typing; 0 by default. */
   debounceMs?: number;
 }
@@ -102,12 +101,12 @@ export interface MountedBar {
  */
 export function mountBar(options: BarOptions = {}): MountedBar {
   defineElements();
-  const search = searchSource();
+  const search = options.search ?? searchSource();
   const navigation = new MemoryNavigationSource(TREE);
   const element = document.createElement("fs-search-bar") as FsSearchBar;
   element.configure({
     labels,
-    search: options.search ?? search,
+    search,
     navigation,
     scope: async () => SCOPE,
     now: () => NOW,

@@ -11,6 +11,7 @@ import { ApiError } from "../../../src/api/client";
 import type { DriveRow } from "../../../src/drive/model";
 import type { FixtureNode } from "../../../src/navigation/source";
 import { MemorySearchSource } from "../../../src/search/memory-source";
+import { refusalOf } from "../../../src/search/model";
 import type { SearchQuery } from "../../../src/search/source";
 import { LIBRARY_ID, viewRow } from "./drive-api";
 
@@ -43,7 +44,14 @@ export const ARCHIVE: FixtureNode = {
   ],
 };
 
-const file = (id: string, name: string, size: number, modified: string, mediaType: string) =>
+const file = (
+  id: string,
+  name: string,
+  collection: string,
+  size: number,
+  modified: string,
+  mediaType: string,
+) =>
   ({
     key: id,
     kind: "file",
@@ -53,14 +61,36 @@ const file = (id: string, name: string, size: number, modified: string, mediaTyp
     mediaType,
     size,
     modified,
+    collection,
   }) as DriveRow;
 
 /** The files of the fixture library: three PDFs that match "harbour", and others. */
 export const FILES: readonly DriveRow[] = [
-  file("f1", "harbour-masterplan-v7.pdf", 19_293_798, "2026-10-16T10:00:00Z", "application/pdf"),
-  file("f2", "harbour-2025-report.pdf", 2_000_000, "2026-09-18T10:00:00Z", "application/pdf"),
-  file("f3", "harbour-walk-permit.pdf", 100_000, "2026-09-20T10:00:00Z", "application/pdf"),
-  file("f4", "facade-study.jpg", 6_500_000, "2026-10-15T08:00:00Z", "image/jpeg"),
+  file(
+    "f1",
+    "harbour-masterplan-v7.pdf",
+    "Harbour project",
+    19_293_798,
+    "2026-10-16T10:00:00Z",
+    "application/pdf",
+  ),
+  file(
+    "f2",
+    "harbour-2025-report.pdf",
+    "Harbour project",
+    2_000_000,
+    "2026-09-18T10:00:00Z",
+    "application/pdf",
+  ),
+  file(
+    "f3",
+    "harbour-walk-permit.pdf",
+    "Documents",
+    100_000,
+    "2026-09-20T10:00:00Z",
+    "application/pdf",
+  ),
+  file("f4", "facade-study.jpg", "Photos 2026", 6_500_000, "2026-10-15T08:00:00Z", "image/jpeg"),
 ];
 
 /** What the fake saw. */
@@ -71,6 +101,16 @@ export interface SearchApi {
   readonly calls: { query: SearchQuery; cursor: string | null; limit: number }[];
   /** Milliseconds every answer waits, to hold the loading state on screen. */
   delayMs: number;
+}
+
+/** The message of a refusal, naming the operator as API-S-012 requires. */
+function refusalMessage(error: unknown, q: string): string {
+  const refusal = refusalOf(error, q);
+  if (refusal?.kind === "unavailable") {
+    return `The search operator ${refusal.operator} is not available on this host.`;
+  }
+  if (refusal) return `The search operator ${refusal.operator} is unknown.`;
+  return "The search was refused.";
 }
 
 /** The query the page sent, as the search operation reads it. */
@@ -126,7 +166,7 @@ export async function serveSearch(
       const code = error instanceof ApiError ? (error.code ?? "internal") : "internal";
       await route.fulfill({
         status,
-        json: { code, message: "refused", retryable: code === "unavailable" },
+        json: { code, message: refusalMessage(error, query.q), retryable: code === "unavailable" },
       });
     }
   });
