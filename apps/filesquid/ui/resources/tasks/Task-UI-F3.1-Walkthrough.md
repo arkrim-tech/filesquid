@@ -252,7 +252,7 @@ Performance summary (milliseconds; frame rows are frame intervals)
 
 The three `FAIL` rows are the records of Finding 4 (open and back idle, open under events); their two tests declare them a known gap and passed because the gap held. The `warm-filter` and `warm-layout` rows repeat one sample for feedback and result because the control and the items appear in the same frame.
 
-Review fixes after this run changed only the known-gap rule (`known-gap.ts`), the first-preview wait, the folder class's timeout parameter, the fake host's query limits and the digest's byte copy. The six specs they touch were run again on the final code (4.0 minutes):
+Review fixes after this run changed only the known-gap rule (`known-gap.ts`), the first-preview wait, the folder class's timeout parameter, the fake host's query limits and the digest's byte copy. The seven specs they touch (six here, and the search spec, which the fake host's query limits affect, in the line after them) were run again on the final code (4.0 and 3.9 minutes):
 
 ```text
   ✓  1 [chromium] › tests/performance/20-browse.perf.spec.ts:104:3 › warm browse, Large catalog › opening folders and going back (cache miss every time) (57.7s)
@@ -262,6 +262,8 @@ Review fixes after this run changed only the known-gap rule (`known-gap.ts`), th
   ✓  5 [chromium] › tests/performance/50-preview.perf.spec.ts:320:1 › content that cannot be read shows the error state within 2 s, never a spinner (4.1s)
   ✓  6 [chromium] › tests/performance/70-load.perf.spec.ts:87:1 › background work: opening folders under the same stream (1.3m)
   6 passed (4.0m)
+  ✓  1 [chromium] › tests/performance/60-search.perf.spec.ts:26:1 › search: query feedback, live files and completed results over 120 measured queries (3.7m)
+  1 passed (3.9m)
 ```
 
 ### Pre-commit hook (`bash scripts/pre-commit.sh`)

@@ -362,6 +362,20 @@ describe("the search operation", () => {
     expect(mixed?.kind).toBe("file");
   });
 
+  it("answers a mixed page that holds folders, and binds its cursor to the placement", () => {
+    // Names ascending put the "Album ..." folders first whichever way they are placed, so a
+    // mixed first page holds folders and has a next page.
+    const ascending = { q: "0", sort: "name", direction: "ascending" } as const;
+    const page = catalogue.searchPage({ ...ascending, folders: "mixed" }, null, 200);
+    expect(page.rows.some((row) => row.kind === "folder")).toBe(true);
+    expect(page.next_cursor).not.toBeNull();
+    const next = page.next_cursor as string;
+    expect(() => catalogue.searchPage({ ...ascending, folders: "mixed" }, next, 200)).not.toThrow();
+    expect(() => catalogue.searchPage({ ...ascending, folders: "on_top" }, next, 200)).toThrow(
+      FixtureError,
+    );
+  });
+
   it("folds names and queries alike: canonically equivalent Unicode finds the same rows", () => {
     const composed = catalogue.searchPage({ q: "álbum", sort: "name" }, null, 200).rows;
     const decomposed = catalogue.searchPage({ q: "álbum", sort: "name" }, null, 200).rows;
