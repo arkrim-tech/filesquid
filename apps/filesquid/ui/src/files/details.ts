@@ -6,9 +6,9 @@
  * shown (UI-S-019), and the API never answers a content location (API-S-005). Pure.
  */
 import { formatLabel, type LabelTable } from "../theme/labels";
-import type { ObjectVersions } from "./history-source";
+import type { FileHistorySize, ObjectVersions } from "./history-source";
 import { formatSize, type FileDetails } from "./model";
-import { shortDigest, shortIdentifier } from "./versions";
+import { shortDigest, shortIdentifier, versionCountText } from "./versions";
 
 /** One property row of a file panel table. */
 export interface PropertyRow {
@@ -113,12 +113,35 @@ function sizeRow(details: FileDetails, labels: LabelTable, locale?: string): Pro
 }
 
 /**
- * The File info rows of one file version, in the order of mockup 35. Pure.
+ * The history size row (UI-F2.11, PRD F-065: storage used by history is reported per file):
+ * "{size} · {count} versions", the bytes the file's history keeps, each content once. Pure.
+ *
+ * @param history The history size of the file.
+ * @param labels The active label table.
+ * @param locale BCP 47 tag for numbers.
+ * @returns The row.
+ */
+function historySizeRow(
+  history: Pick<FileHistorySize, "versions" | "bytes">,
+  labels: LabelTable,
+  locale?: string,
+): PropertyRow {
+  const value = formatLabel(labels.filePanelHistorySizeValue, {
+    size: formatSize(history.bytes, labels, locale),
+    versions: versionCountText(history.versions, labels, locale),
+  });
+  return { key: "history-size", label: labels.filePanelHistorySize, value };
+}
+
+/**
+ * The File info rows of one file version, in the order of mockup 35, with the history size
+ * after the size. Pure.
  *
  * @param details The storage facts of the version.
  * @param versions Every version of its object (for the total and the version's time).
  * @param labels The active label table.
  * @param locale BCP 47 tag for numbers and dates.
+ * @param history The file's history size; the row is left out when it could not be read.
  * @returns The rows; the extension row only when the file has an extension hint.
  */
 export function detailRows(
@@ -126,6 +149,7 @@ export function detailRows(
   versions: ObjectVersions,
   labels: LabelTable,
   locale?: string,
+  history?: Pick<FileHistorySize, "versions" | "bytes">,
 ): PropertyRow[] {
   const extension: PropertyRow[] = details.type_hint
     ? [
@@ -142,6 +166,7 @@ export function detailRows(
     ...extension,
     { key: "format", label: labels.filePanelFormat, value: details.media_type },
     sizeRow(details, labels, locale),
+    ...(history ? [historySizeRow(history, labels, locale)] : []),
     ...digestRows(details, labels),
     {
       key: "object",

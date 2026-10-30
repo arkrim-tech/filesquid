@@ -26,6 +26,7 @@ import type {
   UploadFacts,
 } from "./model";
 import { MAX_UPLOAD_BYTES, isControl, isMediaType, lastSegment, validLabel } from "./model";
+import type { DownloadSource } from "./download-source";
 import { fileIdOf, inOriginalFolder, isOriginalPath } from "./ops";
 import {
   NEW_FILE_REVISION,
@@ -204,7 +205,7 @@ function byName(a: string, b: string): number {
 }
 
 /** A file source answering from memory. */
-export class MemoryFileSource implements FileSource, HistorySource {
+export class MemoryFileSource implements FileSource, HistorySource, DownloadSource {
   private readonly snapshots: Snapshot[] = [];
   private readonly cursors = new Map<string, { prefix: string; offset: number }>();
   private readonly uploaded = new Map<string, UploadedFile>();
@@ -466,6 +467,41 @@ export class MemoryFileSource implements FileSource, HistorySource {
       }
     };
     return this.commit(change, options.label ?? null);
+  }
+
+  /**
+   * Set or clear a version's label as `PUT /api/v1/files/labels` does: the label is checked
+   * first (`invalid_request`), then the revision (`conflict`), then the version
+   * (`not_found`); a label that changes nothing is `conflict`; otherwise the version's label
+   * changes and one new version (the labels record) is committed with the files unchanged.
+   */
+  async setVersionLabel(
+    _object: ObjectRef,
+    version: string,
+    label: string | null,
+    options: WriteOptions,
+  ): Promise<FileCommit> {
+    this.check();
+    if (label !== null && !validLabel(label)) throw refusal(400, "invalid_request");
+    this.expect(options.revision);
+    const target = this.snapshot(version);
+    if (target.label === label) throw refusal(409, "conflict");
+    this.snapshots[this.snapshots.indexOf(target)] = { ...target, label };
+    const created = new Date(BASE_TIME + this.snapshots.length * 60_000).toISOString();
+    this.snapshots.push({ created, files: this.latest().files, label: null });
+    return {
+      library_id: this.options.library_id,
+      object_id: this.options.object_id,
+      version: this.head,
+      created,
+    };
+  }
+
+  /** The whole file of one version as a Blob, as a download would save it. */
+  async readVersionFile(file: FileRef): Promise<Blob> {
+    this.check();
+    const { bytes } = this.stored(file);
+    return new Blob([bytes.slice()]);
   }
 
   /** Every version of the object, oldest first, with the head. */
