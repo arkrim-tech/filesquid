@@ -1,7 +1,9 @@
 //! Step definitions for `home_collections_API-S-011.feature` (Task API-F2.14; API-S-011
 //! **Destination** and **Same logical path**, API-S-019, API-S-021, API-S-026): a files rig
 //! whose memory home collections hold the collection "Holidays" of its library, every
-//! upload and copy sent through the router.
+//! upload and copy sent through the router; and for
+//! `moves_renames_and_folders_API-S-011.feature` (Task API-F2.14 part 2): moves, renames and
+//! collection folders through the same rig.
 
 use crate::files_fixture::{
     command_body, operation_id, upload_input, Answer, FilesRig, HOME_COLLECTION, LIBRARY,
@@ -239,8 +241,20 @@ fn announced(w: &mut MonitorWorld) {
     );
 }
 
-#[then(expr = "the upload should be refused as {string} and journaled once")]
-fn refused(w: &mut MonitorWorld, code: String) {
+/// The journal operation of the command a scenario names. Pure.
+fn operation_of(command: &str) -> &'static str {
+    match command {
+        "upload" => "file.upload",
+        "move" => "file.move",
+        "rename" => "files.rename",
+        _ => "files.create_folder",
+    }
+}
+
+#[then(
+    regex = r#"^the (upload|move|rename|new folder) should be refused as "([^"]+)" and journaled once$"#
+)]
+fn refused(w: &mut MonitorWorld, command: String, code: String) {
     let answer = w.home.last();
     assert!(answer.status.is_client_error(), "{:?}", answer.json());
     assert!(answer.json()["message"]
@@ -249,7 +263,7 @@ fn refused(w: &mut MonitorWorld, code: String) {
     let failed: Vec<_> = w
         .home
         .rig()
-        .journaled("file.upload")
+        .journaled(operation_of(&command))
         .into_iter()
         .filter(|e| e.outcome == Outcome::Failed)
         .collect();
@@ -262,4 +276,107 @@ fn nothing_registered(w: &mut MonitorWorld) {
     let rig = w.home.rig();
     assert!(rig.home.journal().is_empty());
     assert_eq!(rig.home.reserved(), 0);
+}
+
+/// The file the scenario uploaded first.
+fn subject(w: &MonitorWorld) -> Value {
+    let first = w.home.answers.first().expect("an upload");
+    first.result()["file_id"].clone()
+}
+
+/// Send a collection move of the scenario's file with `fields` and keep its answer.
+async fn send_move(w: &mut MonitorWorld, fields: Value) {
+    let mut body = json!({ "library_id": LIBRARY, "file_id": subject(w) });
+    let body_fields = body.as_object_mut().expect("object");
+    body_fields.extend(fields.as_object().expect("fields").clone());
+    let answer = w.home.rig().command("/api/v1/files/moves", body).await;
+    w.home.answers.push(answer);
+}
+
+#[when(expr = "the owner moves it into the folder {string}")]
+async fn move_into(w: &mut MonitorWorld, folder: String) {
+    let fields = json!({ "collection_id": HOME_COLLECTION, "folder": folder });
+    send_move(w, fields).await;
+}
+
+#[when("the owner moves it without naming a collection")]
+async fn move_nowhere(w: &mut MonitorWorld) {
+    send_move(w, json!({ "folder": "Archive" })).await;
+}
+
+#[when(expr = "the owner renames it to {string}")]
+async fn rename_to(w: &mut MonitorWorld, name: String) {
+    let body = json!({ "library_id": LIBRARY, "file_id": subject(w), "display_name": name });
+    let answer = w.home.rig().command("/api/v1/files/renames", body).await;
+    w.home.answers.push(answer);
+}
+
+/// Ask for the collection folder `folder` with `body` and keep the answer.
+async fn send_folder(w: &mut MonitorWorld, body: Value) {
+    let answer = w.home.rig().command("/api/v1/files/folders", body).await;
+    w.home.answers.push(answer);
+}
+
+#[when(expr = "the owner creates the folder {string} in {string}")]
+async fn create_folder(w: &mut MonitorWorld, folder: String, title: String) {
+    assert_eq!(title, HOLIDAYS);
+    let body = json!({
+        "library_id": LIBRARY, "collection_id": HOME_COLLECTION, "folder": folder
+    });
+    send_folder(w, body).await;
+}
+
+#[when(expr = "the owner creates the folder {string} without naming a collection")]
+async fn create_folder_nowhere(w: &mut MonitorWorld, folder: String) {
+    send_folder(w, json!({ "library_id": LIBRARY, "folder": folder })).await;
+}
+
+#[then(expr = "the file should now be registered at {string} in {string}")]
+fn now_registered(w: &mut MonitorWorld, path: String, title: String) {
+    assert_eq!(title, HOLIDAYS);
+    let file = subject(w);
+    let file = FileId::new(file.as_str().expect("file")).expect("file id");
+    assert_eq!(w.home.rig().home.placed(&file), Some((home(), path)));
+}
+
+#[then(expr = "the answer should carry the path {string}")]
+fn carries_path(w: &mut MonitorWorld, path: String) {
+    let answer = w.home.last();
+    assert_eq!(answer.status, StatusCode::OK, "{:?}", answer.json());
+    assert_eq!(answer.result()["path"], path);
+}
+
+#[then("the move should be journaled once without its name or folder")]
+fn move_journaled(w: &mut MonitorWorld) {
+    let rig = w.home.rig();
+    let entries = rig.journaled("file.move");
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].outcome, Outcome::Succeeded);
+    let journal = format!("{:?}", rig.journal());
+    for word in ["beach", "Summer", "Archive"] {
+        assert!(!journal.contains(word), "{word} was journaled");
+    }
+}
+
+#[then("both folders should be announced as changed")]
+fn both_announced(w: &mut MonitorWorld) {
+    let events = w.home.events.as_mut().expect("subscribed");
+    let changes = std::iter::from_fn(|| events.try_recv().ok())
+        .take(1_000)
+        .filter(|event| event.topic == topic::NAVIGATION_CHANGE)
+        .count();
+    assert_eq!(
+        changes, 3,
+        "the upload's folder, then the folder left and the folder entered"
+    );
+}
+
+#[then(expr = "the folder should be answered at {string} and pending")]
+fn folder_answered(w: &mut MonitorWorld, path: String) {
+    let answer = w.home.last();
+    assert_eq!(answer.status, StatusCode::OK, "{:?}", answer.json());
+    let expected = json!({
+        "library_id": LIBRARY, "collection_id": HOME_COLLECTION, "path": path, "pending": true
+    });
+    assert_eq!(answer.result(), expected);
 }
