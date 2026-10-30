@@ -106,8 +106,9 @@ pub(super) struct Write<'a> {
     pub kind: OperationKind,
     /// The caller's version label, already checked with [`label_of`].
     pub label: Option<String>,
-    /// The route's journal operation, such as `file.move`.
-    pub operation: &'static str,
+    /// The route's journal operation, such as `file.move`; `None` when the caller journals
+    /// the operation's own entry itself (an import job's `import.file`).
+    pub operation: Option<&'static str>,
     /// The library written.
     pub library_id: &'a str,
     /// The object written.
@@ -280,8 +281,8 @@ fn new_operation_id() -> Result<OperationId, FileError> {
         .ok_or_else(|| FileError::unavailable("no operation id could be minted"))
 }
 
-/// The operation's own journal entries: the route's, and `metadata.edit` for a write of a
-/// metadata record, each naming the library and the object. Pure.
+/// The operation's own journal entries: the route's (if it has one), and `metadata.edit` for
+/// a write of a metadata record, each naming the library and the object. Pure.
 fn own_entries(write: &Write<'_>) -> Vec<JournalEntry> {
     let entry = |operation: &str| {
         JournalEntry::new(operation, Outcome::Succeeded)
@@ -289,11 +290,13 @@ fn own_entries(write: &Write<'_>) -> Vec<JournalEntry> {
             .target(write.library_id)
             .target(write.object_id)
     };
-    let mut entries = vec![entry(write.operation)];
-    if write.metadata {
-        entries.push(entry(METADATA_EDIT_OPERATION));
-    }
-    entries
+    let metadata = write.metadata.then_some(METADATA_EDIT_OPERATION);
+    write
+        .operation
+        .into_iter()
+        .chain(metadata)
+        .map(entry)
+        .collect()
 }
 
 /// Journal IDs a commit allocates besides its operation's own entries: the `ocfl.commit`

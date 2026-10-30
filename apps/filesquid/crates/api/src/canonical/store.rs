@@ -395,7 +395,8 @@ impl From<VersionMeta> for BoundMeta<'_> {
 /// its metadata record `record` in the same version, with `meta` (Task DE-1.9, OCFL-S-026):
 /// the streamed counterpart of [`commit_file_original`] for an object that has no head yet.
 /// The record is stored as [`OwnerReadable`](super::OwnerReadable) content, as the original
-/// is: a streamed original cannot be sealed by a profile transform.
+/// is: a streamed original cannot be sealed by a profile transform. `meta` may bind files to
+/// the version ([`BoundMeta`]), checked as [`commit_file_original`] checks them.
 ///
 /// # Errors
 /// As [`commit_file_original`]; [`CanonicalError::Encode`] for a record that does not cite
@@ -405,13 +406,14 @@ pub async fn commit_staged_original<B, R, S>(
     file_id: &FileId,
     record: &FileRecord,
     (digest, size): (&str, u64),
-    meta: VersionMeta,
+    meta: impl Into<BoundMeta<'_>>,
 ) -> Result<CommitReceipt, CanonicalError>
 where
     B: StorageBackend,
     R: VersionReservations,
     S: StorageBackend,
 {
+    let BoundMeta { meta, bound } = meta.into();
     let path = original_path_of(file_id, record)?;
     check_new_content(file_id, record, None, &path, (digest, size))?;
     check_staged(model, &path, digest).await?;
@@ -420,7 +422,13 @@ where
         .stage_bytes(&companion, &encode_record(record))
         .await?;
     let span = super::message::commit_span(meta.message.as_deref());
-    match model.commit(meta).instrument(span).await {
+    let transform = super::OwnerReadable;
+    let sealed = bound.map(|inner| Sealed {
+        inner,
+        transform: &transform,
+    });
+    let sealed = sealed.as_ref().map(|s| s as &dyn VersionBoundFiles);
+    match model.commit_with(meta, sealed).instrument(span).await {
         Err(ChangeError::NothingToCommit) => Err(CanonicalError::Conflict),
         result => published(result),
     }

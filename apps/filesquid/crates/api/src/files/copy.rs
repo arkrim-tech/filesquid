@@ -156,7 +156,7 @@ where
             caller: &caller,
             kind: OperationKind::Copy,
             label,
-            operation: COPY_OPERATION,
+            operation: Some(COPY_OPERATION),
             library_id: &request.library_id,
             object_id: &object_id,
             metadata: false,

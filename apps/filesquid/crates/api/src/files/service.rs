@@ -18,14 +18,14 @@ use super::view::{
     HistoryQuery, HistoryView, ListingQuery, MoveRequest, ObjectQuery, RemoveRequest, VersionView,
     VersionsView,
 };
-use super::{media, DEFAULT_PAGE, HOLDER, MAX_ANSWER_BYTES, MAX_MESSAGE_BYTES};
+use super::{media, DEFAULT_PAGE, HOLDER, MAX_ANSWER_BYTES};
 use super::{MOVE_OPERATION, REMOVE_OPERATION};
 use crate::content::ContentTarget;
 use filesquid_core::{LibraryId, OperationKind};
 use filesquid_metadata::file_record::safe_display_name;
-use filesquid_ocfl::change::{ChangeModel, StagingArea, VersionMeta};
+use filesquid_ocfl::change::{ChangeModel, StagingArea};
 use filesquid_ocfl::digest::DigestAlgorithm;
-use filesquid_ocfl::inventory::{User, VersionNum};
+use filesquid_ocfl::inventory::VersionNum;
 use filesquid_ocfl::read::{Object, StorageRoot};
 use filesquid_ocfl::storage::StorageBackend;
 use filesquid_ocfl::view::{self, MAX_PAGE_ENTRIES, MAX_RANGE_BYTES};
@@ -590,7 +590,7 @@ where
             caller: &caller,
             kind: OperationKind::Move,
             label,
-            operation: MOVE_OPERATION,
+            operation: Some(MOVE_OPERATION),
             library_id: &request.library_id,
             object_id: &request.object_id,
             metadata: false,
@@ -628,7 +628,7 @@ where
             caller: &caller,
             kind: OperationKind::Delete,
             label,
-            operation: REMOVE_OPERATION,
+            operation: Some(REMOVE_OPERATION),
             library_id: &request.library_id,
             object_id: &request.object_id,
             metadata: false,
@@ -641,29 +641,6 @@ where
         stage_removals(&model, &removals).await?;
         let receipt = commit_staged(&model, &prepared).await?;
         Ok(prepared.finish_view(&request.library_id, receipt))
-    }
-
-    /// The version record of an import by `actor` with `message`: the caller as `user`. The
-    /// file and metadata routes commit through [`super::Committed`] instead.
-    pub(super) fn meta(
-        &self,
-        actor: &str,
-        message: Option<&str>,
-    ) -> Result<VersionMeta, FileError> {
-        let user = User {
-            name: actor.to_string(),
-            address: None,
-        };
-        let meta = VersionMeta::new(self.created()).with_user(user);
-        match message {
-            None => Ok(meta),
-            Some(text) if !text.trim().is_empty() && text.len() <= MAX_MESSAGE_BYTES => {
-                Ok(meta.with_message(text))
-            }
-            Some(_) => Err(FileError::invalid(format!(
-                "A version message is 1 to {MAX_MESSAGE_BYTES} bytes and not blank."
-            ))),
-        }
     }
 }
 

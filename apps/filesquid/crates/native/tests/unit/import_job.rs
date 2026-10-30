@@ -443,6 +443,21 @@ async fn a_folder_is_imported_as_one_job_with_a_checkpoint_per_file() {
     assert!(entries
         .iter()
         .all(|e| e.target_ids.contains(&job.id) && e.operation_id.as_deref() == Some("op-import")));
+    // Each file's commit is journaled once as `ocfl.commit` under the job's operation ID and
+    // names the version the file's `import.file` entry names (API-S-028).
+    let commits = rig.entries("ocfl.commit");
+    assert_eq!(commits.len(), 3, "one commit entry per file: {commits:?}");
+    for entry in &entries {
+        let reference = entry
+            .object_ref
+            .as_deref()
+            .expect("the file's object version");
+        let linked = commits.iter().filter(|c| {
+            c.object_ref.as_deref() == Some(reference)
+                && c.operation_id.as_deref() == Some("op-import")
+        });
+        assert_eq!(linked.count(), 1, "{reference}");
+    }
     assert_eq!(
         rig.registered(),
         [

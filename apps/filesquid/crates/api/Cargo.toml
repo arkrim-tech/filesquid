@@ -184,6 +184,10 @@ name = "integration_commit_linkage"
 path = "tests/integration/commit_linkage.rs"
 
 [[test]]
+name = "integration_engine_warnings"
+path = "tests/integration/engine_warnings.rs"
+
+[[test]]
 name = "integration_names"
 path = "tests/integration/names.rs"
 

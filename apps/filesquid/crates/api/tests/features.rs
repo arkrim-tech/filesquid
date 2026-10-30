@@ -14,7 +14,7 @@
 //! the metadata property routes of API-S-035; the display and download names of API-S-027;
 //! the view operation, copy and storage use per collection of API-S-011; the search
 //! operation and operator grammar of API-S-012; the journal and commit linkage of the file
-//! and metadata routes of API-S-028;
+//! and metadata routes of API-S-028; the PROV-O records those commits write (SRS-F-067);
 //! the sealing service and journal rebuild of API-S-032; and the job routes and job events
 //! of API-S-037).
 //!
@@ -131,8 +131,11 @@ mod metadata_steps;
 
 #[path = "support/linkage_steps.rs"]
 mod linkage_steps;
+
 #[path = "support/names_steps.rs"]
 mod names_steps;
+#[path = "support/prov_steps.rs"]
+mod prov_steps;
 #[path = "support/search_steps.rs"]
 mod search_steps;
 #[path = "support/view_steps.rs"]
@@ -202,6 +205,7 @@ struct MonitorWorld {
     content: content_steps::ContentWorld,
     files: file_steps::FileWorld,
     linkage: linkage_steps::LinkageWorld,
+    prov: prov_steps::ProvWorld,
     validation: validation_steps::ValidationWorld,
 
     history: history_steps::HistoryWorld,
