@@ -648,7 +648,7 @@ export interface paths {
         put?: never;
         /**
          * Create a library in an empty folder
-         * @description Makes the folder the host registered as location_id the OCFL 1.1 storage root of a library: writes only the 0=ocfl_1.1 declaration, never over an existing file, and needs no account or connection (F-001). Answers the library ID (library_id when given, else a new UUID v4), which stays bound to the location until the host stops. Refusals: invalid_location, invalid_library, location_not_found, location_in_use, library_already_open, too_many_libraries (at most 64 open libraries) and root_not_empty. The outcome is journaled as library.root.create. Every refusal is journaled once, with its error code and opaque IDs only (an authorisation refusal as api.auth.denied); answers carry opaque library and object identifiers, never a filesystem path, storage key or OCFL content path (API-S-005, API-S-025).
+         * @description Makes the folder the host registered as location_id the OCFL 1.1 storage root of a library: writes only the 0=ocfl_1.1 declaration, never over an existing file, and needs no account or connection (F-001). Answers the library ID (library_id when given, else a new UUID v4), which stays bound to the location until the host stops. Takes a CommandEnvelope beside its input (Task API-F2.19, API-S-002): scope location:<location_id>, expected_revision 0 (the library does not exist yet; any other value is a conflict). Answers a committed CommandOutcome for the envelope's operation_id with the library as result, at revision 1; a repeated operation_id answers the first answer again with no second change (the receipt is answered before the revision is checked), and a stale revision or any other 409 refusal is a conflict outcome beside the ApiError fields. Refusals: invalid_location, invalid_library, location_not_found, location_in_use, library_already_open, too_many_libraries (at most 64 open libraries) and root_not_empty. The outcome is journaled as library.root.create. Every refusal is journaled once, with its error code and opaque IDs only (an authorisation refusal as api.auth.denied); answers carry opaque library and object identifiers, never a filesystem path, storage key or OCFL content path (API-S-005, API-S-025).
          */
         post: operations["createLibrary"];
         delete?: never;
@@ -668,7 +668,7 @@ export interface paths {
         put?: never;
         /**
          * Open the library in a folder
-         * @description Opens the OCFL storage root in the folder the host registered as location_id through the engine's guards, and binds the library ID to it: the library its collection snapshot names (a moved or copied folder keeps its library), else library_id when given, else a new UUID v4. A library_id other than the snapshot's is refused (library_mismatch); a second folder of a library that is already open is refused (library_already_open), so two folders never share one index (ADR 041 Decision 6). Writes and repairs nothing. Opening a location that is already open answers its library again. Refusals: invalid_location, invalid_library, location_not_found, location_in_use, library_already_open, library_mismatch, too_many_libraries, not_a_storage_root and git_in_root. Only a failure is journaled, as library.root.open. Every refusal is journaled once, with its error code and opaque IDs only (an authorisation refusal as api.auth.denied); answers carry opaque library and object identifiers, never a filesystem path, storage key or OCFL content path (API-S-005, API-S-025).
+         * @description Opens the OCFL storage root in the folder the host registered as location_id through the engine's guards, and binds the library ID to it: the library its collection snapshot names (a moved or copied folder keeps its library), else library_id when given, else a new UUID v4. A library_id other than the snapshot's is refused (library_mismatch); a second folder of a library that is already open is refused (library_already_open), so two folders never share one index (ADR 041 Decision 6). Writes and repairs nothing. Opening a location that is already open answers its library again. Takes a CommandEnvelope beside its input (Task API-F2.19, API-S-002): scope location:<location_id>, expected_revision 0 for a library not open on this host, or the current revision of a library already open at that location, which is answered again (a name it gives that replaces the known one renames the library and advances its revision; otherwise nothing changes and no receipt is stored); any other value is a conflict. Answers a committed CommandOutcome for the envelope's operation_id with the library as result; a repeated operation_id of a fresh open answers the first answer again. Refusals: invalid_location, invalid_library, location_not_found, location_in_use, library_already_open, library_mismatch, too_many_libraries, not_a_storage_root and git_in_root. Only a failure is journaled, as library.root.open. Every refusal is journaled once, with its error code and opaque IDs only (an authorisation refusal as api.auth.denied); answers carry opaque library and object identifiers, never a filesystem path, storage key or OCFL content path (API-S-005, API-S-025).
          */
         post: operations["openLibrary"];
         delete?: never;
@@ -708,7 +708,7 @@ export interface paths {
         put?: never;
         /**
          * Copy a completed snapshot to an empty folder
-         * @description Copies the committed files of every object of the open library into the empty folder the host registered as destination_location_id, never over an existing file, and validates the copy, so it is a checked OCFL root ordinary tools can read (F-042). The library is only read. Refusals: library_not_open, location_not_found, destination_overlaps_library (the destination is the folder of an open library, or inside or around one), destination_not_empty, snapshot_unreadable and snapshot_incomplete (retryable while a head is being published). The outcome is journaled as library.snapshot.copy. Every refusal is journaled once, with its error code and opaque IDs only (an authorisation refusal as api.auth.denied); answers carry opaque library and object identifiers, never a filesystem path, storage key or OCFL content path (API-S-005, API-S-025).
+         * @description Copies the committed files of every object of the open library into the empty folder the host registered as destination_location_id, never over an existing file, and validates the copy, so it is a checked OCFL root ordinary tools can read (F-042). The library is only read. Takes a CommandEnvelope beside its input (Task API-F2.19, API-S-002): scope library:<library_id>, expected_revision the library's current revision (LibraryView.revision); a stale one is a conflict outcome with no change. Answers a committed CommandOutcome for the envelope's operation_id with the report as result; the copy stores a receipt, so a repeated operation_id answers it again with no second write. Refusals: library_not_open, location_not_found, destination_overlaps_library (the destination is the folder of an open library, or inside or around one), destination_not_empty, snapshot_unreadable and snapshot_incomplete (retryable while a head is being published). The outcome is journaled as library.snapshot.copy. Every refusal is journaled once, with its error code and opaque IDs only (an authorisation refusal as api.auth.denied); answers carry opaque library and object identifiers, never a filesystem path, storage key or OCFL content path (API-S-005, API-S-025).
          */
         post: operations["copyLibrarySnapshot"];
         delete?: never;
@@ -728,7 +728,7 @@ export interface paths {
         put?: never;
         /**
          * Rebuild a library from its files as a durable job
-         * @description Starts the rebuild from files as a durable job of kind library.rebuild (API-S-025 Rebuild as a job, API-S-033) and answers pending with its job ID: the job reads every object of the open library from its OCFL files alone, so a host can rebuild its catalog without its database, reports its progress in objects (done of total) on the job routes and the job.update event, and is paused, resumed from its checkpoint without reading a completed object again, and cancelled through the job routes (API-S-037). Once the job has completed, its view's result is the RebuildReport: the objects read, the objects not readable, and each object's validation errors; an object whose head has no version inventory is flagged. Validation errors are reported, never adopted or repaired, and nothing is written to the library's files, so a cancel changes none of them. A library whose rebuild job is unfinished answers that job again, and no second job is submitted. scheduled says whether the job was handed to the host's runner now; false leaves it pending (paused, already running, or a host without a runner for the kind). The request takes no CommandEnvelope: the job's own operation ID identifies it. Refusals before any job is submitted: library_not_open, a malformed body (invalid_request), and a host without a job service (unavailable). The finished rebuild is journaled once as library.rebuild, and its job's state changes as job.*; every refusal is journaled once, with its error code and opaque IDs only (an authorisation refusal as api.auth.denied); answers carry opaque library, job and object identifiers, never a filesystem path, storage key or OCFL content path (API-S-005, API-S-025).
+         * @description Starts the rebuild from files as a durable job of kind library.rebuild (API-S-025 Rebuild as a job, API-S-033) and answers pending with its job ID: the job reads every object of the open library from its OCFL files alone, so a host can rebuild its catalog without its database, reports its progress in objects (done of total) on the job routes and the job.update event, and is paused, resumed from its checkpoint without reading a completed object again, and cancelled through the job routes (API-S-037). Once the job has completed, its view's result is the RebuildReport: the objects read, the objects not readable, and each object's validation errors; an object whose head has no version inventory is flagged. Validation errors are reported, never adopted or repaired, and nothing is written to the library's files, so a cancel changes none of them. A library whose rebuild job is unfinished answers that job again, and no second job is submitted. scheduled says whether the job was handed to the host's runner now; false leaves it pending (paused, already running, or a host without a runner for the kind). The request takes a CommandEnvelope beside its input (Task API-F2.19, API-S-002): scope library:<library_id>, expected_revision the library's current revision (LibraryView.revision); a stale one is a conflict outcome and submits no job. The answer is a pending CommandOutcome for the envelope's operation_id with the job as result: a new job carries that operation_id and stores a receipt, so a repeated operation_id answers the same job; an unfinished job is answered under the request's operation_id and stores none. Refusals before any job is submitted: library_not_open, a malformed body (invalid_request), and a host without a job service (unavailable). The finished rebuild is journaled once as library.rebuild, and its job's state changes as job.*; every refusal is journaled once, with its error code and opaque IDs only (an authorisation refusal as api.auth.denied); answers carry opaque library, job and object identifiers, never a filesystem path, storage key or OCFL content path (API-S-005, API-S-025).
          */
         post: operations["rebuildLibrary"];
         delete?: never;
@@ -1272,7 +1272,7 @@ export interface paths {
         put?: never;
         /**
          * Rename a library
-         * @description Renames a library this host opened (API-S-038) and answers its facts. The name follows the rules of API-S-019: 1 to 1,024 bytes, not blank, no control characters (invalid_request with the code invalid_name). A library this host never opened is 404 not_found (library_not_found). A rename is journaled as library.rename with the library ID only, never the name; a rename to the current name changes nothing and is not journaled. A host without a library registry, filesquid-server among them, answers 503 unavailable. Takes a plain body: the library routes take a CommandEnvelope from API-F2.19.
+         * @description Renames a library this host opened (API-S-038) and answers its facts. The name follows the rules of API-S-019: 1 to 1,024 bytes, not blank, no control characters (invalid_request with the code invalid_name). A library this host never opened is 404 not_found (library_not_found). A rename is journaled as library.rename with the library ID only, never the name; a rename to the current name changes nothing and is not journaled. A host without a library registry, filesquid-server among them, answers 503 unavailable. Takes a CommandEnvelope beside its input (Task API-F2.19, API-S-002): scope library:<library_id>, expected_revision the current revision of the library, which must be open on this host (a remembered library that is not open now is 404 not_found, library_not_open); a stale revision is a conflict outcome with no change. Answers a committed CommandOutcome for the envelope's operation_id with the facts as result, at the advanced revision when the name changed; a changed name stores a receipt, so a repeated operation_id answers it again with no second change, and a rename to the current name stores none.
          */
         post: operations["renameLibrary"];
         delete?: never;
@@ -1882,7 +1882,7 @@ export interface components {
             /** @description The library's name (API-S-038): 1 to 1,024 bytes, not blank, no control characters; refused as invalid_request with the code invalid_name otherwise. Kept when given; a library first bound without one is named "Untitled library". */
             name?: string;
         };
-        /** @description A created or opened library. */
+        /** @description A created or opened library, at its revision on this host. */
         LibraryView: {
             /** @description The library, bound to the location until the host stops. */
             library_id: string;
@@ -1890,6 +1890,8 @@ export interface components {
             spec_version: string;
             /** @description The objects discovered in it. */
             objects: number;
+            /** @description The revision of the bound library on this host (`1` when just bound; a later command that changes it, such as a rename, advances it): the expected revision of its next copy, rebuild or rename command (API-S-019). */
+            revision: string;
         };
         /** @description Body of POST /api/v1/libraries/snapshot-copies. */
         SnapshotCopyRequest: {
@@ -2812,7 +2814,7 @@ export interface components {
          * @enum {string}
          */
         FreeBytesReason: "volume_unreadable" | "not_local";
-        /** @description A library's facts (API-S-038): its ID, name and the free bytes of the volume that holds its storage root. Never a path, storage key or location ID. */
+        /** @description A library's facts (API-S-038): its ID, name, the free bytes of the volume that holds its storage root, and its revision while open on this host. Never a path, storage key or location ID. */
         LibraryFacts: {
             /** @description The library. */
             library_id: string;
@@ -2822,6 +2824,8 @@ export interface components {
             free_bytes: number | null;
             /** @description Why free_bytes is null; null when it is known. */
             free_bytes_reason: components["schemas"]["FreeBytesReason"] | null;
+            /** @description The revision of the library while it is open on this host, the expected revision of its next copy, rebuild or rename command (Task API-F2.19); null for a remembered library that is not open now. */
+            revision: string | null;
         };
         /** @description One library this host opened (API-S-038). Never a path, storage key or location ID. */
         RecentLibrary: {
@@ -2846,12 +2850,92 @@ export interface components {
             /** @description Newest first. */
             libraries: components["schemas"]["RecentLibrary"][];
         };
-        /** @description Body of POST /api/v1/libraries/renames (a plain body; the library routes take a CommandEnvelope from API-F2.19). */
+        /** @description Input of POST /api/v1/libraries/renames (the input member of RenameLibraryCommand, Task API-F2.19). */
         RenameLibraryRequest: {
-            /** @description A library this host opened. */
+            /** @description A library open on this host. */
             library_id: string;
             /** @description Its new name: 1 to 1,024 bytes, not blank, no control characters. */
             name: string;
+        };
+        /** @description Body of POST /api/v1/libraries and POST /api/v1/libraries/openings: the command envelope and the input (Task API-F2.19, API-S-002). The envelope's scope is `location:<location_id>`; create expects revision `0` (the library does not exist yet) and open expects `0`, or the current revision of a library already open at that location, which is then answered again; its operation_id is the idempotency key and expected_revision the revision the caller last read (API-S-019). */
+        LibraryLocationCommand: {
+            envelope: components["schemas"]["CommandEnvelope"];
+            input: components["schemas"]["LibraryLocationRequest"];
+        };
+        /** @description Body of POST /api/v1/libraries/snapshot-copies: the command envelope and the input (Task API-F2.19, API-S-002). The envelope's scope is `library:<library_id>` and the expected revision is the open library's current revision (`LibraryView.revision`, `LibraryFacts.revision`); its operation_id is the idempotency key and expected_revision the revision the caller last read (API-S-019). */
+        SnapshotCopyCommand: {
+            envelope: components["schemas"]["CommandEnvelope"];
+            input: components["schemas"]["SnapshotCopyRequest"];
+        };
+        /** @description Body of POST /api/v1/libraries/rebuilds: the command envelope and the input (Task API-F2.19, API-S-002). The envelope's scope is `library:<library_id>` and the expected revision is the open library's current revision (`LibraryView.revision`, `LibraryFacts.revision`); its operation_id is the idempotency key and expected_revision the revision the caller last read (API-S-019). */
+        RebuildLibraryCommand: {
+            envelope: components["schemas"]["CommandEnvelope"];
+            input: components["schemas"]["LibraryRequest"];
+        };
+        /** @description Body of POST /api/v1/libraries/renames: the command envelope and the input (Task API-F2.19, API-S-002). The envelope's scope is `library:<library_id>` and the expected revision is the open library's current revision (`LibraryView.revision`, `LibraryFacts.revision`); a changed name advances it; its operation_id is the idempotency key and expected_revision the revision the caller last read (API-S-019). */
+        RenameLibraryCommand: {
+            envelope: components["schemas"]["CommandEnvelope"];
+            input: components["schemas"]["RenameLibraryRequest"];
+        };
+        /** @description The answer of create and open (Task API-F2.19): the `CommandOutcome` fields for the envelope's operation_id (kind `committed`) and `result`, the library. A create, a fresh open and an open that renames the library with the name it gives store a receipt, so a repeated operation_id answers this again with no second change; an open of a library already open there under its own name changes nothing and stores none. */
+        LibraryViewOutcome: {
+            /** @description The command's operation id. */
+            operation_id: string;
+            /** @description Always `committed`. */
+            kind: components["schemas"]["CommandOutcomeKind"];
+            /** @description Always null for these routes: a refusal is an error answer. */
+            error: components["schemas"]["PortError"] | null;
+            /** @description The library created or opened, at its revision on this host. */
+            result: components["schemas"]["LibraryView"] | null;
+        };
+        /** @description The answer of a snapshot copy (Task API-F2.19): the `CommandOutcome` fields for the envelope's operation_id (kind `committed`) and `result`, the copy report. The copy stores a receipt, so a repeated operation_id answers this again with no second write. */
+        SnapshotCopyOutcome: {
+            /** @description The command's operation id. */
+            operation_id: string;
+            /** @description Always `committed`. */
+            kind: components["schemas"]["CommandOutcomeKind"];
+            /** @description Always null for these routes: a refusal is an error answer. */
+            error: components["schemas"]["PortError"] | null;
+            /** @description What the copy wrote and what its validation found. */
+            result: components["schemas"]["SnapshotCopyReport"] | null;
+        };
+        /** @description The answer of a rebuild (Task API-F2.19): the `CommandOutcome` fields for the envelope's operation_id (kind `pending`, the job is durable but not complete) and `result`, the job. A new job carries the envelope's operation_id and stores a receipt, so a repeated operation_id answers the same job; a request for a library whose rebuild job is unfinished answers that job under the request's operation_id and submits none. */
+        RebuildJobOutcome: {
+            /** @description The command's operation id. */
+            operation_id: string;
+            /** @description Always `pending`. */
+            kind: components["schemas"]["CommandOutcomeKind"];
+            /** @description Always null for these routes: a refusal is an error answer. */
+            error: components["schemas"]["PortError"] | null;
+            /** @description The rebuild's durable job: pending. */
+            result: components["schemas"]["RebuildJobAnswer"] | null;
+        };
+        /** @description The answer of a rename (Task API-F2.19): the `CommandOutcome` fields for the envelope's operation_id (kind `committed`) and `result`, the library's facts. A rename that changed the name advances the revision and stores a receipt, so a repeated operation_id answers this again with no second change; a rename to the current name changes nothing and stores none. */
+        LibraryFactsOutcome: {
+            /** @description The command's operation id. */
+            operation_id: string;
+            /** @description Always `committed`. */
+            kind: components["schemas"]["CommandOutcomeKind"];
+            /** @description Always null for these routes: a refusal is an error answer. */
+            error: components["schemas"]["PortError"] | null;
+            /** @description The library's facts after the rename, at its advanced revision. */
+            result: components["schemas"]["LibraryFacts"] | null;
+        };
+        /** @description The 409 answer of a library command (Task API-F2.19, API-S-002): the `ApiError` fields (code `conflict`) beside a `conflict` outcome of the same operation_id, so a `CommandOutcome` reader and an `ApiError` reader both read it. A stale expected revision, a rule about the storage root or the destination (the journal entry names it: root_not_empty, not_a_storage_root, git_in_root, destination_not_empty, snapshot_unreadable, destination_overlaps_library, location_in_use, library_already_open, library_mismatch, too_many_libraries) and an operation_id still in flight are conflicts; nothing was written. */
+        LibraryCommandConflict: {
+            /** @description The command's operation id. */
+            operation_id: string;
+            /** @description Always `conflict`. */
+            kind: components["schemas"]["CommandOutcomeKind"];
+            /** @description Always null: the reason is `code` and `message`. */
+            error: null;
+            /** @description Always null: a conflict made nothing. */
+            result: null;
+            code: components["schemas"]["ErrorCode"];
+            /** @description Human-readable message the UI can show. Never contains paths, SQL or internal error text. */
+            message: string;
+            /** @description True when repeating the same request unchanged may succeed. */
+            retryable: boolean;
         };
     };
     responses: {
@@ -3063,6 +3147,15 @@ export interface components {
             };
             content: {
                 "application/json": components["schemas"]["FileCommandConflict"];
+            };
+        };
+        /** @description A `conflict` outcome of the command's operation_id: the expected revision is stale, a rule about the storage root or the destination refused the command (the journal entry names it), or a command with that operation_id is still running; nothing was written. */
+        LibraryCommandConflict: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["LibraryCommandConflict"];
             };
         };
     };
@@ -4340,24 +4433,24 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["LibraryLocationRequest"];
+                "application/json": components["schemas"]["LibraryLocationCommand"];
             };
         };
         responses: {
-            /** @description The library created. */
+            /** @description The library created, as a committed outcome. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["LibraryView"];
+                    "application/json": components["schemas"]["LibraryViewOutcome"];
                 };
             };
             400: components["responses"]["InvalidRequest"];
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["LibraryNotFound"];
-            409: components["responses"]["LibraryConflict"];
+            409: components["responses"]["LibraryCommandConflict"];
             500: components["responses"]["Internal"];
             503: components["responses"]["LibraryUnavailable"];
         };
@@ -4371,24 +4464,24 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["LibraryLocationRequest"];
+                "application/json": components["schemas"]["LibraryLocationCommand"];
             };
         };
         responses: {
-            /** @description The library opened. */
+            /** @description The library opened, as a committed outcome. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["LibraryView"];
+                    "application/json": components["schemas"]["LibraryViewOutcome"];
                 };
             };
             400: components["responses"]["InvalidRequest"];
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["LibraryNotFound"];
-            409: components["responses"]["LibraryConflict"];
+            409: components["responses"]["LibraryCommandConflict"];
             500: components["responses"]["Internal"];
             503: components["responses"]["LibraryUnavailable"];
         };
@@ -4449,24 +4542,24 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["SnapshotCopyRequest"];
+                "application/json": components["schemas"]["SnapshotCopyCommand"];
             };
         };
         responses: {
-            /** @description What the copy wrote and what its validation found. */
+            /** @description What the copy wrote and what its validation found, as a committed outcome. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["SnapshotCopyReport"];
+                    "application/json": components["schemas"]["SnapshotCopyOutcome"];
                 };
             };
             400: components["responses"]["InvalidRequest"];
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["LibraryNotFound"];
-            409: components["responses"]["LibraryConflict"];
+            409: components["responses"]["LibraryCommandConflict"];
             500: components["responses"]["Internal"];
             503: components["responses"]["LibraryUnavailable"];
         };
@@ -4480,24 +4573,24 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["LibraryRequest"];
+                "application/json": components["schemas"]["RebuildLibraryCommand"];
             };
         };
         responses: {
-            /** @description The rebuild's job, pending. */
+            /** @description The rebuild's job, as a pending outcome. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["RebuildJobAnswer"];
+                    "application/json": components["schemas"]["RebuildJobOutcome"];
                 };
             };
             400: components["responses"]["InvalidRequest"];
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["LibraryNotFound"];
-            409: components["responses"]["LibraryConflict"];
+            409: components["responses"]["LibraryCommandConflict"];
             500: components["responses"]["Internal"];
             503: components["responses"]["LibraryUnavailable"];
         };
@@ -5365,23 +5458,24 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["RenameLibraryRequest"];
+                "application/json": components["schemas"]["RenameLibraryCommand"];
             };
         };
         responses: {
-            /** @description The library's facts after the rename. */
+            /** @description The library's facts after the rename, as a committed outcome. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["LibraryFacts"];
+                    "application/json": components["schemas"]["LibraryFactsOutcome"];
                 };
             };
             400: components["responses"]["InvalidRequest"];
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["LibraryNotFound"];
+            409: components["responses"]["LibraryCommandConflict"];
             500: components["responses"]["Internal"];
             503: components["responses"]["LibraryUnavailable"];
         };

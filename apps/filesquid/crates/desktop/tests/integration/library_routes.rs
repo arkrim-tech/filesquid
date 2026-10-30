@@ -43,7 +43,7 @@ use filesquid_native::{
 use journal::block_on;
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -78,6 +78,9 @@ fn envelope(op: &str, revision: &str, scope: &str) -> CommandEnvelope {
     )
 }
 
+/// Operation IDs handed out by [`Desktop::command`].
+static OPERATIONS: AtomicU64 = AtomicU64::new(0);
+
 /// The name of a [`donor_library`].
 const DONOR_NAME: &str = "Donor archive";
 
@@ -90,7 +93,7 @@ fn donor_library(dir: &Path) -> (String, PathBuf) {
     std::fs::create_dir_all(&folder).expect("folder");
     let location = donor.register(&folder);
     let body = json!({ "location_id": location, "name": DONOR_NAME });
-    let (status, body) = donor.post("/api/v1/libraries", body);
+    let (status, body) = donor.command("/api/v1/libraries", body);
     assert_eq!(status, 200, "{body}");
     let library = body["library_id"].as_str().expect("library id").to_string();
     donor.create_collection(&library, "Holidays");
@@ -258,6 +261,43 @@ impl Desktop {
         self.send("POST", path, Some(body), true)
     }
 
+    /// POST the library command `input` to `path` as the owner, under a fresh operation ID
+    /// with the scope and expected revision the route takes (API-F2.19): `location:<id>`
+    /// and `0` for create and open, `library:<id>` and `1` for copy and rebuild. Answers the
+    /// status and, for a 200, the outcome's `result`, else the whole body.
+    fn command(&self, path: &str, input: Value) -> (u16, Value) {
+        let binds = path == "/api/v1/libraries" || path.ends_with("/openings");
+        let (scope, revision) = match binds {
+            true => (
+                format!("location:{}", input["location_id"].as_str().unwrap_or("")),
+                "0",
+            ),
+            false => (
+                format!("library:{}", input["library_id"].as_str().unwrap_or("")),
+                "1",
+            ),
+        };
+        let operation = format!(
+            "op-{}-{}",
+            std::process::id(),
+            OPERATIONS.fetch_add(1, Ordering::SeqCst)
+        );
+        let body = json!({
+            "envelope": {
+                "schema_version": 1,
+                "operation_id": operation,
+                "expected_revision": revision,
+                "scope": scope,
+            },
+            "input": input,
+        });
+        let (status, answer) = self.post(path, body);
+        match status {
+            200 => (status, answer["result"].clone()),
+            _ => (status, answer),
+        }
+    }
+
     /// GET `path` as the owner.
     fn get(&self, path: &str) -> (u16, Value) {
         self.send("GET", path, None, true)
@@ -302,7 +342,7 @@ fn create_in_a_chosen_folder_answers_an_opaque_library_and_serves_its_files() {
     let folder = dir.join("My library");
     std::fs::create_dir_all(&folder).expect("folder");
     let location = desktop.register(&folder);
-    let (status, body) = desktop.post("/api/v1/libraries", json!({ "location_id": location }));
+    let (status, body) = desktop.command("/api/v1/libraries", json!({ "location_id": location }));
     assert_eq!(status, 200, "{body}");
     assert_eq!(body["spec_version"], "1.1");
     let library = LibraryId::new(body["library_id"].as_str().expect("id")).expect("library");
@@ -335,7 +375,7 @@ fn an_opened_folder_feeds_the_history_and_copies_and_rebuilds_without_paths() {
     );
     let location = desktop.register(&root);
     let body = json!({ "location_id": location, "library_id": library });
-    let (status, answer) = desktop.post("/api/v1/libraries/openings", body);
+    let (status, answer) = desktop.command("/api/v1/libraries/openings", body);
     assert_eq!(status, 200, "{answer}");
     assert_eq!(answer["library_id"], library.as_str());
     let (status, body) = desktop.get("/api/v1/history");
@@ -371,11 +411,11 @@ fn an_opened_folder_feeds_the_history_and_copies_and_rebuilds_without_paths() {
     std::fs::create_dir_all(&copy).expect("copy folder");
     let destination = desktop.register(&copy);
     let request = json!({ "library_id": library, "destination_location_id": destination });
-    let (status, report) = desktop.post("/api/v1/libraries/snapshot-copies", request);
+    let (status, report) = desktop.command("/api/v1/libraries/snapshot-copies", request);
     assert_eq!(status, 200, "{report}");
     assert_eq!(report["invalid_objects"], json!([]));
     assert!(copy.join("0=ocfl_1.1").is_file());
-    let (status, rebuilt) = desktop.post(
+    let (status, rebuilt) = desktop.command(
         "/api/v1/libraries/rebuilds",
         json!({ "library_id": library }),
     );
@@ -409,7 +449,7 @@ fn the_owners_consented_repair_is_kept_in_the_persistent_ledger() {
     let desktop = Desktop::launch(dir.join("data"));
     let location = desktop.register(&root);
     let body = json!({ "location_id": location, "library_id": library });
-    assert_eq!(desktop.post("/api/v1/libraries/openings", body).0, 200);
+    assert_eq!(desktop.command("/api/v1/libraries/openings", body).0, 200);
     make_w010(&root, "v2");
     let object = format!("urn:uuid:{library}");
     let uri = format!("/api/v1/libraries/repair-candidates?library_id={library}");
@@ -453,7 +493,7 @@ fn the_navigation_lists_the_installations_repository_and_its_libraries() {
     let folder = dir.join("library");
     std::fs::create_dir_all(&folder).expect("folder");
     let location = desktop.register(&folder);
-    let (status, body) = desktop.post("/api/v1/libraries", json!({ "location_id": location }));
+    let (status, body) = desktop.command("/api/v1/libraries", json!({ "location_id": location }));
     assert_eq!(status, 200, "{body}");
     let library = body["library_id"].as_str().expect("library id").to_string();
     let (status, page) = desktop.get("/api/v1/navigation");
@@ -496,7 +536,7 @@ fn the_backfill_route_runs_over_the_folders_the_owner_opened() {
     assert_eq!(status, 503, "no launcher installed yet");
     let location = desktop.register(&root);
     let body = json!({ "location_id": location, "library_id": library });
-    assert_eq!(desktop.post("/api/v1/libraries/openings", body).0, 200);
+    assert_eq!(desktop.command("/api/v1/libraries/openings", body).0, 200);
     let task = BackfillTask {
         jobs: open_jobs(&desktop.dir, &desktop.host).expect("jobs"),
         backfill: history_backfill(&desktop.host, &installation()),
@@ -597,7 +637,8 @@ fn the_owner_picks_a_folder_in_the_hosts_dialog_and_the_app_sees_only_its_id() {
         location.as_str(),
         "the same folder keeps its ID"
     );
-    let (status, created) = desktop.post("/api/v1/libraries", json!({ "location_id": location }));
+    let (status, created) =
+        desktop.command("/api/v1/libraries", json!({ "location_id": location }));
     assert_eq!(status, 200, "{created}");
     assert!(
         folder.join("0=ocfl_1.1").is_file(),
@@ -646,7 +687,7 @@ fn a_named_library_answers_its_facts_and_is_listed_as_recent_without_its_folder(
     std::fs::create_dir_all(&folder).expect("folder");
     let location = desktop.register(&folder);
     let body = json!({ "location_id": location, "name": "Family archive" });
-    let (status, created) = desktop.post("/api/v1/libraries", body);
+    let (status, created) = desktop.command("/api/v1/libraries", body);
     assert_eq!(status, 200, "{created}");
     let library = created["library_id"].as_str().expect("id").to_string();
     assert_eq!(desktop.entity_name(&library), "Family archive");
@@ -669,8 +710,12 @@ fn a_named_library_answers_its_facts_and_is_listed_as_recent_without_its_folder(
         "no folder path: {facts}"
     );
     let rename = json!({ "library_id": library, "name": "Family archive 1990s" });
-    let (status, renamed) = desktop.post("/api/v1/libraries/renames", rename);
+    let (status, renamed) = desktop.command("/api/v1/libraries/renames", rename);
     assert_eq!(status, 200, "{renamed}");
+    assert_eq!(
+        renamed["revision"], "2",
+        "a changed name advances the revision"
+    );
     assert_eq!(
         desktop.entity_name(&library),
         "Family archive 1990s",
@@ -718,7 +763,7 @@ fn the_data_directory_keeps_only_each_library_s_index_never_its_files() {
     let folder = dir.join("My library");
     std::fs::create_dir_all(&folder).expect("folder");
     let location = desktop.register(&folder);
-    let (status, body) = desktop.post("/api/v1/libraries", json!({ "location_id": location }));
+    let (status, body) = desktop.command("/api/v1/libraries", json!({ "location_id": location }));
     assert_eq!(status, 200, "{body}");
     let library = body["library_id"].as_str().expect("id").to_string();
     desktop.create_collection(&library, "Holidays");
@@ -754,7 +799,7 @@ fn a_library_folder_copied_elsewhere_reopens_with_its_collections() {
     let copy = dir.join("moved library");
     copy_dir(&folder, &copy);
     let location = desktop.register(&copy);
-    let (status, answer) = desktop.post(
+    let (status, answer) = desktop.command(
         "/api/v1/libraries/openings",
         json!({ "location_id": location }),
     );
@@ -786,7 +831,7 @@ fn a_library_folder_copied_elsewhere_reopens_with_its_collections() {
         "rebuilt from the copied folder: {page}"
     );
     let original = desktop.register(&folder);
-    let (status, refused) = desktop.post(
+    let (status, refused) = desktop.command(
         "/api/v1/libraries/openings",
         json!({ "location_id": original }),
     );

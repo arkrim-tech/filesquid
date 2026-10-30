@@ -251,7 +251,7 @@ pub fn check_name(name: &str) -> bool {
 }
 
 /// The answer of the facts and rename routes: `{library_id, name, free_bytes,
-/// free_bytes_reason}`.
+/// free_bytes_reason, revision}`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LibraryFacts {
     /// The library.
@@ -262,17 +262,22 @@ pub struct LibraryFacts {
     pub free_bytes: Option<u64>,
     /// Why `free_bytes` is `null`; `null` when it is known.
     pub free_bytes_reason: Option<FreeBytesReason>,
+    /// The revision of the library while it is open on this host, the expected revision of
+    /// its next copy, rebuild or rename command (Task API-F2.19); `null` for a remembered
+    /// library that is not open now.
+    pub revision: Option<String>,
 }
 
 impl LibraryFacts {
-    /// The facts of `entry` with `space`. Pure.
-    pub fn of(entry: &RegistryEntry, space: &FreeSpace) -> Self {
+    /// The facts of `entry` with `space`, at `revision` when the library is open. Pure.
+    pub fn of(entry: &RegistryEntry, space: &FreeSpace, revision: Option<String>) -> Self {
         let (free_bytes, free_bytes_reason) = space.fields();
         Self {
             library_id: entry.library_id.clone(),
             name: entry.name.clone(),
             free_bytes,
             free_bytes_reason,
+            revision,
         }
     }
 }

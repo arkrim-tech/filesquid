@@ -14,7 +14,7 @@ import {
   type FsStates,
 } from "../../src/index";
 import labels from "../../src/theme/labels.en.json";
-import { FakeLibrarySource, LIBRARY, REBUILD, apiError } from "../support/library-fakes";
+import { FakeLibrarySource, LIBRARY, REBUILD_JOB, apiError } from "../support/library-fakes";
 import { hostFakes } from "../support/host-fakes";
 
 beforeEach(() => defineElements());
@@ -130,12 +130,12 @@ describe("<fs-library-start>", () => {
     expect(navigated).toEqual(["#/library/lib-1"]);
   });
 
-  it("recover: opens the chosen copy, rebuilds its catalog from files and keeps the report for the library page", async () => {
-    const { page, source, registry, navigated } = await mount();
+  it("recover: opens the chosen copy, starts its rebuild job expecting the opened revision and goes to the library page", async () => {
+    const { page, source, navigated } = await mount();
     button(page, "recover").click();
     await settle();
     expect(source.calls).toEqual(["choose:open", "open:loc-1", "rebuild:lib-1"]);
-    expect(registry.lastRebuild("lib-1")).toEqual(REBUILD);
+    expect(source.revisions).toEqual(["1"]);
     expect(navigated).toEqual(["#/library/lib-1"]);
   });
 
@@ -230,12 +230,11 @@ describe("<fs-library-start>", () => {
     await settle();
     expect(navigated).toEqual([]);
     expect(registry.get("lib-1")).toEqual(LIBRARY);
-    source.rebuilt = REBUILD;
+    source.rebuilt = REBUILD_JOB;
     const states = rootOf(page).querySelector("fs-states") as FsStates;
     states.dispatchEvent(new CustomEvent("fs-retry", { bubbles: true, composed: true }));
     await settle();
     expect(source.calls).toEqual(["choose:open", "open:loc-1", "rebuild:lib-1", "rebuild:lib-1"]);
-    expect(registry.lastRebuild("lib-1")).toEqual(REBUILD);
     expect(navigated).toEqual(["#/library/lib-1"]);
   });
 

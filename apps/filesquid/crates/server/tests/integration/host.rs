@@ -404,7 +404,16 @@ async fn the_server_keeps_no_library_registry_so_the_library_facts_are_unavailab
             .expect("answer");
         assert_eq!(response.status().as_u16(), 503, "{path}");
     }
-    let body = serde_json::json!({ "library_id": library, "name": "Archive" });
+    // The rename is a command (API-F2.19): its envelope is read before the registry is asked.
+    let body = serde_json::json!({
+        "envelope": {
+            "schema_version": 1,
+            "operation_id": "op-rename-1",
+            "expected_revision": "1",
+            "scope": format!("library:{library}"),
+        },
+        "input": { "library_id": library, "name": "Archive" },
+    });
     let (status, answer) = post(state.clone(), &config, "/api/v1/libraries/renames", body).await;
     assert_eq!(status, 503, "{answer}");
     assert_eq!(answer["code"], "unavailable");

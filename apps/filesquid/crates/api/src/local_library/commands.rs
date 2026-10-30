@@ -1,10 +1,22 @@
 //! [`LibraryCommands`]: the library routes' one entry point into the CL-1.1
 //! [`LocalLibraryService`] (API-S-025). It resolves the opaque location and library IDs a
 //! request names to the storage roots the host injected, keeps which location each open
-//! library lives in, and calls the service, which keeps the one meaning of every operation
-//! and journals its outcomes and refusals. A refusal made here, before the service runs (an
-//! unknown location or library, a location in use, the open-library bound), is journaled
-//! here once, under the operation's own name.
+//! library lives in and at which revision, compares the revision a command expects under
+//! the same lock that binds (API-S-019, Task API-F2.19), and calls the service, which keeps
+//! the one meaning of every operation and journals its outcomes and refusals. A refusal made
+//! here, before the service runs (an unknown location or library, a location in use, the
+//! open-library bound, a stale expected revision), is journaled here once, under the
+//! operation's own name.
+//!
+//! **Revisions.** A library this host binds (create, or a fresh open) is at
+//! [`INITIAL_REVISION`]; a later command that changes the bound library advances it. Create
+//! expects [`NEW_REVISION`] (the library must not exist); open expects [`NEW_REVISION`] for a
+//! library not open here, or its current revision when it is already open, and then answers
+//! it again; an open that gives an already-open library a new name renames it, so it must
+//! expect that library's current revision; copy, rebuild and rename expect the current
+//! revision. Anything else is `conflict` and changes nothing. Create, open, copy and rename
+//! run under one binding lock, so the revision one of them checked cannot change before it
+//! commits (a rebuild's check is one step under the open-library lock).
 
 use super::error::LocalLibraryError;
 use super::facts::{
@@ -12,8 +24,8 @@ use super::facts::{
     RegistryEntry, RenameLibraryRequest, MAX_RECENT_LIBRARIES,
 };
 use super::locations::{
-    LibraryLocations, LibraryRequest, LibraryRoot, LibraryView, LocationRequest,
-    SnapshotCopyRequest, MAX_LOCATION_ID_BYTES,
+    LibraryLocations, LibraryRequest, LibraryRoot, LibraryView, LocationRequest, Opened,
+    SnapshotCopyRequest, INITIAL_REVISION, MAX_LOCATION_ID_BYTES,
 };
 use super::rebuild::{RebuildEnd, RebuildProgress};
 use super::repair::{RepairAnswer, RepairCandidates, RepairRequest, REPAIR_OPERATION};
@@ -24,6 +36,7 @@ use super::service::{
 use super::snapshot::CopyReport;
 use crate::auth::Principal;
 use crate::canonical::{snapshot_library_id, CanonicalError};
+use crate::envelope::NEW_REVISION;
 use crate::library::mint_uuid_v4;
 use filesquid_core::LibraryId;
 use std::collections::HashMap;
@@ -37,6 +50,22 @@ const MAX_LIBRARY_ID_BYTES: usize = 128;
 
 /// The storage root a host's locations resolve to.
 type Root<L> = LibraryRoot<<L as LibraryLocations>::Backend, <L as LibraryLocations>::Reservations>;
+
+/// Where an open library lives on this host, and its revision.
+#[derive(Clone, Debug)]
+struct Bound {
+    /// The location ID the library is bound to.
+    location: String,
+    /// The revision of the bound library (API-S-019).
+    revision: String,
+}
+
+/// What a planned binding found: a fresh library and root to bind, or a library already
+/// open at that location, answered again.
+enum Planned<L: LibraryLocations> {
+    Fresh(LibraryId, Root<L>),
+    AlreadyOpen(LibraryId, Root<L>),
+}
 
 /// Whether an operation makes a new storage root or opens an existing one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -59,14 +88,15 @@ impl Binding {
 pub struct LibraryCommands<L: LibraryLocations> {
     service: LocalLibraryService,
     locations: Arc<L>,
-    /// The location of each open library, by library ID.
-    open: Mutex<HashMap<LibraryId, String>>,
+    /// The location and revision of each open library, by library ID.
+    open: Mutex<HashMap<LibraryId, Bound>>,
     /// What the host remembers of the libraries it bound (API-S-038); without one, the
     /// facts, recent and rename routes are unavailable.
     registry: Option<Arc<dyn LibraryRegistry>>,
-    /// Serialises create, open and copy, so two of them cannot bind one location or library
-    /// twice between the check and the binding, and no library is opened in a copy's
-    /// destination while the copy runs.
+    /// Serialises create, open, copy and rename, so two of them cannot bind one location or
+    /// library twice between the check and the binding, no library is opened in a copy's
+    /// destination while the copy runs, and no rename lands between an open's revision check
+    /// and its revision advance.
     binding: tokio::sync::Mutex<()>,
 }
 
@@ -95,26 +125,31 @@ impl<L: LibraryLocations> LibraryCommands<L> {
         self
     }
 
-    /// Rename a library this host opened, for `actor`, and answer its facts. A rename that
-    /// changes nothing answers the facts and is not journaled.
+    /// Rename a library open on this host, for `actor`, when the caller expects its current
+    /// revision, and answer its facts: a changed name advances the revision; a rename that
+    /// changes nothing answers the facts, advances nothing and is not journaled. Answers the
+    /// facts and whether the name changed. The check and the rename run under the binding
+    /// lock, so a rename never lands between an open's revision check and its advance.
     ///
     /// # Errors
     ///
-    /// `invalid_name`, `library_not_found` (a library this host never opened), or
+    /// `invalid_name`, `library_not_open` (a library not open here now), `conflict` (a stale
+    /// expected revision), `library_not_found` (a library this host never opened), or
     /// `unavailable` without a registry; each journaled once.
     pub async fn rename(
         &self,
         actor: &str,
         request: RenameLibraryRequest,
-    ) -> Result<LibraryFacts, LocalLibraryError> {
+        expected: &str,
+    ) -> Result<(LibraryFacts, bool), LocalLibraryError> {
         let library = &request.library_id;
+        let serialised = self.binding.lock().await;
         let checked = self.registry().and_then(|registry| {
             name_or_refusal(Some(&request.name))?;
-            let renamed = registry.rename(library, &request.name);
-            renamed
-                .map(|changed| (registry, changed))
-                .ok_or_else(library_not_found)
+            let changed = self.rename_at(registry.as_ref(), library, &request.name, expected)?;
+            Ok((registry, changed))
         });
+        drop(serialised);
         let (registry, changed) = self.refused(actor, RENAME_OPERATION, Some(library), checked)?;
         if changed {
             self.service
@@ -122,7 +157,35 @@ impl<L: LibraryLocations> LibraryCommands<L> {
         }
         let entry = registry.entry(library).ok_or(LocalLibraryError::Internal)?;
         let space = read_free_space(registry, &entry.location_id).await;
-        Ok(LibraryFacts::of(&entry, &space))
+        let facts = LibraryFacts::of(&entry, &space, self.revision_of(library));
+        Ok((facts, changed))
+    }
+
+    /// Rename the open library `library` to `name` in `registry` under the open-library
+    /// lock, so the revision check, the rename and the revision advance are one step; answer
+    /// whether the name changed. A library this host never opened is `library_not_found`,
+    /// one it remembers but has not open now `library_not_open`. Registry I/O under the
+    /// lock, without an await.
+    fn rename_at(
+        &self,
+        registry: &dyn LibraryRegistry,
+        library: &LibraryId,
+        name: &str,
+        expected: &str,
+    ) -> Result<bool, LocalLibraryError> {
+        registry.entry(library).ok_or_else(library_not_found)?;
+        let mut open = self.lock();
+        let bound = open.get_mut(library).ok_or_else(library_not_open)?;
+        if bound.revision != expected {
+            return Err(stale_revision());
+        }
+        let changed = registry
+            .rename(library, name)
+            .ok_or_else(library_not_found)?;
+        if changed {
+            bound.revision = next_revision(&bound.revision);
+        }
+        Ok(changed)
     }
 
     /// The facts of a library this host opened, for `actor`: its name and the free space of
@@ -142,7 +205,7 @@ impl<L: LibraryLocations> LibraryCommands<L> {
         });
         let (registry, entry) = self.refused(actor, FACTS_OPERATION, Some(library), checked)?;
         let space = read_free_space(registry, &entry.location_id).await;
-        Ok(LibraryFacts::of(&entry, &space))
+        Ok(LibraryFacts::of(&entry, &space, self.revision_of(library)))
     }
 
     /// The libraries this host opened that `readable` keeps, then at most
@@ -181,22 +244,25 @@ impl<L: LibraryLocations> LibraryCommands<L> {
     }
 
     /// Remember the library just bound from `request` in `registry`, journaling a rename
-    /// when the request's name replaces a different one this host knew.
+    /// when the request's name replaces a different one this host knew; answers whether it
+    /// did.
     fn remember(
         &self,
         actor: &str,
         registry: &dyn LibraryRegistry,
         library_id: &LibraryId,
         request: &LocationRequest,
-    ) {
+    ) -> bool {
         let known = registry.entry(library_id).map(|entry| entry.name);
         let now = self.service.now_ms();
         let name = request.name.as_deref();
         let kept = registry.remember(library_id, &request.location_id, name, now);
-        if known.is_some_and(|known| known != kept) {
+        let renamed = known.is_some_and(|known| known != kept);
+        if renamed {
             self.service
                 .journal_success(actor, RENAME_OPERATION, library_id);
         }
+        renamed
     }
 
     /// The installed registry, or `unavailable`.
@@ -207,27 +273,43 @@ impl<L: LibraryLocations> LibraryCommands<L> {
     /// The location ID the open library `library_id` lives in, so a host can serve that
     /// library's files from the same storage root.
     pub fn location_of(&self, library_id: &LibraryId) -> Option<String> {
-        self.lock().get(library_id).cloned()
+        self.lock()
+            .get(library_id)
+            .map(|bound| bound.location.clone())
+    }
+
+    /// The revision of the open library `library_id` on this host, or `None` when it is not
+    /// open here.
+    pub fn revision_of(&self, library_id: &LibraryId) -> Option<String> {
+        self.lock()
+            .get(library_id)
+            .map(|bound| bound.revision.clone())
     }
 
     /// Create a library's storage root in the empty location the request names, for
-    /// `actor`, and keep it open.
+    /// `actor`, and keep it open at [`INITIAL_REVISION`]. The caller expects
+    /// [`NEW_REVISION`]: the library does not exist yet.
     ///
     /// # Errors
     ///
-    /// `invalid_location`, `invalid_library`, `location_not_found`, `location_in_use` (the
-    /// location is, holds or lies inside an open library's folder), `library_already_open`,
-    /// `too_many_libraries`, or the create errors of [`LocalLibraryService::create_root`].
+    /// `conflict` for any other expected revision, `invalid_location`, `invalid_library`,
+    /// `location_not_found`, `location_in_use` (the location is, holds or lies inside an
+    /// open library's folder), `library_already_open`, `too_many_libraries`, or the create
+    /// errors of [`LocalLibraryService::create_root`].
     pub async fn create(
         &self,
         actor: &str,
         request: LocationRequest,
+        expected: &str,
     ) -> Result<LibraryView, LocalLibraryError> {
-        self.bind(actor, request, Binding::Create).await
+        let bound = self.bind(actor, request, expected, Binding::Create).await?;
+        Ok(bound.view)
     }
 
     /// Open the storage root in the location the request names, for `actor`, and keep it
-    /// open. Opening a location that is already open answers its library again.
+    /// open at [`INITIAL_REVISION`]; the caller expects [`NEW_REVISION`]. Opening a location
+    /// that is already open answers its library again, with its current revision, which the
+    /// caller may expect instead; nothing changes.
     ///
     /// # Errors
     ///
@@ -237,25 +319,31 @@ impl<L: LibraryLocations> LibraryCommands<L> {
         &self,
         actor: &str,
         request: LocationRequest,
-    ) -> Result<LibraryView, LocalLibraryError> {
-        self.bind(actor, request, Binding::Open).await
+        expected: &str,
+    ) -> Result<Opened, LocalLibraryError> {
+        self.bind(actor, request, expected, Binding::Open).await
     }
 
-    /// Copy the completed snapshot of an open library into an empty location, for `actor`.
+    /// Copy the completed snapshot of an open library into an empty location, for `actor`,
+    /// when the caller expects the library's current revision.
     ///
     /// # Errors
     ///
-    /// `library_not_open`, `location_not_found`, `destination_overlaps_library`, or the
-    /// copy errors of [`LocalLibraryService::copy_snapshot`].
+    /// `library_not_open`, `conflict` (a stale expected revision), `location_not_found`,
+    /// `destination_overlaps_library`, or the copy errors of
+    /// [`LocalLibraryService::copy_snapshot`].
     pub async fn copy_snapshot(
         &self,
         actor: &str,
         request: SnapshotCopyRequest,
+        expected: &str,
     ) -> Result<CopyReport, LocalLibraryError> {
         let _serialised = self.binding.lock().await;
         let library = &request.library_id;
         let dest_id = &request.destination_location_id;
-        let checked = self.copy_roots(library, dest_id);
+        let checked = self
+            .expect_current(library, expected)
+            .and_then(|()| self.copy_roots(library, dest_id));
         let (source, dest) = self.refused(actor, COPY_OPERATION, Some(library), checked)?;
         self.service
             .copy_snapshot(
@@ -267,21 +355,24 @@ impl<L: LibraryLocations> LibraryCommands<L> {
             .await
     }
 
-    /// Refuse a rebuild of a library that is not open, for `actor`, before its job is
-    /// submitted; the refusal is journaled once as `library.rebuild`.
+    /// Refuse a rebuild of a library that is not open, or one the caller read at another
+    /// revision, for `actor`, before its job is submitted; the refusal is journaled once as
+    /// `library.rebuild`.
     ///
     /// # Errors
     ///
-    /// `library_not_open`.
+    /// `library_not_open`, `conflict`.
     pub fn rebuild_ready(
         &self,
         actor: &str,
         request: &LibraryRequest,
+        expected: &str,
     ) -> Result<(), LocalLibraryError> {
         let library = &request.library_id;
-        let root = self.root(library);
-        self.refused(actor, REBUILD_OPERATION, Some(library), root)
-            .map(drop)
+        let checked = self
+            .root(library)
+            .and_then(|_| self.expect_current(library, expected));
+        self.refused(actor, REBUILD_OPERATION, Some(library), checked)
     }
 
     /// Rebuild an open library from its files after the cursor `after`, for `actor`, telling
@@ -346,13 +437,16 @@ impl<L: LibraryLocations> LibraryCommands<L> {
             .await
     }
 
-    /// Create or open, then keep the library bound to its location.
+    /// Create or open, then keep the library bound to its location at
+    /// [`INITIAL_REVISION`]; a library already open at that location is answered again at
+    /// its current revision and stays as it is.
     async fn bind(
         &self,
         actor: &str,
         request: LocationRequest,
+        expected: &str,
         binding: Binding,
-    ) -> Result<LibraryView, LocalLibraryError> {
+    ) -> Result<Opened, LocalLibraryError> {
         let _serialised = self.binding.lock().await;
         let operation = binding.operation();
         let target = request.library_id.clone();
@@ -363,22 +457,66 @@ impl<L: LibraryLocations> LibraryCommands<L> {
             Binding::Create => Ok(request),
         };
         let request = self.refused(actor, operation, target.as_ref(), request)?;
-        let planned = self.plan_binding(&request, binding);
-        let (library_id, root) = self.refused(actor, operation, target.as_ref(), planned)?;
+        let planned = self.plan_binding(&request, expected, binding);
+        let planned = self.refused(actor, operation, target.as_ref(), planned)?;
+        let (library_id, root, bound) = match planned {
+            Planned::Fresh(id, root) => (id, root, true),
+            Planned::AlreadyOpen(id, root) => (id, root, false),
+        };
         let backend = root.backend.as_ref();
         let summary = match binding {
             Binding::Create => self.service.create_root(actor, &library_id, backend).await,
             Binding::Open => self.service.open_root(actor, &library_id, backend).await,
         }?;
-        if let Some(registry) = &self.registry {
-            self.remember(actor, registry.as_ref(), &library_id, &request);
-        }
-        self.lock().insert(library_id.clone(), request.location_id);
-        Ok(LibraryView {
+        let renamed = match &self.registry {
+            Some(registry) => self.remember(actor, registry.as_ref(), &library_id, &request),
+            None => false,
+        };
+        let revision = self.keep_bound(&library_id, request.location_id, bound, renamed);
+        let view = LibraryView {
             library_id,
             spec_version: summary.spec_version,
             objects: summary.objects,
-        })
+            revision,
+        };
+        let changed = bound || renamed;
+        Ok(Opened { view, changed })
+    }
+
+    /// Bind `library_id` to `location` at [`INITIAL_REVISION`] when `fresh`, else keep its
+    /// binding, advancing its revision when the open `renamed` it; answer its revision.
+    fn keep_bound(
+        &self,
+        library_id: &LibraryId,
+        location: String,
+        fresh: bool,
+        renamed: bool,
+    ) -> String {
+        let mut open = self.lock();
+        if fresh {
+            let bound = Bound {
+                location,
+                revision: INITIAL_REVISION.to_string(),
+            };
+            open.insert(library_id.clone(), bound);
+        }
+        let Some(bound) = open.get_mut(library_id) else {
+            return INITIAL_REVISION.to_string();
+        };
+        if renamed && !fresh {
+            bound.revision = next_revision(&bound.revision);
+        }
+        bound.revision.clone()
+    }
+
+    /// Refuse a command whose `expected` revision is not the current revision of the open
+    /// library `library`. Pure apart from the lock.
+    fn expect_current(&self, library: &LibraryId, expected: &str) -> Result<(), LocalLibraryError> {
+        let current = self.revision_of(library).ok_or_else(library_not_open)?;
+        if current != expected {
+            return Err(stale_revision());
+        }
+        Ok(())
     }
 
     /// `request` naming the library the folder's collection snapshot belongs to, so opening a
@@ -421,13 +559,15 @@ impl<L: LibraryLocations> LibraryCommands<L> {
 
     /// The library ID and root a create or open would bind, checking the IDs, the location,
     /// what is already open (a second location ID for an open library's folder, or one
-    /// inside or around it, is refused, so one OCFL root is never bound twice) and the
-    /// bound. Nothing is written.
+    /// inside or around it, is refused, so one OCFL root is never bound twice), the
+    /// expected revision and the bound: an open that would give an already-open library a new
+    /// name must expect its current revision, never [`NEW_REVISION`]. Nothing is written.
     fn plan_binding(
         &self,
         request: &LocationRequest,
+        expected: &str,
         binding: Binding,
-    ) -> Result<(LibraryId, Root<L>), LocalLibraryError> {
+    ) -> Result<Planned<L>, LocalLibraryError> {
         check_location(&request.location_id)?;
         if let Some(id) = &request.library_id {
             check_library(id)?;
@@ -436,18 +576,26 @@ impl<L: LibraryLocations> LibraryCommands<L> {
         let open = self.lock();
         let bound = open
             .iter()
-            .find(|(_, location)| **location == request.location_id)
-            .map(|(library, _)| library.clone());
-        if let Some(bound) = bound {
-            let same = request.library_id.as_ref().is_none_or(|id| *id == bound);
+            .find(|(_, bound)| bound.location == request.location_id)
+            .map(|(library, bound)| (library.clone(), bound.revision.clone()));
+        if let Some((library, revision)) = bound {
+            let same = request.library_id.as_ref().is_none_or(|id| *id == library);
             if binding == Binding::Open && same {
-                return Ok((bound, root));
+                let accepted = if self.renames(&library, request.name.as_deref()) {
+                    vec![revision.as_str()]
+                } else {
+                    vec![NEW_REVISION, revision.as_str()]
+                };
+                check_expected(expected, &accepted)?;
+                return Ok(Planned::AlreadyOpen(library, root));
             }
             return Err(location_in_use());
         }
-        let aliased = open
-            .values()
-            .any(|location| self.locations.overlaps(location, &request.location_id));
+        check_expected(expected, &[NEW_REVISION])?;
+        let aliased = open.values().any(|bound| {
+            self.locations
+                .overlaps(&bound.location, &request.location_id)
+        });
         if aliased {
             return Err(location_in_use());
         }
@@ -459,7 +607,18 @@ impl<L: LibraryLocations> LibraryCommands<L> {
         if open.len() >= MAX_OPEN_LIBRARIES {
             return Err(too_many_libraries());
         }
-        Ok((library_id, root))
+        Ok(Planned::Fresh(library_id, root))
+    }
+
+    /// Whether binding `library` again with `name` would rename it: a name is given and the
+    /// registry remembers the library under another one. Registry read, without an await.
+    fn renames(&self, library: &LibraryId, name: Option<&str>) -> bool {
+        let known = self
+            .registry
+            .as_ref()
+            .and_then(|registry| registry.entry(library));
+        name.zip(known)
+            .is_some_and(|(name, known)| known.name != name)
     }
 
     /// The roots of an open library and a copy destination that overlaps no open library,
@@ -474,7 +633,11 @@ impl<L: LibraryLocations> LibraryCommands<L> {
         let source_id = self.location_of(library).ok_or_else(library_not_open)?;
         let source = self.location(&source_id)?;
         let dest = self.location(dest_id)?;
-        let open: Vec<String> = self.lock().values().cloned().collect();
+        let open: Vec<String> = self
+            .lock()
+            .values()
+            .map(|bound| bound.location.clone())
+            .collect();
         if open
             .iter()
             .any(|location| self.locations.overlaps(location, dest_id))
@@ -520,11 +683,38 @@ impl<L: LibraryLocations> LibraryCommands<L> {
 
     /// The open-library map. A poisoned lock still holds a consistent map: every change is
     /// one insert.
-    fn lock(&self) -> MutexGuard<'_, HashMap<LibraryId, String>> {
+    fn lock(&self) -> MutexGuard<'_, HashMap<LibraryId, Bound>> {
         self.open
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
+}
+
+/// The revision after `current`: the next integer, or [`INITIAL_REVISION`] for a revision
+/// that is not one (never answered by this host). Pure.
+fn next_revision(current: &str) -> String {
+    current
+        .parse::<u64>()
+        .ok()
+        .and_then(|n| n.checked_add(1))
+        .map_or_else(|| INITIAL_REVISION.to_string(), |n| n.to_string())
+}
+
+/// Refuse an `expected` revision that is none of `accepted`. Pure.
+fn check_expected(expected: &str, accepted: &[&str]) -> Result<(), LocalLibraryError> {
+    if !accepted.contains(&expected) {
+        return Err(stale_revision());
+    }
+    Ok(())
+}
+
+/// The refusal for a command whose expected revision is not the library's current one
+/// (API-S-019): answered as a `conflict` outcome, nothing changes.
+fn stale_revision() -> LocalLibraryError {
+    LocalLibraryError::refused(
+        "conflict",
+        "The library changed since it was last read. Read it again, then retry.",
+    )
 }
 
 /// Refuse a blank or oversized location ID.

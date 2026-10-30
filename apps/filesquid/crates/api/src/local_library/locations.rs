@@ -67,6 +67,10 @@ pub struct LocationRequest {
     pub name: Option<String>,
 }
 
+/// The revision a library is at when this host binds it (create, or a fresh open); later
+/// library commands that change the bound library advance it (API-S-019, Task API-F2.19).
+pub const INITIAL_REVISION: &str = "1";
+
 /// The answer to create and open: the library and what its storage root holds.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LibraryView {
@@ -76,6 +80,20 @@ pub struct LibraryView {
     pub spec_version: String,
     /// The objects discovered in it.
     pub objects: usize,
+    /// The revision of the bound library on this host: the expected revision of its next
+    /// copy, rebuild or rename command (`1` when just bound).
+    pub revision: String,
+}
+
+/// What an open answered: the library, and whether this call changed anything (bound the
+/// library, or renamed an open one with the name it gave); a library already open at that
+/// location under its own name is answered again and nothing changes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Opened {
+    /// The library and what its storage root holds.
+    pub view: LibraryView,
+    /// True when this call bound the library to its location or renamed it.
+    pub changed: bool,
 }
 
 /// Body of `POST /api/v1/libraries/snapshot-copies`.
