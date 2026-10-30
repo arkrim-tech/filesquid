@@ -15,7 +15,7 @@ mod journal;
 #[allow(dead_code)]
 mod import_rig;
 
-use filesquid_api::imports::{DESTINATION_REQUIRED, IMPORT_PLAN_OPERATION, IMPORT_START_OPERATION};
+use filesquid_api::imports::{DESTINATION_REQUIRED, IMPORT_PLAN_OPERATION};
 use filesquid_api::navigation::{FolderScope, NodeRef};
 use filesquid_core::CollectionId;
 use import_rig::{fresh_dir, holiday_folder, ImportRig, LIBRARY, UNOPENED_LIBRARY};
