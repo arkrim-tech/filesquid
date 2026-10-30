@@ -7,7 +7,7 @@
 #[path = "../support/catalog_fixture.rs"]
 mod catalog_fixture;
 
-use catalog_fixture::{all_entries, catalog_file, folders_dir, Fixture};
+use catalog_fixture::{all_entries, catalog_file, folders_dir, temp_root, Fixture};
 use filesquid_api::canonical::{
     commit_snapshot, operation_message, read_snapshot, snapshot_object_id, LibraryHead,
     OperationRecord, OwnerReadable, SnapshotDelta, SnapshotEntity, SNAPSHOT_ROOT,
@@ -20,7 +20,7 @@ use filesquid_api::library::{
 };
 use filesquid_api::operation::ExpectedRevision;
 use filesquid_core::{CollectionId, File, FileId, LibraryId};
-use filesquid_native::catalog::{RegisterFile, Registration};
+use filesquid_native::catalog::{RegisterFile, Registration, ENTITY_RENAME_OPERATION};
 use filesquid_native::{CATALOG_SCHEMA_VERSION, RECONCILE_OPERATION};
 use filesquid_ocfl::change::{ChangeModel, StagingArea, VersionMeta};
 use filesquid_ocfl::storage::{complete_immediately, FsBackend};
@@ -227,6 +227,46 @@ fn a_library_folder_copied_elsewhere_reopens_with_its_collections_folders_and_fi
     assert_eq!(reconciles.len(), 1, "one journaled reconcile");
     assert_eq!(before.files, snapshot_of_folder(&fx, &moved).files);
     let _ = std::fs::remove_dir_all(&moved);
+}
+
+#[test]
+fn renaming_a_library_retitles_its_entity_in_one_journaled_version_and_a_same_name_rename_publishes_nothing(
+) {
+    let journal = std::sync::Arc::new(filesquid_api::journal::MemoryJournal::new("desktop"));
+    let fx = Fixture::over(temp_root("de17-rename"), journal.clone());
+    let lib = fx.create_library("Family archive");
+    let before = snapshot_of(&fx, &lib);
+    fx.catalog
+        .rename_library(&lib, "Family archive 1990s", "owner")
+        .expect("rename");
+    assert_eq!(
+        fx.catalog.library_name(&lib).expect("name"),
+        "Family archive 1990s"
+    );
+    let after = snapshot_of(&fx, &lib);
+    assert_eq!(after.library.record.name, "Family archive 1990s");
+    assert_eq!(
+        after.version.to_string(),
+        next_version(&before.version.to_string())
+    );
+    fx.catalog
+        .rename_library(&lib, "Family archive 1990s", "owner")
+        .expect("same name");
+    assert_eq!(
+        snapshot_of(&fx, &lib).version,
+        after.version,
+        "a same-name rename publishes no version"
+    );
+    let entries = all_entries(journal.as_ref());
+    let renames: Vec<_> = entries
+        .iter()
+        .filter(|e| e.operation == ENTITY_RENAME_OPERATION)
+        .collect();
+    assert_eq!(renames.len(), 1, "one journaled entity rename");
+    assert_eq!(renames[0].target_ids, [lib.as_str()]);
+    assert_eq!(renames[0].actor, "owner");
+    let text = serde_json::to_string(&entries).expect("json");
+    assert!(!text.contains("Family archive"), "no name in the journal");
 }
 
 /// The snapshot at the head of `folder`.

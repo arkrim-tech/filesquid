@@ -11,16 +11,26 @@
 //! - `GET /api/v1/libraries/repair-candidates` (`library.read`): the W010 candidates.
 //! - `POST /api/v1/libraries/repairs` (`library.repair`): the consented repair; the policy
 //!   grants it to the desktop owner only.
+//! - `POST /api/v1/libraries/renames` (`library.manage`): rename a library (API-S-038).
+//! - `GET /api/v1/libraries/{library}/facts` (`library.read`): a library's name and free
+//!   bytes, for any caller who may read it; an unreadable library is `not_found`.
+//! - `GET /api/v1/libraries/recent` (`library.read`): the libraries this host opened that
+//!   the caller may read, at most 20, newest first.
+//!
+//! Readability is the navigation access the host installed (API-S-021), which must admit the
+//! host's repository and the library, else this release's host access.
 //!
 //! The operations journal their own outcomes and refusals. A handler journals only what it
-//! refuses itself, once: a body or query it cannot read, and a host that has not installed
-//! its library commands yet.
+//! refuses itself, once: a body or query it cannot read, a host that has not installed its
+//! library commands yet, and (on the facts route) a library ID that is malformed or names a
+//! library the caller may not read, journaled as `library.facts` `library_not_found`.
 
 use super::operations::LibraryOperations;
 use super::rebuild_job::{submit_rebuild, RebuildJobAnswer, RebuildOutcome, SubmitRefusal};
 use super::repair::REPAIR_OPERATION;
 use super::service::{
-    CANDIDATES_OPERATION, COPY_OPERATION, CREATE_OPERATION, OPEN_OPERATION, REBUILD_OPERATION,
+    CANDIDATES_OPERATION, COPY_OPERATION, CREATE_OPERATION, FACTS_OPERATION, OPEN_OPERATION,
+    REBUILD_OPERATION, RECENT_OPERATION, RENAME_OPERATION,
 };
 use super::LocalLibraryError;
 use crate::auth::{journal_entry, Action, Principal};
@@ -31,10 +41,11 @@ use crate::journal::{JournalEntry, Level, Outcome};
 use crate::routes::Route;
 use crate::ApiState;
 use axum::extract::rejection::{JsonRejection, QueryRejection};
-use axum::extract::{Query, State};
+use axum::extract::{Path, Query, State};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Extension, Json};
+use filesquid_core::LibraryId;
 use serde::Serialize;
 use std::sync::Arc;
 
@@ -59,6 +70,13 @@ pub(crate) fn routes() -> Vec<Route> {
             Action::ReadLibraries,
         ),
         ("/libraries/repairs", post(repair), Action::RepairLibraries),
+        ("/libraries/renames", post(rename), Action::ManageLibraries),
+        (
+            "/libraries/{library}/facts",
+            get(facts),
+            Action::ReadLibraries,
+        ),
+        ("/libraries/recent", get(recent), Action::ReadLibraries),
     ]
 }
 
@@ -227,6 +245,76 @@ async fn repair(
         Err(err) => return refuse(&state, REPAIR_OPERATION, principal.actor(), err).await,
     };
     answer(operations.repair(principal, request).await)
+}
+
+/// `POST /api/v1/libraries/renames`.
+async fn rename(
+    State(state): State<ApiState>,
+    Extension(principal): Extension<Principal>,
+    request: Result<Json<super::RenameLibraryRequest>, JsonRejection>,
+) -> Response {
+    let actor = principal.actor().to_string();
+    let (operations, request) = match ready(&state, body(request)) {
+        Ok(ready) => ready,
+        Err(err) => return refuse(&state, RENAME_OPERATION, &actor, err).await,
+    };
+    answer(operations.rename(actor, request).await)
+}
+
+/// `GET /api/v1/libraries/{library}/facts`: a library the caller may not read is refused
+/// exactly as an unknown one.
+async fn facts(
+    State(state): State<ApiState>,
+    Extension(principal): Extension<Principal>,
+    Path(library): Path<String>,
+) -> Response {
+    let actor = principal.actor().to_string();
+    let library = LibraryId::new(library).ok();
+    let readable = library
+        .as_ref()
+        .is_some_and(|id| may_read(&state, &principal, id));
+    let checked = ready(&state, library.filter(|_| readable)).map_err(|err| match err {
+        LocalLibraryError::Unavailable => err,
+        _ => LocalLibraryError::not_found("library_not_found", "That library is not known here."),
+    });
+    let (operations, library) = match checked {
+        Ok(ready) => ready,
+        Err(err) => return refuse(&state, FACTS_OPERATION, &actor, err).await,
+    };
+    answer(operations.facts(actor, library).await)
+}
+
+/// `GET /api/v1/libraries/recent`.
+async fn recent(
+    State(state): State<ApiState>,
+    Extension(principal): Extension<Principal>,
+) -> Response {
+    let actor = principal.actor().to_string();
+    let operations = match ready(&state, Some(())) {
+        Ok((operations, ())) => operations,
+        Err(err) => return refuse(&state, RECENT_OPERATION, &actor, err).await,
+    };
+    let reader = state.clone();
+    let readable: super::Readable = Box::new(move |library| may_read(&reader, &principal, library));
+    answer(operations.recent(actor, readable).await)
+}
+
+/// Whether `principal` may read `library`: by the installed navigation access, which must
+/// admit both the host's repository and the library (as navigation resolves a library under
+/// its repository), else by this release's host access.
+fn may_read(state: &ApiState, principal: &Principal, library: &LibraryId) -> bool {
+    use crate::navigation::NodeRef;
+    let node = NodeRef::Library(library.clone());
+    match state.navigation() {
+        Some(navigation) => {
+            let repository = NodeRef::Repository(navigation.repository_id().clone());
+            navigation.may_read(principal, &repository) && navigation.may_read(principal, &node)
+        }
+        None => {
+            use crate::navigation::NavigationAccess;
+            crate::navigation::HostAccess.may_read(principal, &node)
+        }
+    }
 }
 
 /// The JSON answer, or the typed error of a refusal the operation already journaled.

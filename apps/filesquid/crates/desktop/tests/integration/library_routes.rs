@@ -18,7 +18,7 @@ use filesquid_api::library::{CommandRequest, LibraryCommand, LibraryService};
 use filesquid_api::local_library::choice::{
     ChoicePurpose, ChooseError, LocationChooser, CHOOSE_OPERATION,
 };
-use filesquid_api::local_library::{CONSENT_STATEMENT_ID, REPAIR_OPERATION};
+use filesquid_api::local_library::{CONSENT_STATEMENT_ID, REPAIR_OPERATION, UNTITLED_LIBRARY};
 use filesquid_api::navigation::{AlwaysTrue, NavigationChange};
 use filesquid_api::operation::{CommandEnvelope, ExpectedRevision, OperationId, OperationScope};
 use filesquid_api::preferences::PreferenceStore;
@@ -34,7 +34,7 @@ use filesquid_desktop_lib::{
     install_folder_choice, install_history_source, install_host_preferences, install_job_routes,
     install_launch_token, install_library_routes, open_host_monitor, open_library_catalog,
 };
-use filesquid_native::catalog::DEFAULT_LIBRARY_NAME;
+use filesquid_native::catalog::ENTITY_RENAME_OPERATION;
 use filesquid_native::workers::history_backfill::{backfill_source, open_jobs};
 use filesquid_native::{
     install_file_service, HostFiles, HostLocations, HostMonitor, OpenedRoots, SqliteCatalog,
@@ -78,15 +78,19 @@ fn envelope(op: &str, revision: &str, scope: &str) -> CommandEnvelope {
     )
 }
 
+/// The name of a [`donor_library`].
+const DONOR_NAME: &str = "Donor archive";
+
 /// A library made by another desktop in the folder `<dir>/library` the owner chose there,
-/// with two snapshot versions (its creation and a collection "Holidays", each with its PROV-O
+/// named [`DONOR_NAME`], with two snapshot versions (its creation and a collection "Holidays", each with its PROV-O
 /// record), answering its ID and the folder.
 fn donor_library(dir: &Path) -> (String, PathBuf) {
     let donor = Desktop::launch(dir.join("data"));
     let folder = dir.join("library");
     std::fs::create_dir_all(&folder).expect("folder");
     let location = donor.register(&folder);
-    let (status, body) = donor.post("/api/v1/libraries", json!({ "location_id": location }));
+    let body = json!({ "location_id": location, "name": DONOR_NAME });
+    let (status, body) = donor.post("/api/v1/libraries", body);
     assert_eq!(status, 200, "{body}");
     let library = body["library_id"].as_str().expect("library id").to_string();
     donor.create_collection(&library, "Holidays");
@@ -192,6 +196,29 @@ impl Desktop {
             std::thread::sleep(Duration::from_millis(10));
         }
         panic!("the job did not finish: {view}");
+    }
+
+    /// The name of `library`'s entity in its catalog index (its navigation title).
+    fn entity_name(&self, library: &str) -> String {
+        let library = LibraryId::new(library).expect("library");
+        self.catalog.library_name(&library).expect("entity name")
+    }
+
+    /// The titles the navigation lists under the installation's repository, in order.
+    fn navigation_titles(&self) -> Vec<String> {
+        let (status, page) = self.get("/api/v1/navigation");
+        assert_eq!(status, 200, "{page}");
+        let repository = page["nodes"][0]["node"]
+            .as_str()
+            .expect("handle")
+            .to_string();
+        let (status, page) = self.get(&format!("/api/v1/navigation?node={repository}"));
+        assert_eq!(status, 200, "{page}");
+        let nodes = page["nodes"].as_array().expect("nodes");
+        nodes
+            .iter()
+            .map(|n| n["name"].as_str().expect("name").to_string())
+            .collect()
     }
 
     /// Register `folder` as the owner's choice.
@@ -438,13 +465,13 @@ fn the_navigation_lists_the_installations_repository_and_its_libraries() {
     assert_eq!(status, 200, "{page}");
     let libraries = page["nodes"].as_array().expect("nodes");
     assert_eq!(libraries.len(), 1, "the repository's library: {page}");
-    assert_eq!(libraries[0]["name"], DEFAULT_LIBRARY_NAME, "{page}");
+    assert_eq!(libraries[0]["name"], UNTITLED_LIBRARY, "{page}");
     let repository = nodes[0]["node"].as_str().expect("handle").to_string();
     let (status, page) = desktop.get(&format!("/api/v1/navigation?node={repository}"));
     assert_eq!(status, 200, "{page}");
     let libraries = page["nodes"].as_array().expect("nodes");
     assert_eq!(libraries.len(), 1, "{page}");
-    assert_eq!(libraries[0]["name"], DEFAULT_LIBRARY_NAME, "{page}");
+    assert_eq!(libraries[0]["name"], UNTITLED_LIBRARY, "{page}");
     assert!(page.to_string().contains(&library) || libraries[0]["node"].is_string());
     let filter = owner_event_filter(&desktop.state).expect("filter");
     let change = NavigationChange::All { all: AlwaysTrue }
@@ -610,6 +637,81 @@ fn a_cancelled_or_unusable_pick_registers_nothing() {
 }
 
 #[test]
+fn a_named_library_answers_its_facts_and_is_listed_as_recent_without_its_folder() {
+    let dir = fresh_dir("facts");
+    let desktop = Desktop::launch(dir.join("data"));
+    install_navigation(&desktop.state, desktop.catalog.clone(), &installation())
+        .expect("navigation");
+    let folder = dir.join("Family archive");
+    std::fs::create_dir_all(&folder).expect("folder");
+    let location = desktop.register(&folder);
+    let body = json!({ "location_id": location, "name": "Family archive" });
+    let (status, created) = desktop.post("/api/v1/libraries", body);
+    assert_eq!(status, 200, "{created}");
+    let library = created["library_id"].as_str().expect("id").to_string();
+    assert_eq!(desktop.entity_name(&library), "Family archive");
+    let (status, facts) = desktop.get(&format!("/api/v1/libraries/{library}/facts"));
+    assert_eq!(status, 200, "{facts}");
+    assert_eq!(facts["name"], "Family archive");
+    if cfg!(any(target_os = "linux", target_os = "macos")) {
+        assert!(
+            facts["free_bytes"].as_u64().is_some_and(|b| b > 0),
+            "{facts}"
+        );
+        assert_eq!(facts["free_bytes_reason"], Value::Null);
+    } else {
+        assert_eq!(facts["free_bytes"], Value::Null);
+        assert_eq!(facts["free_bytes_reason"], "volume_unreadable");
+    }
+    let path = folder.to_string_lossy().to_string();
+    assert!(
+        !facts.to_string().contains(&path),
+        "no folder path: {facts}"
+    );
+    let rename = json!({ "library_id": library, "name": "Family archive 1990s" });
+    let (status, renamed) = desktop.post("/api/v1/libraries/renames", rename);
+    assert_eq!(status, 200, "{renamed}");
+    assert_eq!(
+        desktop.entity_name(&library),
+        "Family archive 1990s",
+        "the rename reaches the library entity"
+    );
+    assert_eq!(desktop.navigation_titles(), ["Family archive 1990s"]);
+    let (status, recent) = desktop.get("/api/v1/libraries/recent");
+    assert_eq!(status, 200, "{recent}");
+    let listed = &recent["libraries"][0];
+    assert_eq!(listed["library_id"], library.as_str());
+    assert_eq!(listed["name"], "Family archive 1990s");
+    assert_eq!(listed["open"], true);
+    assert!(
+        !recent.to_string().contains("loc-"),
+        "no location ID: {recent}"
+    );
+    assert!(
+        !recent.to_string().contains(&path),
+        "no folder path: {recent}"
+    );
+    let (_, entries) = desktop.stop();
+    let renames: Vec<_> = entries
+        .iter()
+        .filter(|e| e.operation == "library.rename")
+        .collect();
+    assert_eq!(renames.len(), 1);
+    assert_eq!(renames[0].target_ids, std::slice::from_ref(&library));
+    let retitles: Vec<_> = entries
+        .iter()
+        .filter(|e| e.operation == ENTITY_RENAME_OPERATION)
+        .collect();
+    assert_eq!(retitles.len(), 1, "one journaled entity rename");
+    assert_eq!(retitles[0].target_ids, std::slice::from_ref(&library));
+    let journal = serde_json::to_string(&entries).expect("json");
+    assert!(
+        !journal.contains("Family archive"),
+        "no name in the journal"
+    );
+}
+
+#[test]
 fn the_data_directory_keeps_only_each_library_s_index_never_its_files() {
     let dir = fresh_dir("layout");
     let desktop = Desktop::launch(dir.join("data"));
@@ -662,6 +764,10 @@ fn a_library_folder_copied_elsewhere_reopens_with_its_collections() {
         library.as_str(),
         "the copy keeps its library"
     );
+    let (status, facts) = desktop.get(&format!("/api/v1/libraries/{library}/facts"));
+    assert_eq!(status, 200, "{facts}");
+    assert_eq!(facts["name"], DONOR_NAME, "the copy carries its name");
+    assert_eq!(desktop.navigation_titles(), [DONOR_NAME]);
     let node =
         filesquid_api::navigation::NodeRef::Library(LibraryId::new(&library).expect("library"))
             .to_handle()

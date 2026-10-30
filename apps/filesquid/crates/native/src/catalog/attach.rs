@@ -32,6 +32,11 @@ pub const DEFAULT_LIBRARY_NAME: &str = "Library";
 /// Journal operation of creating a library's entity in its folder.
 pub const CREATE_OPERATION: &str = "library.create";
 
+/// Journal operation of renaming a library's entity in its folder (the snapshot version that
+/// carries the new name), beside the API's `library.rename` of the command, as
+/// `library.create` sits beside its `library.root.create`.
+pub const ENTITY_RENAME_OPERATION: &str = "library.entity.rename";
+
 /// A library folder the host attaches: where it lives and who it belongs to.
 #[derive(Clone)]
 pub struct LibraryFolder {
