@@ -16,7 +16,7 @@
 use crate::{HostMonitor, LibraryBackfill, SqliteCatalog, SqliteJobs, JOURNAL_FILE};
 use filesquid_api::history::backfill::BackfillReport;
 use filesquid_api::history::backfill::{Backfill, BACKFILL_OPERATION};
-use filesquid_api::jobs::{Job, JobError, JobSpec, JobState, Jobs, RunningJob};
+use filesquid_api::jobs::{Job, JobClass, JobError, JobSpec, JobState, Jobs, RunningJob};
 use filesquid_api::library::mint_uuid_v4;
 use filesquid_core::{InstallationId, LibraryId};
 use std::path::Path;
@@ -28,8 +28,9 @@ use std::time::{Duration, Instant};
 const LEASE_WAIT_STEP: Duration = Duration::from_millis(100);
 
 /// Open the job store in `data_dir` and the job service of this launch over `host`'s
-/// journal queue and process registry, leasing as a holder named for this launch only.
-/// Filesystem and database I/O.
+/// journal queue and process registry, leasing as a holder named for this launch only, with
+/// `import` jobs classed as transfers, so at most API-S-037's default of 4 run at once (Task
+/// DE-1.9, DE-S-020). Filesystem and database I/O.
 ///
 /// # Errors
 /// The store could not be opened or no holder ID could be minted; the message names no
@@ -38,12 +39,13 @@ pub fn open_jobs(data_dir: &Path, host: &HostMonitor) -> Result<Jobs, String> {
     let store = SqliteJobs::open(&data_dir.join(JOURNAL_FILE))
         .map_err(|err| format!("the job store could not be opened ({})", err.error_code()))?;
     let launch = mint_uuid_v4().map_err(|err| err.to_string())?;
-    Ok(Jobs::new(
+    let jobs = Jobs::new(
         Arc::new(store),
         host.monitor().journal(),
         host.monitor().registry().clone(),
         format!("filesquid-desktop-{launch}"),
-    ))
+    );
+    Ok(jobs.with_class(crate::import::job::IMPORT_KIND, JobClass::Transfer))
 }
 
 /// The launch-time reconciliation: release the leases of runs a crash left and answer the

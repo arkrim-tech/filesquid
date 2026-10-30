@@ -92,6 +92,10 @@ name = "integration_imports"
 path = "tests/integration/imports.rs"
 
 [[test]]
+name = "integration_import_controls"
+path = "tests/integration/import_controls.rs"
+
+[[test]]
 name = "integration_library_routes"
 path = "tests/integration/library_routes.rs"
 

@@ -5,6 +5,8 @@
 # API-S-011: Same logical path: a taken path is numbered beside it
 # DE-S-018: Library routes over owner-chosen folders: the folder listing and the objects of a navigation scope answered from the index
 # DE-S-006: The webview receives opaque handles and API responses, never raw filesystem paths or SQL
+# DE-S-020: Desktop job routes: the import runner and controls, honoured after the file in hand
+# API-S-037: Job routes and job events: pause, resume and cancel, each journaled once
 Feature: Desktop file and folder import
   As the owner using the FileSquid desktop app
   I want to import files and folders I pick in my system's own dialog
@@ -72,3 +74,25 @@ Feature: Desktop file and folder import
     When the app asks to import a folder under the operation "op-later"
     Then the import should be refused as unavailable
     And after the app restarts 2 files should be imported, each as its own object
+
+  # Job controls (Task DE-1.9)
+  Scenario: A paused import stops after the file in hand and resumes where it stopped
+    Given the owner will pick a folder of 2 files
+    And the import worker will be held on its first file
+    When the app asks to import a folder under the operation "op-paused"
+    And the owner pauses the import while its first file is in hand
+    Then the import job should be paused with 1 of 2 files done
+    And the job control "job.paused" should be journaled once
+    When the owner resumes the import job
+    Then the import job should be completed with 2 of 2 files done
+    And 2 files should be imported, each as its own object
+    And no journal entry should name a picked file or folder
+
+  Scenario: A cancelled import ends after the file in hand and reads no further file
+    Given the owner will pick a folder of 2 files
+    And the import worker will be held on its first file
+    When the app asks to import a folder under the operation "op-stopped"
+    And the owner cancels the import while its first file is in hand
+    Then the import job should be cancelled with 1 of 2 files done
+    And the job control "job.cancel_requested" should be journaled once
+    And only the file in hand should be imported

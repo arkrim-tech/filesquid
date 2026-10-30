@@ -1,0 +1,529 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>FileSquid field media pipeline</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+/* Layout: FileSquid design guide v1. One white surface, 700px prose column inside a 1100px page, system serif headings, system sans body, one green accent, flat fills, no shadows. */
+:root{
+  --bg:#FFFFFF; --raised:#F5F5F5;
+  --heading:#000000; --body:#111111; --meta:#555555; --muted:#777777;
+  --border-subtle:#E0E0E0; --border:#CCCCCC;
+  --green:#16AC49; --active-bg:#F0FAF4; --active-text:#0F8A39;
+  --error:#E53935;
+  --serif:Georgia,'Charter','Palatino Linotype',serif;
+  --sans:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
+  --mono:'SF Mono','Fira Code','Fira Mono','Roboto Mono','Consolas',monospace;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#141414; --raised:#242424; --heading:#F5F5F5; --body:#E0E0E0; --meta:#A0A0A0; --muted:#6A6A6A;
+  --border-subtle:#2A2A2A; --border:#333333; --active-bg:#0D2B18; --active-text:#4ACA74; --error:#EF5350; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#141414; --raised:#242424; --heading:#F5F5F5; --body:#E0E0E0; --meta:#A0A0A0; --muted:#6A6A6A;
+  --border-subtle:#2A2A2A; --border:#333333; --active-bg:#0D2B18; --active-text:#4ACA74; --error:#EF5350; color-scheme:dark}
+
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--body);font-family:var(--sans);font-size:17px;line-height:1.65;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:0 96px}
+.page{max-width:1100px;margin:0 auto;min-width:0}
+.prose{max-width:700px}
+h1,h2,h3{font-family:var(--serif);color:var(--heading);line-height:1.05;text-wrap:balance;margin:0}
+h1{font-size:clamp(44px,6vw,64px);font-weight:700;letter-spacing:-.025em}
+h2{font-size:clamp(30px,4vw,36px);font-weight:700;margin-top:64px;margin-bottom:16px;line-height:1.15}
+h3{font-size:22px;font-weight:600;margin-top:40px;margin-bottom:8px;line-height:1.25}
+p{margin:0 0 16px}
+a{color:var(--green);text-decoration:none}
+a:hover{text-decoration:underline}
+code{font-family:var(--mono);font-size:14px;background:var(--raised);padding:2px 6px;border-radius:4px;color:var(--body)}
+strong{font-weight:600;color:var(--heading)}
+ul,ol{margin:0 0 16px;padding-left:1.25em}
+li{margin-bottom:8px}
+.eyebrow{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin-bottom:12px}
+.meta{font-size:13px;color:var(--meta)}
+hr{border:0;border-top:1px solid var(--border-subtle);margin:48px 0}
+
+/* nav bar */
+.bar{display:flex;align-items:center;justify-content:space-between;gap:16px;padding-block:20px;border-bottom:1px solid var(--border-subtle);margin-bottom:64px}
+.wordmark{font-family:var(--serif);font-weight:700;font-size:20px;color:var(--heading);letter-spacing:-.01em}
+.wordmark small{display:block;font-family:var(--sans);font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);font-weight:400;margin-top:2px}
+.bar nav{display:flex;gap:24px;font-size:15px}
+.bar nav a{color:var(--meta)}
+.bar nav a.active{color:var(--green)}
+
+/* hero */
+.hero p.standfirst{font-size:20px;line-height:1.5;margin:20px 0 16px;color:var(--body)}
+.chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:20px}
+.chip{font-family:var(--mono);font-size:13px;padding:3px 10px;border:1px solid var(--border);border-radius:4px;color:var(--body);background:var(--bg)}
+.chip.on{background:var(--active-bg);color:var(--active-text);border-color:var(--active-bg)}
+
+/* contents */
+.toc{list-style:none;padding:0;margin:0;display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:6px 32px;max-width:none}
+.toc li{margin:0;padding:8px 0;border-bottom:1px solid var(--border-subtle);display:flex;gap:14px;font-size:15px}
+.toc .n{font-family:var(--mono);color:var(--muted);font-size:13px;width:2ch;flex:none;padding-top:2px}
+.toc a{color:var(--body)}
+
+/* tables */
+.tbl{overflow-x:auto;margin:16px 0 24px}
+table{border-collapse:collapse;width:100%;font-size:15px;min-width:560px}
+th{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);font-weight:400;text-align:left;padding:8px 12px;border-bottom:1px solid var(--border)}
+td{padding:11px 12px;vertical-align:top;border-bottom:1px solid var(--border-subtle)}
+td:first-child{font-weight:600;color:var(--heading)}
+.badge{display:inline-block;font-family:var(--mono);font-size:12px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;color:var(--meta);white-space:nowrap}
+.badge.on{background:var(--active-bg);color:var(--active-text);border-color:var(--active-bg)}
+
+/* callouts */
+.callout{border:1px solid var(--border-subtle);border-left:3px solid var(--green);border-radius:6px;padding:16px 20px;margin:24px 0}
+.callout .t{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin-bottom:8px}
+.callout p:last-child,.callout ul:last-child{margin-bottom:0}
+.callout.err{border-left-color:var(--error)}
+
+/* two-up */
+.two{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;margin:16px 0 24px;max-width:none}
+.two>div{min-width:0;border:1px solid var(--border-subtle);border-radius:8px;padding:20px 22px}
+.two h3{margin-top:0}
+.two ul{margin-bottom:0}
+
+/* figures */
+figure{margin:28px 0 36px;max-width:100%}
+figure .frame{border:1px solid var(--border-subtle);border-radius:8px;padding:16px;overflow-x:auto;background:var(--bg)}
+pre.mermaid{margin:0;background:transparent;font-family:var(--sans)}
+figcaption{font-size:13px;color:var(--meta);margin-top:10px}
+
+.sources{columns:2;column-gap:40px;list-style:none;padding:0;font-size:15px;max-width:none}
+.sources li{break-inside:avoid;border-bottom:1px solid var(--border-subtle);padding:6px 0;margin:0}
+footer{margin-top:64px;padding-top:24px;border-top:1px solid var(--border-subtle);font-size:13px;color:var(--meta)}
+@media (max-width:640px){.sources{columns:1}.bar nav{display:none}}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+:focus-visible{outline:2px solid var(--green);outline-offset:2px}
+</style>
+
+<div class="page">
+
+<header class="bar">
+  <div class="wordmark">FileSquid<small>Technical prospectus</small></div>
+  <nav aria-label="Site"><a href="#backup-vs-sync">Concepts</a><a href="#architecture">Architecture</a><a href="#e2e" class="active">Encryption</a></nav>
+</header>
+
+<section class="hero prose">
+  <div class="eyebrow">Field media pipeline · v1 · 29 October 2026</div>
+  <h1>Your media. Uploaded until it lands. Readable by nobody in between.</h1>
+  <p class="standfirst">How FileSquid moves large files from places with bad wifi and worse electricity into three independent archives, with end-to-end encryption throughout.</p>
+  <p class="meta">In development. Every component named here is open source.</p>
+  <div class="chips"><span class="chip on">tus</span><span class="chip">age</span><span class="chip">BLAKE3</span><span class="chip">restic</span><span class="chip">Iroh</span><span class="chip">Automerge</span><span class="chip">Garage</span></div>
+</section>
+
+<hr>
+
+<section class="prose">
+  <div class="eyebrow">Contents</div>
+  <ol class="toc">
+    <li><span class="n">1</span><a href="#backup-vs-sync">Backup is not sync</a></li>
+    <li><span class="n">2</span><a href="#crdts">Conflicts and CRDTs</a></li>
+    <li><span class="n">3</span><a href="#p2p">Peer-to-peer transport</a></li>
+    <li><span class="n">4</span><a href="#meta">Syncing the backups</a></li>
+    <li><span class="n">5</span><a href="#requirements">The field and its threats</a></li>
+    <li><span class="n">6</span><a href="#architecture">Reference architecture</a></li>
+    <li><span class="n">7</span><a href="#upload">Resumable upload</a></li>
+    <li><span class="n">8</span><a href="#e2e">End-to-end encryption</a></li>
+    <li><span class="n">9</span><a href="#operations">Operations</a></li>
+    <li><span class="n">10</span><a href="#summary">Summary and sources</a></li>
+  </ol>
+</section>
+
+<!-- 1 -->
+<section class="prose" id="backup-vs-sync">
+  <div class="eyebrow" style="margin-top:64px">Foundation</div>
+  <h2 style="margin-top:0">1. Backup is not sync</h2>
+  <p>Backup is a point-in-time copy kept separately so you can go back. Sync keeps two or more live copies the same so you can continue from anywhere.</p>
+  <p>The decisive difference is what happens to a mistake. Delete a file in a synced folder and it is deleted everywhere within seconds. Delete it in a backed-up folder and yesterday's snapshot still has it. Sync propagates; backup preserves. A system that needs both availability and recovery needs both layers.</p>
+  <div class="two">
+    <div><h3>Backup</h3><ul><li>One-way, source to store</li><li>Scheduled snapshots, versioned, often immutable</li><li>Goal: recovery from deletion, ransomware or a dead disk</li><li>Hard problem: retention and restore testing</li><li>Verified by restoring</li></ul></div>
+    <div><h3>Sync</h3><ul><li>Two-way or many-way</li><li>Continuous; latest state wins</li><li>Goal: one working set on every device</li><li>Hard problem: conflicts when two sides change the same thing</li><li>Verified by comparing</li></ul></div>
+  </div>
+  <h3>Common open-source tools</h3>
+  <div class="tbl"><table>
+    <thead><tr><th>Tool</th><th>Type</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr><td><a href="https://restic.net">restic</a></td><td><span class="badge">backup</span></td><td>Snapshots, deduplication, encryption, many storage backends</td></tr>
+      <tr><td><a href="https://www.borgbackup.org">BorgBackup</a></td><td><span class="badge">backup</span></td><td>Deduplication, compression, append-only mode; local or SSH</td></tr>
+      <tr><td><a href="https://kopia.io">Kopia</a></td><td><span class="badge">backup</span></td><td>GUI and CLI, snapshots, cloud backends, repository sync</td></tr>
+      <tr><td>rsync</td><td><span class="badge">grey area</span></td><td>One-way mirror; with <code>--link-dest</code> (rsnapshot) it becomes versioned backup</td></tr>
+      <tr><td><a href="https://syncthing.net">Syncthing</a></td><td><span class="badge on">sync</span></td><td>P2P, no server; conflicts saved as <code>.sync-conflict</code> files</td></tr>
+      <tr><td><a href="https://github.com/bcpierce00/unison">Unison</a></td><td><span class="badge on">sync</span></td><td>Bidirectional, prompts on conflict</td></tr>
+      <tr><td>Nextcloud</td><td><span class="badge on">sync</span></td><td>Server-based; keeps versions, still not a backup</td></tr>
+      <tr><td>git, git-annex</td><td><span class="badge">both</span></td><td>Full history (backup-like) plus merge (sync-like)</td></tr>
+    </tbody></table></div>
+  <p>A sane baseline pairs one of each: Syncthing between laptop and phone for working files, restic to a separate location nightly, following the 3-2-1 rule of three copies, two media types, one off-site.</p>
+</section>
+
+<!-- 2 -->
+<section class="prose" id="crdts">
+  <h2>2. Conflicts and CRDTs</h2>
+  <p>File-level sync resolves a conflict by picking a winner or duplicating the file. A CRDT resolves it inside the data, so every replica converges without a referee.</p>
+  <p>A conflict-free replicated data type represents each edit as an operation that commutes with every other. Two devices can edit offline for a week, exchange their logs in any order, and arrive at identical documents. This is the basis of local-first software (Kleppmann, Wiggins, van Hardenberg and McGranaghan, 2019), where the user's device holds the primary copy and servers are optional.</p>
+  <h3>Automerge</h3>
+  <p><a href="https://github.com/automerge/automerge">Automerge</a> provides fast implementations of several CRDTs (maps, lists, text, counters), a compact compression format, and a sync protocol that sends a peer only the operations it lacks. The core is Rust, compiled to WebAssembly for the JavaScript package, with C bindings that have spawned further ports, including an R package on CRAN. The protocol's thrift suits intermittent connections.</p>
+  <div class="callout"><div class="t">Trade-offs</div><ul><li>Metadata grows with history; deletions leave tombstones.</li><li>Merges are consistent, not "right": two people editing one sentence get an interleaving, not a judgement.</li><li>Large binaries do not belong in a CRDT. The CRDT holds the index and metadata; a blob store holds the bytes.</li></ul></div>
+  <div class="tbl"><table>
+    <thead><tr><th>Library</th><th>Language</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr><td>Automerge</td><td>Rust, JS, C</td><td>Rich history, sync protocol, local-first focus</td></tr>
+      <tr><td><a href="https://yjs.dev">Yjs</a></td><td>JS</td><td>Very fast, widely used in collaborative editors</td></tr>
+      <tr><td>Loro</td><td>Rust, JS</td><td>Newer, focused on performance and rich text</td></tr>
+      <tr><td>Diamond Types</td><td>Rust</td><td>Text CRDT optimised for speed</td></tr>
+    </tbody></table></div>
+</section>
+
+<!-- 3 -->
+<section class="prose" id="p2p">
+  <h2>3. Peer-to-peer transport</h2>
+  <p>CRDTs decide what to merge. Something still has to move bytes between devices that sit behind NAT, on cellular, or off the public internet.</p>
+  <p><a href="https://iroh.computer">Iroh</a> is a Rust library for establishing the most direct QUIC connection possible between two devices, addressed by public key rather than IP. It reached 1.0 and is dual-licensed MIT and Apache 2.0.</p>
+  <ul>
+    <li><strong>Identity is the key.</strong> Each endpoint has an Ed25519 keypair; the public key is both the address and the TLS certificate subject, so no certificate authority is involved.</li>
+    <li><strong>QUIC over UDP</strong> gives encryption, multiplexed streams and connection migration: a phone moving from wifi to cellular keeps its connection.</li>
+    <li><strong>Hole punching</strong> gets through most NATs automatically.</li>
+    <li><strong>Relay fallback</strong> carries traffic when direct connection fails; relays see only ciphertext, and the relay server is open source.</li>
+    <li><strong>Discovery</strong> resolves a key to current addresses through DNS or Pkarr; n0's public infrastructure can be swapped for your own.</li>
+  </ul>
+  <div class="tbl"><table>
+    <thead><tr><th>Crate</th><th>Purpose</th><th>Role in this design</th></tr></thead>
+    <tbody>
+      <tr><td><a href="https://github.com/n0-computer/iroh-blobs">iroh-blobs</a></td><td>Content-addressed transfer with BLAKE3, verified streaming, resumption</td><td>Moving backup chunks between archive nodes</td></tr>
+      <tr><td>iroh-gossip</td><td>Publish-subscribe overlay</td><td>Announcing "I have these hashes"</td></tr>
+      <tr><td>iroh-docs</td><td>Eventually consistent key-value store</td><td>Replicating small manifests</td></tr>
+    </tbody></table></div>
+  <p>Automerge over Iroh is a serverless sync stack: CRDT documents for mutable state, blobs for large files, gossip for discovery, QUIC for transport. It gives offline-capable multi-device sync with no server. It still gives no backup: a corrupted or maliciously edited document converges everywhere. Comparable stacks are libp2p (IPFS), Hyperswarm (Holepunch) and Syncthing's own protocol.</p>
+</section>
+
+<!-- 4 -->
+<section class="prose" id="meta">
+  <h2>4. Syncing the backups</h2>
+  <p>Replicating a backup repository is a third layer, and here sync becomes safe again, because what is being synced is already immutable and versioned.</p>
+  <figure>
+    <div class="frame">
+<pre class="mermaid">
+%%{init: {"theme":"base","themeVariables":{"fontFamily":"-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Helvetica, Arial, sans-serif","fontSize":"15px","primaryColor":"#FFFFFF","primaryTextColor":"#111111","primaryBorderColor":"#CCCCCC","lineColor":"#111111","textColor":"#111111"}}}%%
+flowchart TB
+  L1["Layer 1 · Working files\nSync: mutable, conflict-prone\nSyncthing, CRDTs"]
+  L2["Layer 2 · Snapshots\nBackup: immutable, versioned, append-only\nrestic, Borg, Kopia"]
+  L3["Layer 3 · Snapshot replication\nSync of immutable objects: conflict-free\nOnly prune is dangerous"]
+  L1 -- "snapshot hourly or daily" --> L2
+  L2 -- "replicate to 3+ nodes" --> L3
+  classDef key fill:#F0FAF4,stroke:#16AC49,color:#0F8A39;
+  class L3 key;
+</pre>
+    </div>
+    <figcaption>Three layers. Layer 3 turns "I have a backup" into "I have a backup that survives the backup disk dying."</figcaption>
+  </figure>
+  <h3>Why it works</h3>
+  <p>A restic, Borg or Kopia repository is content-addressed: chunks are named by their hash, and snapshot manifests point at chunks. Files are only ever added, never modified in place; deletion happens only through an explicit prune. Two copies with different sets of objects are reconciled by taking the union. That is a grow-only set, the simplest CRDT, so replication is conflict-free by construction.</p>
+  <div class="tbl"><table>
+    <thead><tr><th>Tool</th><th>Mechanism</th></tr></thead>
+    <tbody>
+      <tr><td>restic</td><td><code>restic copy</code> between repositories (different keys allowed); rclone backend to any object store</td></tr>
+      <tr><td>BorgBackup</td><td>rsync the repository directory; <code>borg transfer</code>; borgmatic targets several repositories</td></tr>
+      <tr><td>Kopia</td><td><code>kopia repository sync-to</code> mirrors a repository to another backend</td></tr>
+      <tr><td>ZFS, btrfs</td><td><code>zfs send</code> piped to <code>zfs recv</code>: incremental snapshot streams at the filesystem level</td></tr>
+      <tr><td>Syncthing</td><td>Send-only folder carrying a repository to a remote machine</td></tr>
+    </tbody></table></div>
+  <h3>Hazards</h3>
+  <ul>
+    <li><strong>Prune propagation.</strong> Prune the primary, sync, and the deletion propagates. Use object lock or immutable buckets, or a sync mode that never deletes on the mirror.</li>
+    <li><strong>Partial sync.</strong> A half-copied manifest references missing chunks. <code>restic check</code> detects it; writing chunks before manifests keeps a partial copy consistent.</li>
+    <li><strong>Ransomware.</strong> An attacker with write access to the primary corrupts it, and sync carries the corruption. Pull-based replication and append-only modes (Borg <code>--append-only</code>, restic rest-server <code>--append-only</code>) break the chain.</li>
+    <li><strong>Lock files.</strong> Sync only when no backup run is in progress.</li>
+  </ul>
+  <div class="callout"><div class="t">Where Iroh fits</div><p>A repository is a set of BLAKE3-addressed blobs plus a small manifest, which is exactly what iroh-blobs transfers. Archive nodes gossip the hashes they hold and fetch the difference from any peer: a serverless 3-2-1 across sites behind NAT. Retention is the one operation that needs a policy rather than a merge, which is why pruning is the hard part of every such system. git-annex and Perkeep already work this way.</p></div>
+</section>
+
+<!-- 5 -->
+<section class="prose" id="requirements">
+  <h2>5. The field and its threats</h2>
+  <p>Users upload large media from places with spotty wifi, unreliable electricity and hostile observers. Each constraint drives one design choice.</p>
+  <div class="tbl"><table>
+    <thead><tr><th>Constraint</th><th>Consequence</th><th>Design response</th></tr></thead>
+    <tbody>
+      <tr><td>Spotty wifi</td><td>Uploads interrupted many times</td><td>Resumable chunked upload (tus); small chunks; retry with backoff</td></tr>
+      <tr><td>Unreliable electricity</td><td>Phones die mid-upload; nodes reboot</td><td>Upload state in IndexedDB; partial uploads on a journaled disk; battery-backed node</td></tr>
+      <tr><td>Snooping</td><td>Café wifi, ISPs and relays observe traffic</td><td>Encrypt on-device before upload; TLS as a second layer; minimal metadata in headers</td></tr>
+      <tr><td>Node seizure</td><td>A field node is taken</td><td>Node holds ciphertext only and no decryption key</td></tr>
+      <tr><td>Site loss</td><td>A whole location is destroyed</td><td>Hourly or daily snapshots replicated to three or more nodes elsewhere</td></tr>
+      <tr><td>Lost phone</td><td>Queued media on the device</td><td>Queue holds ciphertext; the device has no decryption key</td></tr>
+    </tbody></table></div>
+  <h3>What a PWA can do</h3>
+  <ul>
+    <li><strong>iOS Safari</strong> has no Background Sync. Uploads progress only while the PWA is open, so the field guidance is "open the app when you have signal."</li>
+    <li><strong>Android Chrome</strong> supports Background Sync and Background Fetch, so queued uploads continue after the app is closed.</li>
+    <li>Service workers and IndexedDB work on both, which is enough for durable queues and resume.</li>
+  </ul>
+</section>
+
+<!-- 6 -->
+<section class="prose" id="architecture">
+  <h2>6. Reference architecture</h2>
+  <p>Media flows phone to field node to three archives to receiver. Only the phone and the receiver ever see plaintext.</p>
+  <figure>
+    <div class="frame">
+<pre class="mermaid">
+%%{init: {"theme":"base","themeVariables":{"fontFamily":"-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Helvetica, Arial, sans-serif","fontSize":"14px","primaryColor":"#FFFFFF","primaryTextColor":"#111111","primaryBorderColor":"#CCCCCC","lineColor":"#111111","textColor":"#111111","clusterBkg":"#FFFFFF","clusterBorder":"#E0E0E0"}}}%%
+flowchart TB
+  P["Field phone · PWA\nage-encrypt to recipient keys, sign with device key\nBLAKE3 hash of ciphertext, queue in IndexedDB\ntus client resumes from the server's offset"]
+  N["Field node · one per site\ntusd receives chunks, verifies hash\nstores ciphertext on disk or in Garage\nrestic snapshot every 1 to 24 h, append-only"]
+  A["Archive A\nanother field site\nrestic copy, prune policy here"]
+  B["Archive B\ndatacentre bucket\nS3 object lock, immutable"]
+  C["Archive C\noffline disk, rotated by hand\ncold copy, air-gapped"]
+  R["Receiver app · desktop or PWA\ndecrypt locally, hardware-backed key\nverify sender signature, thumbnails on device\nnever uploads plaintext"]
+  P -- "tus resumable upload over TLS" --> N
+  N -- "archives pull over Iroh, by public key" --> A
+  N --> B
+  N --> C
+  B -- "fetch ciphertext" --> R
+  classDef plain fill:#F0FAF4,stroke:#16AC49,color:#0F8A39;
+  class P,R plain;
+</pre>
+    </div>
+    <figcaption>Green nodes hold plaintext. Archives pull, so no field credential can write to an archive and a compromised site cannot touch the others.</figcaption>
+  </figure>
+  <div class="tbl"><table>
+    <thead><tr><th>Layer</th><th>Component</th><th>Open-source choice</th><th>Trust level</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td>Capture and upload</td><td>PWA with tus-js-client, age, BLAKE3 WASM, IndexedDB</td><td><span class="badge on">plaintext, sender key</span></td></tr>
+      <tr><td>2</td><td>Field storage node</td><td>tusd on a journaled disk, or <a href="https://garagehq.deuxfleurs.fr">Garage</a>; battery-backed mini-PC</td><td><span class="badge">ciphertext only</span></td></tr>
+      <tr><td>3</td><td>Snapshot</td><td>restic or Kopia, append-only mode, hourly or daily timer</td><td><span class="badge">ciphertext, repo key</span></td></tr>
+      <tr><td>4</td><td>Replication</td><td>restic copy or rclone to 3+ targets; iroh-blobs for peers behind NAT</td><td><span class="badge">ciphertext, repo key</span></td></tr>
+      <tr><td>5</td><td>Verification</td><td>restic check, healthcheck pings, restore drills</td><td><span class="badge">ciphertext</span></td></tr>
+      <tr><td>6</td><td>Receiver</td><td>Desktop or PWA client holding an age private key</td><td><span class="badge on">plaintext, receiver key</span></td></tr>
+    </tbody></table></div>
+  <div class="callout"><div class="t">On Garage</div><p>Garage is an open-source S3-compatible store built by Deuxfleurs for geo-distributed clusters on cheap, flaky hardware. Running it across sites with replication factor 3 gives object-level replication for free. Snapshots are still required, because replication propagates deletions and corruption instantly.</p></div>
+</section>
+
+<!-- 7 -->
+<section class="prose" id="upload">
+  <h2>7. Resumable upload</h2>
+  <p>The PWA keeps uploading until the server confirms the last byte, however many times the connection, the app or the phone dies in between.</p>
+  <p>The protocol is <a href="https://tus.io/protocols/resumable-upload">tus</a>, with <code>tus-js-client</code> in the browser and <a href="https://github.com/tus/tusd">tusd</a> on the node. The client never guesses what arrived: after any interruption it asks the server for its offset and continues from there.</p>
+  <figure>
+    <div class="frame">
+<pre class="mermaid">
+%%{init: {"theme":"base","themeVariables":{"fontFamily":"-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Helvetica, Arial, sans-serif","fontSize":"14px","primaryColor":"#FFFFFF","primaryTextColor":"#111111","primaryBorderColor":"#CCCCCC","lineColor":"#111111","textColor":"#111111","actorBkg":"#FFFFFF","actorBorder":"#CCCCCC","actorTextColor":"#111111","signalColor":"#111111","signalTextColor":"#111111","noteBkgColor":"#F0FAF4","noteBorderColor":"#16AC49","noteTextColor":"#0F8A39","activationBkgColor":"#F5F5F5","activationBorderColor":"#CCCCCC","sequenceNumberColor":"#FFFFFF"}}}%%
+sequenceDiagram
+  autonumber
+  participant U as PWA · user action
+  participant S as Service worker + IndexedDB
+  participant T as tusd on field node
+  U->>S: encrypt, hash, save handle + hash
+  S->>T: POST, Upload-Length + hash metadata
+  T-->>S: 201 Created, upload URL (saved to IndexedDB)
+  S->>T: PATCH chunk at offset 0, 2 MB
+  S->>T: PATCH chunk at offset 2 MB
+  Note over U,T: wifi drops, app is killed, or phone dies. The queue survives on disk.
+  U->>S: reopen: read queue from IndexedDB
+  S->>T: HEAD upload URL
+  T-->>S: Upload-Offset: 4 MB
+  S->>T: PATCH from offset 4 MB, repeat to end
+  T-->>S: 204, offset = length, hash verified
+  S->>U: mark complete, remove from queue
+</pre>
+    </div>
+    <figcaption>One interruption shown; the same HEAD-then-PATCH loop handles any number.</figcaption>
+  </figure>
+  <h3>Design rules</h3>
+  <ul>
+    <li><strong>Persist first, upload second.</strong> The moment the user picks media, the encrypted blob, its hash and the upload URL are written to IndexedDB. Nothing is held only in memory.</li>
+    <li><strong>Small chunks.</strong> 1 to 4 MB on poor wifi so each round trip has a chance to complete; the size can adapt to measured throughput.</li>
+    <li><strong>Hash the ciphertext.</strong> The node verifies the BLAKE3 hash on completion and rejects mismatches; the same hash is the dedup key and the content address for later layers.</li>
+    <li><strong>Retry with backoff</strong> and resume on every app open and every <code>online</code> event; on Android also through Background Sync.</li>
+    <li><strong>Idempotent finish.</strong> A completed upload the client failed to record shows up on the next HEAD (offset equals length) and is marked done.</li>
+    <li><strong>Minimal metadata.</strong> tus headers carry only hash and size; filename, timestamps and location travel inside the encrypted payload.</li>
+  </ul>
+</section>
+
+<!-- 8 -->
+<section class="prose" id="e2e">
+  <h2>8. End-to-end encryption</h2>
+  <p>The field worker's phone and the authorised viewer are the two ends. Everything between them, including FileSquid's own nodes, archives and relays, sees only ciphertext.</p>
+  <figure>
+    <div class="frame">
+<pre class="mermaid">
+%%{init: {"theme":"base","themeVariables":{"fontFamily":"-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Helvetica, Arial, sans-serif","fontSize":"14px","primaryColor":"#FFFFFF","primaryTextColor":"#111111","primaryBorderColor":"#CCCCCC","lineColor":"#111111","textColor":"#111111","clusterBkg":"#FFFFFF","clusterBorder":"#CCCCCC"}}}%%
+flowchart LR
+  P["Phone\nplaintext\nholds: recipient public keys, own signing key"]
+  subgraph Z["Ciphertext zone · nothing here can read the media"]
+    direction LR
+    N["Field node\ntusd, Garage, TLS endpoint\nholds: TLS certificate only"]
+    A["Archives ×3\nrestic repositories, Iroh relays between\nholds: restic repo key, never the media key"]
+    N --> A
+  end
+  R["Receiver\nplaintext\nholds: age private key, hardware-backed"]
+  P --> N
+  A --> R
+  classDef plain fill:#F0FAF4,stroke:#16AC49,color:#0F8A39;
+  class P,R plain;
+</pre>
+    </div>
+    <figcaption>Two keys, two custodians: the media key never visits an archive; the repo key never visits a phone.</figcaption>
+  </figure>
+  <h3>Encryption scheme</h3>
+  <ul>
+    <li><a href="https://age-encryption.org/v1">age</a> is the primitive: X25519 per-recipient key wrapping, streaming ChaCha20-Poly1305 for large files, several recipients in one envelope. A <a href="https://github.com/FiloSottile/typage">TypeScript implementation</a> runs in the PWA; the CLI serves the viewing side.</li>
+    <li>Each media file gets a random file key, wrapped for every recipient. Adding a receiver later means re-wrapping file keys, not re-encrypting media.</li>
+    <li>The sidecar (filename, timestamp, GPS, notes) is a separate small age blob. The server sees an opaque ID, a size and an upload time.</li>
+  </ul>
+  <h3>Key management, the real problem</h3>
+  <ul>
+    <li>Recipient public keys are baked into the PWA build or fetched from a signed manifest with a pinned fingerprint, so a hostile server cannot substitute its own key.</li>
+    <li>Receiver private keys live only on receiver devices, ideally hardware-backed (age has YubiKey and FIDO2 plugins). Never on a node or archive.</li>
+    <li>Each phone generates its own keypair on first run and signs every upload. Receivers verify which device captured what; a lost phone's key goes on a revocation list in the manifest.</li>
+    <li>A lost phone holds no decryption keys. Pending uploads are ciphertext at rest in IndexedDB. The worst case is "we lost the files not yet uploaded", never "the adversary can read them". WebCrypto non-extractable keys and a device PIN protect the sender key too.</li>
+  </ul>
+  <h3>How it meets the other layers</h3>
+  <ul>
+    <li>Hash the ciphertext for tus resume and dedup (the server can verify it). Put the plaintext hash inside the encrypted sidecar for receivers.</li>
+    <li>Dedup across identical captures is lost, since a random file key yields different ciphertext. Acceptable for field media; convergent encryption would restore it at the cost of leaking "same file" to the server.</li>
+    <li>restic's encryption becomes a second layer around the first: the repo key protects integrity and structure, the age key protects content.</li>
+    <li>Iroh's transport encryption is a third layer, irrelevant to confidentiality but good for metadata hygiene; who talks to whom is still visible to a relay.</li>
+    <li>The receiver app pulls ciphertext from an archive, decrypts locally, and never uploads plaintext. Thumbnails are generated on the receiver, not the server. A signed audit log records who decrypted what.</li>
+  </ul>
+  <div class="callout err"><div class="t">What E2E does not solve</div><ul><li>Traffic analysis: upload sizes and timings from a location. Pad sizes or batch uploads if that is in the threat model.</li><li>A phone compromised before encryption. No scheme helps; this is device hygiene.</li><li>Legal compulsion of a receiver who holds a key.</li></ul></div>
+</section>
+
+<!-- 9 -->
+<section class="prose" id="operations">
+  <h2>9. Operations</h2>
+  <p>A backup nobody has restored is a hypothesis. The schedule below turns it into evidence.</p>
+  <div class="tbl"><table>
+    <thead><tr><th>When</th><th>What</th><th>Where</th></tr></thead>
+    <tbody>
+      <tr><td>Every 1 to 24 h</td><td>restic snapshot of the node's data directory, append-only</td><td>Field node</td></tr>
+      <tr><td>After each snapshot</td><td>Archives pull the new objects (restic copy, rclone or iroh-blobs)</td><td>Archives A, B, C</td></tr>
+      <tr><td>Daily</td><td><code>restic check</code>; weekly with <code>--read-data-subset</code></td><td>Each archive</td></tr>
+      <tr><td>Continuous</td><td>Each node pings a Healthchecks-style endpoint; silence from a site is the alarm</td><td>Monitoring</td></tr>
+      <tr><td>Monthly</td><td>Prune by policy from the archive side only, never from a field node</td><td>Archives</td></tr>
+      <tr><td>Quarterly</td><td>Restore drill: decrypt one random media file end to end on a receiver</td><td>Receiver</td></tr>
+    </tbody></table></div>
+  <ul>
+    <li><strong>Pull, never push.</strong> Field nodes hold no credential that writes to an archive.</li>
+    <li><strong>Separate custodians.</strong> The restic repo key and the age private key are never held by the same role.</li>
+    <li><strong>Object lock</strong> on the datacentre bucket gives a retention floor no credential can override.</li>
+    <li><strong>Power.</strong> A battery or UPS lets a node finish writes and shut down cleanly; a journaled filesystem survives the times it cannot.</li>
+  </ul>
+</section>
+
+<!-- 10 -->
+<section class="prose" id="summary">
+  <h2>10. Summary and sources</h2>
+  <p>Only the PWA's upload queue is custom. Everything else is configuration of existing open-source software.</p>
+  <div class="tbl"><table>
+    <thead><tr><th>Concept</th><th>One line</th><th>Tooling</th></tr></thead>
+    <tbody>
+      <tr><td>Backup vs sync</td><td>Sync propagates; backup preserves. Use both.</td><td>restic, Borg, Kopia; Syncthing, Unison</td></tr>
+      <tr><td>CRDTs</td><td>Conflicts resolved inside the data; replicas converge without a server</td><td>Automerge, Yjs, Loro</td></tr>
+      <tr><td>P2P transport</td><td>Dial devices by public key through NAT; relays see ciphertext</td><td>Iroh, iroh-blobs, iroh-gossip</td></tr>
+      <tr><td>Syncing snapshots</td><td>Immutable, content-addressed repos replicate conflict-free; guard prune</td><td>restic copy, rclone, object lock</td></tr>
+      <tr><td>Resumable upload</td><td>Persist first, ask the server its offset, continue until done</td><td>tus, tusd, IndexedDB</td></tr>
+      <tr><td>End-to-end</td><td>Plaintext only at the two ends; key custody is the hard part</td><td>age, WebCrypto, YubiKey plugin</td></tr>
+    </tbody></table></div>
+  <h3>Sources</h3>
+  <ul class="sources">
+    <li><a href="https://iroh.computer/llms.txt">Iroh documentation</a></li>
+    <li><a href="https://docs.rs/crate/iroh/1.0.3">iroh crate 1.0.3</a></li>
+    <li><a href="https://github.com/n0-computer/iroh-blobs">iroh-blobs</a></li>
+    <li><a href="https://github.com/automerge/automerge">Automerge</a></li>
+    <li><a href="https://doi.org/10.1145/3359591.3359737">Local-first software (Kleppmann et al., 2019)</a></li>
+    <li><a href="https://restic.readthedocs.io/en/stable/045_working_with_repos.html">restic copy</a></li>
+    <li><a href="https://github.com/restic/rest-server">restic rest-server, append-only</a></li>
+    <li><a href="https://borgbackup.readthedocs.io/en/stable/usage/notes.html#append-only-mode">Borg append-only mode</a></li>
+    <li><a href="https://kopia.io/docs/reference/command-line/common/repository-sync-to/">Kopia repository sync-to</a></li>
+    <li><a href="https://tus.io/protocols/resumable-upload">tus protocol</a></li>
+    <li><a href="https://github.com/tus/tusd">tusd</a></li>
+    <li><a href="https://garagehq.deuxfleurs.fr">Garage</a></li>
+    <li><a href="https://age-encryption.org/v1">age specification</a></li>
+    <li><a href="https://github.com/FiloSottile/typage">age in TypeScript</a></li>
+    <li><a href="https://github.com/str4d/age-plugin-yubikey">age YubiKey plugin</a></li>
+    <li><a href="https://developer.mozilla.org/en-US/docs/Web/API/Background_Synchronization_API">Background Sync API</a></li>
+    <li><a href="https://perkeep.org">Perkeep</a></li>
+    <li><a href="https://yjs.dev">Yjs</a></li>
+  </ul>
+</section>
+
+<footer>FileSquid · field media pipeline · technical prospectus v1 · 29 October 2026 · In development. Open source under the MIT licence.</footer>
+
+</div>
+
+<!--claude-mermaid-runtime-begin:3477-->
+<style>.mermaid-diagram{margin-block:4px}.mermaid-diagram svg{display:block;margin:0 auto;max-width:100%;height:auto}</style>
+<script src="/_runtime/mermaid-11.16.1.min.js"></script>
+<script>(function(){
+var CFG={"palettes":{"light":{"surface":"#f4efe4","text":"#42392e","line":"#8a7f6d","border":"#7a6c52","bg":"#fffdf8"},"dark":{"surface":"#262b34","text":"#f2f3f5","line":"#a8adb8","border":"#9aa4b8","bg":"#1f232b"}}};
+if(typeof mermaid==='undefined')return;
+var pres=Array.prototype.slice.call(document.querySelectorAll('pre.mermaid')).filter(function(p){if(p.hasAttribute('data-claude-mermaid-claimed'))return false;p.setAttribute('data-claude-mermaid-claimed','1');return true;});
+if(!pres.length)return;
+var mq=window.matchMedia?window.matchMedia('(prefers-color-scheme: dark)'):null;
+var root=document.documentElement;
+var items=pres.map(function(pre){
+var mount=document.createElement('div');mount.className='mermaid-diagram';
+return {pre:pre,mount:mount,src:pre.textContent||''};
+});
+var seq=0;
+var renderGen=0;
+var lastKey='';
+function pageBg(fallback){
+var els=[document.body,document.documentElement];
+for(var i=0;i<els.length;i++){
+var c=els[i]&&getComputedStyle(els[i]).backgroundColor;
+if(c&&c!=='transparent'&&c!=='rgba(0, 0, 0, 0)')return c;
+}
+return fallback;
+}
+function render(){
+var theme=root.getAttribute('data-theme');
+var dark=theme==='dark'||(!!(mq&&mq.matches)&&theme!=='light');
+var pal=dark?CFG.palettes.dark:CFG.palettes.light;
+var bg=pageBg(pal.bg);
+var key=(dark?'d':'l')+'|'+bg;
+if(key===lastKey)return;
+lastKey=key;
+var gen=++renderGen;
+var font=getComputedStyle(document.body).fontFamily||'sans-serif';
+var nat={useMaxWidth:false};
+mermaid.initialize({
+startOnLoad:false,securityLevel:'strict',theme:'base',
+flowchart:nat,sequence:nat,er:nat,state:nat,class:nat,pie:nat,
+gantt:nat,journey:nat,timeline:nat,gitGraph:nat,mindmap:nat,xyChart:nat,
+quadrantChart:nat,sankey:nat,c4:nat,requirement:nat,block:nat,
+packet:nat,kanban:nat,architecture:nat,radar:nat,
+themeVariables:{background:bg,mainBkg:pal.surface,primaryColor:pal.surface,
+primaryTextColor:pal.text,lineColor:pal.line,primaryBorderColor:pal.border,
+nodeBorder:pal.border,clusterBorder:pal.border,edgeLabelBackground:bg,
+clusterBkg:'rgba(127,127,127,0.07)',titleColor:pal.text,
+darkMode:dark,rowOdd:bg,rowEven:'rgba(127,127,127,0.07)',
+attributeBackgroundColorOdd:bg,attributeBackgroundColorEven:'rgba(127,127,127,0.07)',
+fontSize:'16px',fontFamily:font},
+themeCSS:'.node rect, .node circle, .node polygon, .node path, .cluster rect { stroke-width: 2px; }'
+});
+items.forEach(function(it){
+var id='claude-mermaid-'+seq++;
+mermaid.render(id,it.src).then(function(r){
+if(gen!==renderGen)return;
+var prev=it.pre.previousElementSibling;
+if(prev&&prev.className==='mermaid-diagram'&&prev!==it.mount)return;
+it.mount.innerHTML=r.svg;
+if(!it.mount.parentNode)it.pre.parentNode.insertBefore(it.mount,it.pre);
+it.pre.style.display='none';
+},function(){
+var scratch=document.getElementById(id);
+if(scratch)scratch.parentNode.removeChild(scratch);
+scratch=document.getElementById('d'+id);
+if(scratch)scratch.parentNode.removeChild(scratch);
+if(gen!==renderGen)return;
+if(it.mount.parentNode)it.mount.parentNode.removeChild(it.mount);
+it.pre.style.display='';
+});
+});
+}
+render();
+if(mq&&mq.addEventListener)mq.addEventListener('change',render);
+if(typeof MutationObserver!=='undefined')new MutationObserver(render).observe(root,{attributes:true,attributeFilter:['data-theme']});
+})();</script>
+<!--claude-mermaid-runtime-end-->
+
+</body></html>
