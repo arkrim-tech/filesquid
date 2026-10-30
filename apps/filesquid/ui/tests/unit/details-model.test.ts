@@ -127,3 +127,16 @@ describe("digestRows", () => {
     expect(rows[0]?.label).toBe("SHA-256 digest");
   });
 });
+
+describe("detailRows history size (UI-F2.11, PRD F-065)", () => {
+  it("adds a History size row after Size with the bytes the history keeps and the versions", () => {
+    const rows = detailRows(details(), VERSIONS, labels, "en", { versions: 4, bytes: 25_165_824 });
+    expect(rows.map((r) => r.label).slice(3, 5)).toEqual(["Size", "History size"]);
+    expect(rows.find((r) => r.key === "history-size")?.value).toBe("24 MB · 4 versions");
+  });
+
+  it("leaves the row out when the history size could not be read", () => {
+    const rows = detailRows(details(), VERSIONS, labels, "en", undefined);
+    expect(rows.some((r) => r.key === "history-size")).toBe(false);
+  });
+});

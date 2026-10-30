@@ -142,6 +142,21 @@ export {
 } from "./components/property-table";
 export { MAX_LABEL_BYTES, labelProblem } from "./components/version-restore-dialog";
 export {
+  buildLabelDialog,
+  labelChange,
+  type LabelChange,
+  type LabelDialogParams,
+} from "./components/version-label-dialog";
+export { saveFileToDevice } from "./components/save-file";
+export {
+  ClientDownloadSource,
+  DESKTOP_ANSWER_CAP,
+  MAX_DOWNLOAD_READS,
+  RANGE_CHUNK,
+  type DownloadClient,
+  type DownloadSource,
+} from "./files/download-source";
+export {
   ClientHistorySource,
   type FileHistory,
   type FileHistoryEntry,
@@ -287,6 +302,7 @@ export {
   bindSettingsRoute,
   memoryTokenStore,
   parseNavigationHash,
+  type FilePanelSources,
   type FilesRouteOptions,
   type NavigationRouteOptions,
   type RouteHost,

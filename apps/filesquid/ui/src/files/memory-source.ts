@@ -6,8 +6,11 @@
  * an upload that creates the file's own object (API-S-026) and refuses the facts the API
  * refuses, and the API's refusals as `ApiError` (`not_found`, `conflict`, `invalid_request`,
  * `range_not_satisfiable`). It also answers the history reads of the file panel (UI-F2.3) as
- * `GET /files/history`, `/files/versions` and `/files/history-size` do. Tests and demos use it;
- * the live sources are `ClientFileSource` and `ClientHistorySource`.
+ * `GET /files/history`, `/files/versions` and `/files/history-size` do, sets and clears version
+ * labels as `PUT /files/labels` does (UI-F2.11: one new version, an unchanged label or a stale
+ * head refused 409, at most {@link MAX_LABELLED_VERSIONS} labelled versions), and serves a
+ * version's whole file as a download ({@link DownloadSource}). Tests and demos use it; the live
+ * sources are `ClientFileSource`, `ClientHistorySource` and `ClientDownloadSource`.
  */
 import { ApiError } from "../api/client";
 import { newOperationId, type ByteRange } from "../api/commands";
@@ -26,6 +29,7 @@ import type {
   UploadFacts,
 } from "./model";
 import { MAX_UPLOAD_BYTES, isControl, isMediaType, lastSegment, validLabel } from "./model";
+import type { DownloadSource } from "./download-source";
 import { fileIdOf, inOriginalFolder, isOriginalPath } from "./ops";
 import {
   NEW_FILE_REVISION,
@@ -104,6 +108,9 @@ interface Snapshot {
   /** The version's label, as a restore sets it; null for none. */
   readonly label: string | null;
 }
+
+/** Most versions of one object that may carry a label (API-F2.5: 1,000). */
+export const MAX_LABELLED_VERSIONS = 1000;
 
 /** Route named in the fixture's errors. */
 const ROUTE = "/api/v1/files";
@@ -204,7 +211,7 @@ function byName(a: string, b: string): number {
 }
 
 /** A file source answering from memory. */
-export class MemoryFileSource implements FileSource, HistorySource {
+export class MemoryFileSource implements FileSource, HistorySource, DownloadSource {
   private readonly snapshots: Snapshot[] = [];
   private readonly cursors = new Map<string, { prefix: string; offset: number }>();
   private readonly uploaded = new Map<string, UploadedFile>();
@@ -456,6 +463,7 @@ export class MemoryFileSource implements FileSource, HistorySource {
       throw refusal(400, "invalid_request");
     }
     this.expect(options.revision);
+    if (options.label !== undefined) this.expectLabelRoom();
     const earlier = this.snapshot(version);
     const change = (files: Map<string, Stored>, label: string, created: string) => {
       for (const path of paths) {
@@ -466,6 +474,42 @@ export class MemoryFileSource implements FileSource, HistorySource {
       }
     };
     return this.commit(change, options.label ?? null);
+  }
+
+  /**
+   * Set or clear a version's label as `PUT /api/v1/files/labels` does: the label is checked
+   * first (`invalid_request`), then the revision (`conflict`), then the version
+   * (`not_found`); a label that changes nothing is `conflict`; otherwise the version's label
+   * changes and one new version (the labels record) is committed with the files unchanged.
+   */
+  async setVersionLabel(
+    _object: ObjectRef,
+    version: string,
+    label: string | null,
+    options: WriteOptions,
+  ): Promise<FileCommit> {
+    this.check();
+    if (label !== null && !validLabel(label)) throw refusal(400, "invalid_request");
+    this.expect(options.revision);
+    const target = this.snapshot(version);
+    if (target.label === label) throw refusal(409, "conflict");
+    if (target.label === null && label !== null) this.expectLabelRoom();
+    this.snapshots[this.snapshots.indexOf(target)] = { ...target, label };
+    const created = new Date(BASE_TIME + this.snapshots.length * 60_000).toISOString();
+    this.snapshots.push({ created, files: this.latest().files, label: null });
+    return {
+      library_id: this.options.library_id,
+      object_id: this.options.object_id,
+      version: this.head,
+      created,
+    };
+  }
+
+  /** The whole file of one version as a Blob, as a download would save it. */
+  async readVersionFile(file: FileRef): Promise<Blob> {
+    this.check();
+    const { bytes } = this.stored(file);
+    return new Blob([bytes.slice()]);
   }
 
   /** Every version of the object, oldest first, with the head. */
@@ -533,6 +577,16 @@ export class MemoryFileSource implements FileSource, HistorySource {
   /** Refuse a write as `conflict` unless `revision` is the head, as the API does (API-F2.13). */
   private expect(revision: string): void {
     if (revision !== this.head) throw refusal(409, "conflict");
+  }
+
+  /**
+   * Refuse as `conflict` when another labelled version would pass the object's cap of
+   * {@link MAX_LABELLED_VERSIONS}; a new labelled version is made by a label edit on an
+   * unlabelled version and by a restore that carries a label.
+   */
+  private expectLabelRoom(): void {
+    const labelled = this.snapshots.filter((snapshot) => snapshot.label !== null).length;
+    if (labelled >= MAX_LABELLED_VERSIONS) throw refusal(409, "conflict");
   }
 
   /** The newest snapshot. */

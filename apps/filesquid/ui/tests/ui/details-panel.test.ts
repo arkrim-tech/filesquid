@@ -56,6 +56,7 @@ describe("<fs-details-panel>", () => {
       labels.filePanelExtension,
       labels.filePanelFormat,
       labels.filePanelSize,
+      labels.filePanelHistorySize,
       "SHA-256 digest",
       "SHA-512 digest",
       labels.filePanelObject,
@@ -63,7 +64,7 @@ describe("<fs-details-panel>", () => {
     ]);
     expect(rows[0]?.querySelector(".value")?.textContent).toBe("harbour-masterplan-v7.pdf");
     expect(rows[1]?.querySelector(".value")?.classList.contains("mono")).toBe(true);
-    expect(root(panel).querySelector(".count")?.textContent).toBe("8 properties · read only");
+    expect(root(panel).querySelector(".count")?.textContent).toBe("9 properties · read only");
     expect(root(panel).querySelector(".footer")?.textContent).toBe(labels.filePanelInfoFooter);
     expect(root(panel).querySelector("input.filter")?.getAttribute("placeholder")).toBe(
       labels.filePanelFilterInfo,
@@ -107,10 +108,10 @@ describe("<fs-details-panel>", () => {
     const panel = await mount();
     filter(panel, "application/pdf");
     expect(root(panel).querySelectorAll(".row")).toHaveLength(1);
-    expect(root(panel).querySelector(".count")?.textContent).toBe("1 of 8 properties · read only");
+    expect(root(panel).querySelector(".count")?.textContent).toBe("1 of 9 properties · read only");
     filter(panel, "ocfl");
     expect(root(panel).querySelectorAll(".row")).toHaveLength(2);
-    expect(root(panel).querySelector(".count")?.textContent).toBe("2 of 8 properties · read only");
+    expect(root(panel).querySelector(".count")?.textContent).toBe("2 of 9 properties · read only");
     filter(panel, "copyright");
     expect(panel.dataset.state).toBe("no-match");
     expect(root(panel).querySelector(".state .title")?.textContent).toBe(
@@ -121,7 +122,7 @@ describe("<fs-details-panel>", () => {
     );
     root(panel).querySelector<HTMLButtonElement>(".state button.clear")?.click();
     expect(root(panel).querySelector<HTMLInputElement>("input.filter")?.value).toBe("");
-    expect(root(panel).querySelectorAll(".row")).toHaveLength(8);
+    expect(root(panel).querySelectorAll(".row")).toHaveLength(9);
     expect(panel.dataset.state).toBe("ready");
   });
 
@@ -203,5 +204,36 @@ describe("<fs-details-panel>", () => {
     expect(root(panel).querySelector<HTMLInputElement>("input.filter")?.value).toBe("");
     clear.click();
     expect(panel.dataset.state).toBe("error");
+  });
+
+  it("shows the history size after the size, in the fixture's bytes and versions (UI-F2.11)", async () => {
+    const panel = await mount();
+    const row = root(panel).querySelector('.row[data-key="history-size"]');
+    expect(row?.querySelector("dt")?.textContent).toBe(labels.filePanelHistorySize);
+    expect(row?.querySelector(".value")?.textContent).toBe("96.3 MB · 7 versions");
+  });
+
+  it("leaves the history size row out, and warns, when it cannot be read", async () => {
+    const source = new FakePanelSource();
+    source.failures.size = new ApiError(500, "/api/v1/files/history-size", { code: "internal" });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const panel = await mount(source);
+    expect(panel.dataset.state).toBe("ready");
+    expect(root(panel).querySelector('.row[data-key="history-size"]')).toBeNull();
+    expect(root(panel).querySelectorAll(".row")).toHaveLength(8);
+    expect(warn).toHaveBeenCalled();
+  });
+
+  it("does not warn about the history size when switching file cancels its read", async () => {
+    const source = new FakePanelSource();
+    const wait = gate();
+    source.gates.size = wait;
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const panel = await mount(source);
+    panel.fileRef = { ...PANEL_FILE, version: "v6" };
+    await settle();
+    wait.open();
+    await settle();
+    expect(warn).not.toHaveBeenCalled();
   });
 });
