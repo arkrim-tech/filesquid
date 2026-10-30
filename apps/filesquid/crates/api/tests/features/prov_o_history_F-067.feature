@@ -2,7 +2,7 @@
 # SRS-F-067: PROV-O history of every version and change
 # API-S-028: PROV-O record per commit and journal linkage
 # API-S-029: History routes and backfill
-# Scenarios only; step definitions arrive with Task FS-2.8 (unbound steps are skipped by the harness).
+# Steps for the file and metadata routes are bound in `tests/support/prov_steps.rs` (Task API-F2.9); the desktop catalog operations, the restart, the history object outputs, the crash reconciliation and sharing stay unbound and are skipped (see that file).
 Feature: PROV-O history of every version and change
   As a library owner
   I want a standards-based record of everything that happened to every file and its metadata

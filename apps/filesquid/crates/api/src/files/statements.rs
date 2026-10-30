@@ -589,7 +589,7 @@ fn metadata_write<'a>(
         caller,
         kind,
         label: None,
-        operation,
+        operation: Some(operation),
         library_id,
         object_id,
         metadata: true,
