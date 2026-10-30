@@ -46,6 +46,7 @@ mod candidates;
 pub mod choice;
 mod commands;
 mod error;
+mod facts;
 mod journal_rebuild;
 mod ledger;
 mod locations;
@@ -62,13 +63,18 @@ mod transfer;
 
 pub use commands::{LibraryCommands, MAX_OPEN_LIBRARIES};
 pub use error::LocalLibraryError;
+pub use facts::{
+    check_name, FreeBytesReason, FreeSpace, LibraryFacts, LibraryRegistry, MemoryLibraryRegistry,
+    RecentLibraries, RecentLibrary, RegistryBook, RegistryEntry, RenameLibraryRequest,
+    MAX_LIBRARY_NAME_BYTES, MAX_RECENT_LIBRARIES, MAX_REMEMBERED_LIBRARIES, UNTITLED_LIBRARY,
+};
 pub use journal_rebuild::{JournalRebuild, JournalRestore, MAX_RESTORED_ENTRIES, RESTORE_BATCH};
 pub use ledger::{LedgerError, MemoryRepairLedger, RecordedRepair, RepairLedger, RepairRecord};
 pub use locations::{
     LibraryLocations, LibraryRequest, LibraryRoot, LibraryView, LocationRequest, Opened,
     SnapshotCopyRequest, INITIAL_REVISION, MAX_LOCATION_ID_BYTES,
 };
-pub use operations::{LibraryFuture, LibraryOperations};
+pub use operations::{LibraryFuture, LibraryOperations, Readable};
 pub use provenance::{
     JOURNAL_IDS_UNAVAILABLE, PROVENANCE_COMMIT_FAILED, PROVENANCE_NOT_CONFIGURED,
 };
@@ -87,7 +93,7 @@ pub use repair::{
 };
 pub use root::RootSummary;
 pub use service::{
-    LocalLibraryService, CANDIDATES_OPERATION, COPY_OPERATION, CREATE_OPERATION, OPEN_OPERATION,
-    REBUILD_OPERATION,
+    LocalLibraryService, CANDIDATES_OPERATION, COPY_OPERATION, CREATE_OPERATION, FACTS_OPERATION,
+    OPEN_OPERATION, REBUILD_OPERATION, RECENT_OPERATION, RENAME_OPERATION,
 };
 pub use snapshot::{CopyReport, ObjectFindings};

@@ -11,7 +11,13 @@
 //! root and leases ([`open_fs_library_root`]), attaches the folder to the library's catalog
 //! index in the data directory, which is created or rebuilt from the folder when missing,
 //! of another copy or behind (Task DE-1.7, ADR 041), schedules its OCFL validation and lists
-//! its root for the PROV-O history ([`OpenedRoots`]). No path ever reaches an answer.
+//! its root for the PROV-O history ([`OpenedRoots`]). The library's name (API-S-038) lives in
+//! two places the host keeps in step: the location registry, which the facts and recent
+//! routes answer from, and the library entity of the folder's snapshot, which the navigation
+//! shows as the title and which a moved or copied folder carries with it. A new library's
+//! entity takes the bound name; a reopened folder's snapshot names the registry; a name
+//! given on open and a rename retitle the entity in a journaled snapshot version
+//! (`library.entity.rename`, the library ID only). No path ever reaches an answer.
 //!
 //! The repair is the desktop owner's alone: the per-launch token's holder is the only
 //! principal this host authenticates, and the API refuses the repair for anyone else.
@@ -19,13 +25,14 @@
 use filesquid_api::auth::Principal;
 use filesquid_api::library::CatalogError;
 use filesquid_api::local_library::{
-    CopyReport, LibraryCommands, LibraryFuture, LibraryOperations, LibraryRequest, LibraryView,
-    LocalLibraryService, LocationRequest, Opened, RebuildEnd, RebuildProgress, RepairAnswer,
-    RepairCandidates, RepairRequest, SnapshotCopyRequest,
+    CopyReport, LibraryCommands, LibraryFacts, LibraryFuture, LibraryOperations, LibraryRegistry,
+    LibraryRequest, LibraryView, LocalLibraryService, LocationRequest, Opened, Readable,
+    RebuildEnd, RebuildProgress, RecentLibraries, RenameLibraryRequest, RepairAnswer,
+    RepairCandidates, RepairRequest, SnapshotCopyRequest, UNTITLED_LIBRARY,
 };
 use filesquid_api::ocfl_validation::ValidationService;
 use filesquid_core::{LibraryId, RepositoryId};
-use filesquid_native::catalog::{LibraryFolder, DEFAULT_LIBRARY_NAME};
+use filesquid_native::catalog::LibraryFolder;
 use filesquid_native::{
     open_fs_library_root, HostFiles, HostLocations, OpenedRoots, SqliteCatalog,
 };
@@ -71,14 +78,16 @@ impl std::fmt::Debug for DesktopLibraries {
 
 impl DesktopLibraries {
     /// The commands of `service` over `locations`, serving each bound library with
-    /// `serving`. Pure.
+    /// `serving`; `locations` also keeps the name and last-opened time of each library they
+    /// bind and answers its volume's free bytes (API-S-038). Pure.
     pub fn new(
         service: LocalLibraryService,
         locations: Arc<HostLocations>,
         serving: LibraryServing,
     ) -> Self {
         Self {
-            commands: LibraryCommands::new(service, locations.clone()),
+            commands: LibraryCommands::new(service, locations.clone())
+                .with_registry(locations.clone()),
             locations,
             serving,
         }
@@ -89,12 +98,14 @@ impl DesktopLibraries {
         &self.locations
     }
 
-    /// Serve the bound library of `view`: its files from its folder's root and leases, its
-    /// catalog index, its validation and its history. A part that cannot be served is logged
-    /// as a warning with its error code only (the journal layer journals it); the library
-    /// stays open in the commands. Creates directories in the data directory; the catalog
-    /// attach (which may rebuild a whole index) runs on a blocking thread.
-    async fn serve(&self, view: &LibraryView) {
+    /// Serve the bound library of `view` for `actor`: its files from its folder's root and
+    /// leases, its catalog index (named as [`Self::align_name`] says, with `requested` the
+    /// name the bind request gave), its validation and its history. A part that cannot be
+    /// served is logged as a warning with its error code only (the journal layer journals
+    /// it); the library stays open in the commands. Creates directories in the data
+    /// directory; the catalog attach (which may rebuild a whole index) and the name
+    /// alignment run on blocking threads.
+    async fn serve(&self, actor: &str, view: &LibraryView, requested: Option<&str>) {
         let location = self.commands.location_of(&view.library_id);
         let root = location
             .as_deref()
@@ -104,7 +115,9 @@ impl DesktopLibraries {
             return;
         };
         let identity = location.and_then(|location| self.locations.identity_of(&location));
-        self.attach(&view.library_id, &root, identity).await;
+        if self.attach(&view.library_id, &root, identity).await {
+            self.align_name(actor, &view.library_id, requested).await;
+        }
         if open_fs_library_root(
             &self.serving.files,
             &view.library_id,
@@ -123,43 +136,117 @@ impl DesktopLibraries {
 
     /// Attach `library_id`'s folder `root` (identified as `identity`) to its catalog index on
     /// a blocking thread, logging a folder that cannot be attached with its error code only
-    /// (`conflict`, `unavailable` or `internal`, as the catalog classified it). Filesystem and
-    /// database I/O.
+    /// (`conflict`, `unavailable` or `internal`, as the catalog classified it); a folder
+    /// without a snapshot gets its library entity under the registry's name of the library
+    /// (the bound name, else [`UNTITLED_LIBRARY`]). Answers whether the folder is attached.
+    /// Filesystem and database I/O.
     async fn attach(
         &self,
         library_id: &LibraryId,
         root: &filesquid_native::HostRoot,
         identity: Option<String>,
-    ) {
+    ) -> bool {
         let Some(identity) = identity else {
             warn_unserved(library_id, "location_not_found");
-            return;
+            return false;
         };
         let folder = LibraryFolder {
             library_id: library_id.clone(),
             repository_id: self.serving.repository.clone(),
-            name: DEFAULT_LIBRARY_NAME.to_string(),
+            name: self.registered_name(library_id),
             root: root.clone(),
             identity,
         };
         let catalog = self.serving.catalog.clone();
         let attached = tokio::task::spawn_blocking(move || catalog.attach(&folder)).await;
         match attached {
-            Ok(Ok(_)) => {}
+            Ok(Ok(_)) => true,
+            Ok(Err(err)) => {
+                warn_unserved(library_id, attach_error_code(&err));
+                false
+            }
+            Err(_) => {
+                warn_unserved(library_id, "internal");
+                false
+            }
+        }
+    }
+
+    /// The name the location registry has for `library_id`, else [`UNTITLED_LIBRARY`].
+    fn registered_name(&self, library_id: &LibraryId) -> String {
+        self.locations
+            .entry(library_id)
+            .map(|entry| entry.name)
+            .unwrap_or_else(|| UNTITLED_LIBRARY.to_string())
+    }
+
+    /// Keep the registry's name of the attached `library_id` and the name of its library
+    /// entity in step: a name the bind request gave (`requested`) retitles the entity when
+    /// it differs, journaled as `library.entity.rename` by `actor`; without one, the
+    /// registry adopts the entity's name, so a reopened, moved or copied folder answers the
+    /// name it carries. A name that cannot be read or written is logged with its error code
+    /// only. Database and filesystem I/O on a blocking thread.
+    async fn align_name(&self, actor: &str, library_id: &LibraryId, requested: Option<&str>) {
+        let Some(entity) = self.entity_name(library_id).await else {
+            return;
+        };
+        match requested {
+            Some(name) if name != entity => self.retitle(actor, library_id, name).await,
+            Some(_) => {}
+            None => {
+                let _adopted = self.locations.rename(library_id, &entity);
+            }
+        }
+    }
+
+    /// The name of `library_id`'s library entity, read from its catalog index on a blocking
+    /// thread; `None`, logged with the error code, when it cannot be read.
+    async fn entity_name(&self, library_id: &LibraryId) -> Option<String> {
+        let catalog = self.serving.catalog.clone();
+        let id = library_id.clone();
+        let read = tokio::task::spawn_blocking(move || catalog.library_name(&id)).await;
+        match read {
+            Ok(Ok(name)) => Some(name),
+            Ok(Err(err)) => {
+                warn_unserved(library_id, attach_error_code(&err));
+                None
+            }
+            Err(_) => {
+                warn_unserved(library_id, "internal");
+                None
+            }
+        }
+    }
+
+    /// Retitle `library_id`'s library entity to `name` in its index and snapshot, journaled
+    /// as `library.entity.rename` by `actor` (the catalog journals a failed write as
+    /// `failed`), on a blocking thread; a failure is also logged with its error code only.
+    /// Database, filesystem and journal I/O.
+    async fn retitle(&self, actor: &str, library_id: &LibraryId, name: &str) {
+        let catalog = self.serving.catalog.clone();
+        let id = library_id.clone();
+        let (name, actor) = (name.to_string(), actor.to_string());
+        let written =
+            tokio::task::spawn_blocking(move || catalog.rename_library(&id, &name, &actor)).await;
+        match written {
+            Ok(Ok(())) => {}
             Ok(Err(err)) => warn_unserved(library_id, attach_error_code(&err)),
             Err(_) => warn_unserved(library_id, "internal"),
         }
     }
 
-    /// Bind with `bind`, then serve the bound library.
+    /// Bind with `bind` for `actor`, then serve the bound library, `requested` being the
+    /// name the bind request gave.
     async fn bind_and_serve(
         &self,
+        actor: &str,
+        requested: Option<String>,
         bind: impl std::future::Future<
             Output = Result<LibraryView, filesquid_api::local_library::LocalLibraryError>,
         >,
     ) -> Result<LibraryView, filesquid_api::local_library::LocalLibraryError> {
         let view = bind.await?;
-        self.serve(&view).await;
+        self.serve(actor, &view, requested.as_deref()).await;
         Ok(view)
     }
 }
@@ -191,8 +278,9 @@ impl LibraryOperations for DesktopLibraries {
         expected: String,
     ) -> LibraryFuture<'_, LibraryView> {
         Box::pin(async move {
-            self.bind_and_serve(self.commands.create(&actor, request, &expected))
-                .await
+            let requested = request.name.clone();
+            let bind = self.commands.create(&actor, request, &expected);
+            self.bind_and_serve(&actor, requested, bind).await
         })
     }
 
@@ -203,8 +291,9 @@ impl LibraryOperations for DesktopLibraries {
         expected: String,
     ) -> LibraryFuture<'_, Opened> {
         Box::pin(async move {
+            let requested = request.name.clone();
             let opened = self.commands.open(&actor, request, &expected).await?;
-            self.serve(&opened.view).await;
+            self.serve(&actor, &opened.view, requested.as_deref()).await;
             Ok(opened)
         })
     }
@@ -255,5 +344,30 @@ impl LibraryOperations for DesktopLibraries {
 
     fn repair(&self, caller: Principal, request: RepairRequest) -> LibraryFuture<'_, RepairAnswer> {
         Box::pin(async move { self.commands.repair(&caller, request).await })
+    }
+
+    /// The commands' rename (the registry, journaled `library.rename`), then the retitle of
+    /// the library entity, so the navigation title follows (API-S-038); a retitle the
+    /// catalog refuses is journaled by it and logged, and the facts still answer the
+    /// registry's name.
+    fn rename(
+        &self,
+        actor: String,
+        request: RenameLibraryRequest,
+    ) -> LibraryFuture<'_, LibraryFacts> {
+        Box::pin(async move {
+            let (library_id, name) = (request.library_id.clone(), request.name.clone());
+            let facts = self.commands.rename(&actor, request).await?;
+            self.retitle(&actor, &library_id, &name).await;
+            Ok(facts)
+        })
+    }
+
+    fn facts(&self, actor: String, library_id: LibraryId) -> LibraryFuture<'_, LibraryFacts> {
+        Box::pin(async move { self.commands.facts(&actor, &library_id).await })
+    }
+
+    fn recent(&self, actor: String, readable: Readable) -> LibraryFuture<'_, RecentLibraries> {
+        Box::pin(async move { self.commands.recent(&actor, readable.as_ref()).await })
     }
 }

@@ -464,6 +464,13 @@ pub(crate) fn insert_library(
     .map_err(sql)
 }
 
+/// Set the library's name, the title its navigation node shows (API-S-038). Database I/O.
+pub(crate) fn set_library_name(tx: &Transaction<'_>, name: &str) -> Result<(), CatalogError> {
+    tx.execute("UPDATE library SET name = ?1", params![name])
+        .map(drop)
+        .map_err(sql)
+}
+
 /// Cache the library's own retention period from its snapshot. Database I/O.
 pub(crate) fn set_retention(tx: &Transaction<'_>, days: Option<u32>) -> Result<(), CatalogError> {
     tx.execute("UPDATE library SET retention_days = ?1", params![days])

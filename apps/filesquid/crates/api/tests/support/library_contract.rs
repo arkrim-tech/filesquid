@@ -14,6 +14,10 @@ use filesquid_api::local_library::choice::{
     LocationChooser,
 };
 use filesquid_api::local_library::{
+    FreeBytesReason, FreeSpace, LibraryFacts, MemoryLibraryRegistry, RecentLibraries,
+    RecentLibrary, RenameLibraryRequest,
+};
+use filesquid_api::local_library::{
     JournalRebuild, LibraryCommands, LibraryLocations, LibraryRequest, LibraryRoot, LibraryView,
     LocalLibraryService, LocationRequest, MemoryRepairLedger, ObjectFindings, ObjectRepair,
     RebuildJobAnswer, RebuildOutcome, RebuildReport, RebuiltObject, RepairAnswer, RepairCandidate,
@@ -91,10 +95,12 @@ pub async fn install(state: &ApiState, monitor: &Monitor) {
     let sample = roots[SAMPLE].clone();
     let locations = Arc::new(MemoryLocations { roots });
     let service = LocalLibraryService::new(monitor.journal(), Arc::new(MemoryRepairLedger::new()));
-    let commands = LibraryCommands::new(service, locations);
+    let registry = MemoryLibraryRegistry::new(|_: &str| FreeSpace::Bytes(1_000_000));
+    let commands = LibraryCommands::new(service, locations).with_registry(Arc::new(registry));
     let request = LocationRequest {
         location_id: SAMPLE.to_string(),
         library_id: Some(library()),
+        name: Some("Sample library".to_string()),
     };
     commands
         .create("owner", request, "0")
@@ -264,6 +270,13 @@ pub fn sample(method: &Method, path: &str) -> Option<(String, SampleBody)> {
         ("POST", "/api/v1/libraries/repairs") => {
             serde_json::to_value(repair_request()).expect("json")
         }
+        ("POST", "/api/v1/libraries/renames") => {
+            json!({ "library_id": LIBRARY, "name": "Renamed sample library" })
+        }
+        ("GET", "/api/v1/libraries/{library}/facts") => {
+            return Some((format!("/api/v1/libraries/{LIBRARY}/facts"), None));
+        }
+        ("GET", "/api/v1/libraries/recent") => return Some((path.to_string(), None)),
         _ => return None,
     };
     Some((path.to_string(), json_body(body)))
@@ -354,7 +367,8 @@ pub fn samples() -> Vec<(&'static str, Vec<Value>)> {
     };
     let mut unconsented = repair_request();
     unconsented.consent = None;
-    vec![
+    let mut all = facts_samples();
+    all.extend(vec![
         (
             "ImportSource",
             [ImportSource::Files, ImportSource::Folder]
@@ -430,6 +444,7 @@ pub fn samples() -> Vec<(&'static str, Vec<Value>)> {
             vec![to_value(LocationRequest {
                 location_id: SAMPLE.to_string(),
                 library_id: Some(library()),
+                name: Some("Family archive".to_string()),
             })],
         ),
         ("LibraryView", vec![to_value(library_view())]),
@@ -567,7 +582,8 @@ pub fn samples() -> Vec<(&'static str, Vec<Value>)> {
                 objects: object_repairs().to_vec(),
             })],
         ),
-    ]
+    ]);
+    all
 }
 
 /// The answer of a rebuild request: its pending job, handed to the runner.
@@ -608,4 +624,58 @@ fn journal_rebuild() -> JournalRebuild {
         unreadable: 0,
         last_sealed_at: Some("2026-10-20T10:00:00Z".into()),
     }
+}
+
+/// Serialized samples of the library facts schemas (Task API-F2.18; API-S-038): a known and
+/// an unknown free space, an open and a remembered library, every reason.
+fn facts_samples() -> Vec<(&'static str, Vec<Value>)> {
+    let known = LibraryFacts {
+        library_id: library(),
+        name: "Family archive".to_string(),
+        free_bytes: Some(1_000_000),
+        free_bytes_reason: None,
+    };
+    let unknown = LibraryFacts {
+        free_bytes: None,
+        free_bytes_reason: Some(FreeBytesReason::NotLocal),
+        ..known.clone()
+    };
+    let recent = RecentLibrary {
+        library_id: library(),
+        name: "Family archive".to_string(),
+        last_opened: "2026-10-23T10:00:00.000Z".to_string(),
+        open: true,
+        free_bytes: Some(1_000_000),
+        free_bytes_reason: None,
+    };
+    let remembered = RecentLibrary {
+        open: false,
+        free_bytes: None,
+        free_bytes_reason: Some(FreeBytesReason::VolumeUnreadable),
+        ..recent.clone()
+    };
+    let rename = RenameLibraryRequest {
+        library_id: library(),
+        name: "Family archive 1990s".to_string(),
+    };
+    vec![
+        ("LibraryFacts", vec![to_value(&known), to_value(&unknown)]),
+        (
+            "RecentLibrary",
+            vec![to_value(&recent), to_value(&remembered)],
+        ),
+        (
+            "RecentLibraries",
+            vec![to_value(RecentLibraries {
+                libraries: vec![recent, remembered],
+            })],
+        ),
+        ("RenameLibraryRequest", vec![to_value(rename)]),
+        (
+            "FreeBytesReason",
+            [FreeBytesReason::VolumeUnreadable, FreeBytesReason::NotLocal]
+                .map(to_value)
+                .to_vec(),
+        ),
+    ]
 }
