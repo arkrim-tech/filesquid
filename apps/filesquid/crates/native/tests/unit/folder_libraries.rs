@@ -394,6 +394,65 @@ fn a_registered_file_names_its_path_and_object_in_the_snapshot_and_the_index() {
 }
 
 #[test]
+fn the_catalog_is_the_home_collections_of_uploads_and_copies() {
+    use filesquid_api::canonical::collection_path::ItemKind;
+    use filesquid_api::home::{register_entry, HomeCollections, HomeRequest, Placed};
+    let fx = Fixture::new("api-f2.14-home");
+    let lib = fx.create_library("Family archive");
+    let trips = fx.create_collection(&lib, "Trips");
+    let home: &dyn HomeCollections = fx.catalog.as_ref();
+    assert_eq!(
+        home.collection_library(&trips).expect("lookup"),
+        Some(lib.clone())
+    );
+    let minted = new_file();
+    let reserved = home.reserve(&lib, "op-up-1", &minted).expect("reserve");
+    assert_eq!(reserved, minted);
+    let again = home
+        .reserve(&lib, "op-up-1", &new_file())
+        .expect("reserve again");
+    assert_eq!(again, minted, "a retry gets the same file ID");
+    path_of(register(
+        &fx,
+        &lib,
+        &trips,
+        &new_file(),
+        "Summer/beach.jpg",
+        "op-other",
+    ));
+    let free = home.free_path(&lib, &trips, "Summer/beach.jpg", ItemKind::File);
+    assert_eq!(free.expect("read"), Ok("Summer/beach-1.jpg".to_string()));
+    let request = HomeRequest {
+        file_id: minted.clone(),
+        collection_id: trips.clone(),
+        path: "Summer/beach.jpg".into(),
+    };
+    let placed = home
+        .register(&lib, "op-up-1", &request, register_entry("op-up-1"))
+        .expect("register");
+    assert_eq!(
+        placed,
+        Placed::Registered {
+            path: "Summer/beach-1.jpg".into()
+        }
+    );
+    let fresh = new_file();
+    let after = home
+        .reserve(&lib, "op-up-1", &fresh)
+        .expect("reserve after");
+    assert_eq!(after, fresh, "the registration released the reservation");
+    let replay = home
+        .register(&lib, "op-up-1", &request, register_entry("op-up-1"))
+        .expect("register again");
+    assert_eq!(
+        replay,
+        Placed::AlreadyRegistered {
+            path: "Summer/beach-1.jpg".into()
+        }
+    );
+}
+
+#[test]
 fn a_taken_path_is_numbered_beside_it_and_a_deleted_file_s_path_counts() {
     let fx = Fixture::new("de17-numbering");
     let lib = fx.create_library("Family archive");

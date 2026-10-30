@@ -156,6 +156,10 @@ name = "integration_file_commands"
 path = "tests/integration/file_commands.rs"
 
 [[test]]
+name = "integration_home_collections"
+path = "tests/integration/home_collections.rs"
+
+[[test]]
 name = "integration_library_facts"
 path = "tests/integration/library_facts.rs"
 

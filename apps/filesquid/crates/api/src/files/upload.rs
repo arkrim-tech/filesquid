@@ -62,11 +62,10 @@ where
         let library = self.library(&query.library_id)?;
         let _writing = library.writes.lock().await;
         let backend = library.files.backend.as_ref();
-        let reserved = reserved_new_file(&query)?;
-        if let Some(view) = committed_before(backend, &query.library_id, reserved.as_ref()).await? {
-            return Ok(view);
-        }
-        let target = upload_target(backend, query.file_id.as_deref(), reserved).await?;
+        let target = match resumable_target(backend, &query).await? {
+            Ok(target) => target,
+            Err(committed) => return Ok(committed),
+        };
         check_target_revision(&target, expected)?;
         let started = self.created();
         let media_type = query
@@ -87,13 +86,12 @@ where
         let record = upload_record(&target, &input, bytes)?;
         let staging = library.staging(&target.object_id)?;
         let model = change_model(&library, &target.root, &target.object_id, staging);
-        let previous = target.previous.as_ref();
         let committed = commit_file_original(
             &model,
             &OwnerReadable,
             &target.file_id,
             &record,
-            previous,
+            target.previous.as_ref(),
             bytes,
             meta,
         )
@@ -113,6 +111,23 @@ where
             path: None,
         })
     }
+}
+
+/// The file an upload writes, or, as `Err`, the answer of the new file an earlier, unfinished
+/// run of the same operation already committed. Storage I/O.
+///
+/// # Errors
+/// As [`reserved_new_file`], [`committed_before`] and [`upload_target`].
+async fn resumable_target<B: StorageBackend>(
+    backend: &B,
+    query: &UploadQuery,
+) -> Result<Result<Target, UploadView>, FileError> {
+    let reserved = reserved_new_file(query)?;
+    if let Some(view) = committed_before(backend, &query.library_id, reserved.as_ref()).await? {
+        return Ok(Err(view));
+    }
+    let target = upload_target(backend, query.file_id.as_deref(), reserved).await?;
+    Ok(Ok(target))
 }
 
 /// The file ID the upload's operation reserved for a new file, if any; an upload of new

@@ -134,18 +134,9 @@ where
         let backend = library.files.backend.as_ref();
         let source = read_source(backend, source_id, expected).await?;
         let reference = source_reference(&source.file_id, &source.version);
-        let reserved = match &request.reserved_file_id {
-            Some(id) => Some(parse_file_id(id)?),
-            None => None,
-        };
-        if let Some(done) =
-            committed_before(backend, &request.library_id, reserved.as_ref()).await?
-        {
-            return Ok(resumed_copy(done, reference));
-        }
-        let file_id = match reserved {
-            Some(id) => id,
-            None => mint_file_id()?,
+        let file_id = match copy_target(backend, &request).await? {
+            CopyTarget::New(file_id) => file_id,
+            CopyTarget::Committed(done) => return Ok(resumed_copy(done, reference)),
         };
         let started = self.created();
         let input = CopyInput {
@@ -254,5 +245,35 @@ fn resumed_copy(done: UploadView, source: String) -> CopyView {
         source,
         collection_id: None,
         path: None,
+    }
+}
+
+/// The file a copy writes.
+enum CopyTarget {
+    /// A file not committed yet: its reserved ID, or a freshly minted one.
+    New(FileId),
+    /// The file an earlier, unfinished run of the same operation already committed.
+    Committed(UploadView),
+}
+
+/// The file `request` writes: what its operation's reserved ID already committed, else that
+/// ID, else a freshly minted one. Storage I/O.
+///
+/// # Errors
+/// `invalid_request` for a reserved ID that is not a UUID v4; a storage failure.
+async fn copy_target<B: StorageBackend>(
+    backend: &B,
+    request: &CopyRequest,
+) -> Result<CopyTarget, FileError> {
+    let reserved = request
+        .reserved_file_id
+        .as_deref()
+        .map(parse_file_id)
+        .transpose()?;
+    let committed = committed_before(backend, &request.library_id, reserved.as_ref()).await?;
+    match (committed, reserved) {
+        (Some(done), _) => Ok(CopyTarget::Committed(done)),
+        (None, Some(id)) => Ok(CopyTarget::New(id)),
+        (None, None) => mint_file_id().map(CopyTarget::New),
     }
 }

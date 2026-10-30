@@ -7985,8 +7985,7 @@
         "description": "Copy one file at its head.",
         "required": [
           "library_id",
-          "file_id",
-          "collection_id"
+          "file_id"
         ],
         "additionalProperties": false,
         "properties": {
@@ -8878,8 +8877,7 @@
         "required": [
           "library_id",
           "name",
-          "size",
-          "collection_id"
+          "size"
         ],
         "additionalProperties": false,
         "properties": {
