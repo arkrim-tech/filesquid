@@ -14,7 +14,7 @@ Accepted: 2026-09-22T07:00:00Z.
 
 Amended 2026-10-17 by [ADR 035](./035-macos-first-desktop-mvp.md): macOS is the first desktop target and the FileSquid MVP is desktop-only; Linux and Windows desktop follow the MVP. The MVP desktop installer is an unsigned, not-notarized macOS `.dmg` labelled early access; the updater stays out of scope until the signing ADR.
 
-Noted 2026-10-29: those Linux and Windows installers follow encrypted backup and pass before the first consumer release ([ADR 029](./029-filesquid-unified-product-and-distributions.md)).
+Amended 2026-10-29: the Ubuntu (GNOME) and Windows Tauri installers are Release 1 and start right after the MVP, beside encrypted backup. They do not wait on that backup release. `filesquid-server`, signing and the updater still follow backup ([ADR 029](./029-filesquid-unified-product-and-distributions.md), [ADR 035](./035-macos-first-desktop-mvp.md)).
 
 ## Context / Requirement Reference
 
@@ -23,7 +23,7 @@ Noted 2026-10-29: those Linux and Windows installers follow encrypted backup and
 ## Decision
 
 - The owner-operated server ships as an Axum binary and optional container (`apps/filesquid/crates/server/Dockerfile`, crate `filesquid-server`). The ciphertext-only `*.filesquid.tech` mailbox is a separate deployable ([ADR 032](./032-hosting-and-privacy-model.md)). Compose MAY run the server container; it MUST NOT containerize `apps/filesquid/crates/desktop`.
-- Desktop ships as Tauri 2 installers after the installer legal review. `bundle.active` is **false** in the scaffold. Amended by [ADR 035](./035-macos-first-desktop-mvp.md): the MVP installer is an unsigned, not-notarized macOS dmg/app labelled early access; NSIS/MSI and AppImage/deb/rpm follow encrypted backup and pass before the first consumer release.
+- Desktop ships as Tauri 2 installers after the installer legal review. `bundle.active` is **false** in the scaffold. Amended by [ADR 035](./035-macos-first-desktop-mvp.md): the MVP installer is an unsigned, not-notarized macOS dmg/app labelled early access; Ubuntu AppImage and deb, and Windows NSIS or MSI, start right after the MVP and run beside encrypted backup. They pass before the rest of the first consumer release closes.
 - The updater plugin is **out of scope** until a signing ADR exists.
 - Linux and the independent web are CI build-and-test targets from the start. Amended by [ADR 035](./035-macos-first-desktop-mvp.md): this does not make Linux the first desktop target; macOS is.
 
