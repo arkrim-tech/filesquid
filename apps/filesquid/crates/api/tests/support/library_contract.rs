@@ -38,6 +38,9 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::Arc;
 
+/// The name the sample library is created with.
+const SAMPLE_NAME: &str = "Sample library";
+
 /// The library the samples name.
 pub const LIBRARY: &str = "0d6e1f2a-3b4c-4d5e-8f60-718293a4b5c6";
 
@@ -100,7 +103,7 @@ pub async fn install(state: &ApiState, monitor: &Monitor) {
     let request = LocationRequest {
         location_id: SAMPLE.to_string(),
         library_id: Some(library()),
-        name: Some("Sample library".to_string()),
+        name: Some(SAMPLE_NAME.to_string()),
     };
     commands
         .create("owner", request, "0")
@@ -270,11 +273,13 @@ pub fn sample(method: &Method, path: &str) -> Option<(String, SampleBody)> {
         ("POST", "/api/v1/libraries/repairs") => {
             serde_json::to_value(repair_request()).expect("json")
         }
+        // A rename to the current name changes nothing, so the sample library stays at
+        // revision 1 for the copy and rebuild samples that follow it.
         ("POST", "/api/v1/libraries/renames") => command_body(
             path,
             &library_scope,
             "1",
-            json!({ "library_id": LIBRARY, "name": "Renamed sample library" }),
+            json!({ "library_id": LIBRARY, "name": SAMPLE_NAME }),
         ),
         ("GET", "/api/v1/libraries/{library}/facts") => {
             return Some((format!("/api/v1/libraries/{LIBRARY}/facts"), None));
