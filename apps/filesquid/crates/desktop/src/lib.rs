@@ -46,6 +46,7 @@ pub mod ipc_observer;
 pub mod libraries;
 pub mod navigation;
 pub mod panic_journal;
+pub mod rebuilds;
 pub mod stdout_log;
 #[cfg(feature = "test-webdriver")]
 pub mod test_fixture;
@@ -346,6 +347,10 @@ pub struct DesktopValidation(pub ValidationService<FsBackend>);
 /// managed state for the jobs that later tasks (import, upload, migration) run.
 pub struct DesktopJobs(pub Jobs);
 
+/// Whether this launch reconciled its durable jobs (DE-S-014): only then does it hand an
+/// opened library's unfinished rebuild to the runner (Task DE-1.8).
+pub struct DesktopRecovered(pub bool);
+
 /// The import plans and their per-file progress (Tasks DE-1.2, DE-1.8), opened with the job
 /// service, which answers the job items routes from the second.
 pub struct DesktopImportStores(
@@ -583,8 +588,9 @@ pub fn install_library_routes(
 
 /// Install this launch's durable job service `jobs` for the job routes (API-S-037) and the
 /// runner of rebuild jobs over the installed library commands, run on `runtime`, the app's
-/// long-lived runtime (Task API-F2.17; API-S-025 **Rebuild as a job**). Resuming an
-/// unfinished rebuild at launch is the host's next step (Task DE-1.8).
+/// long-lived runtime (Task API-F2.17; API-S-025 **Rebuild as a job**). Setting `stop` (the
+/// app's exit) makes a running rebuild give its lease back with its checkpoint (Task DE-1.8,
+/// [`rebuilds`]).
 ///
 /// # Errors
 /// The library commands are not installed yet, or a job service or a rebuild runner is
@@ -593,6 +599,7 @@ pub fn install_job_routes(
     state: &ApiState,
     jobs: &Jobs,
     runtime: tokio::runtime::Handle,
+    stop: Arc<AtomicBool>,
 ) -> Result<(), String> {
     let libraries = state
         .libraries()
@@ -600,8 +607,9 @@ pub fn install_job_routes(
     if !state.install_jobs(Arc::new(jobs.clone())) {
         return Err("a job service was already installed".to_string());
     }
-    let runner =
-        RebuildRunner::new(jobs.clone(), libraries, Principal::Owner.actor()).with_runtime(runtime);
+    let runner = RebuildRunner::new(jobs.clone(), libraries, Principal::Owner.actor())
+        .with_runtime(runtime)
+        .with_stop(stop);
     if !state.install_job_runner(REBUILD_JOB_KIND, Arc::new(runner)) {
         return Err("a rebuild runner was already installed".to_string());
     }
@@ -747,12 +755,12 @@ fn start_monitor(
     install_library_services(app, &host, &installation, &data_dir, (opened, catalog))
         .inspect_err(|_| host.stop())?;
     let runtime = tauri::async_runtime::handle().inner().clone();
-    install_job_routes(&state, &app.state::<DesktopJobs>().0, runtime)
+    let stop = Arc::new(AtomicBool::new(false));
+    install_job_routes(&state, &app.state::<DesktopJobs>().0, runtime, stop.clone())
         .inspect_err(|_| host.stop())?;
     app.manage(DesktopInstallation(installation));
     open_test_library(app, &data_dir);
     let forwarder = Arc::new(event_channel::register_forwarder(host.monitor().registry()));
-    let stop = Arc::new(AtomicBool::new(false));
     spawn_ticker(host.clone(), stop.clone());
     let backfill = Arc::new(DesktopBackfill::new(task, stop.clone()));
     install_backfill_route(&state, &backfill, recovered).inspect_err(|_| host.stop())?;
@@ -889,6 +897,7 @@ fn prepare_backfill(
     };
     app.manage(DesktopJobs(jobs));
     app.manage(DesktopImportStores(stores.0, stores.1));
+    app.manage(DesktopRecovered(recovered));
     Ok((task, recovered))
 }
 
@@ -940,6 +949,10 @@ fn install_library_services(
         data_dir: data_dir.to_path_buf(),
         repository: installation_repository(installation)?,
         catalog,
+        rebuilds: app
+            .try_state::<DesktopRecovered>()
+            .filter(|recovered| recovered.0)
+            .map(|_| state.inner().clone()),
     };
     let locations = install_library_routes(&state, host, installation, serving)?;
     let dialog = Box::new(folder_choice::RfdDialog::new(app.clone()));
@@ -1019,6 +1032,9 @@ fn stop_monitor(app: &tauri::AppHandle) {
         monitor.stop.store(true, Ordering::SeqCst);
         monitor.backfill.wait(BACKFILL_STOP_WAIT);
         monitor.imports.wait(IMPORT_STOP_WAIT);
+        if let Some(jobs) = app.try_state::<DesktopJobs>() {
+            rebuilds::wait_for_rebuilds(&jobs.0, rebuilds::REBUILD_STOP_WAIT);
+        }
         monitor.forwarder.complete();
         monitor.host.stop();
     }

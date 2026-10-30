@@ -114,6 +114,8 @@ struct Desktop {
     opened: Arc<OpenedRoots>,
     /// The long-lived runtime the rebuild runner runs jobs on, as the app's runtime.
     runtime: tokio::runtime::Runtime,
+    /// The app's exit flag the rebuild runner was given.
+    quitting: Arc<AtomicBool>,
 }
 
 impl Desktop {
@@ -135,6 +137,7 @@ impl Desktop {
             data_dir: dir.clone(),
             catalog: catalog.clone(),
             repository: RepositoryId::new(INSTALLATION).expect("repository"),
+            rebuilds: Some(state.clone()),
         };
         let locations =
             install_library_routes(&state, &host, &installation(), serving).expect("routes");
@@ -144,7 +147,9 @@ impl Desktop {
             .build()
             .expect("runtime");
         let jobs = open_jobs(&dir, &host).expect("jobs");
-        install_job_routes(&state, &jobs, runtime.handle().clone()).expect("job routes");
+        let quitting = Arc::new(AtomicBool::new(false));
+        install_job_routes(&state, &jobs, runtime.handle().clone(), quitting.clone())
+            .expect("job routes");
         Self {
             dir,
             state,
@@ -155,6 +160,7 @@ impl Desktop {
             locations,
             opened,
             runtime,
+            quitting,
         }
     }
 
@@ -860,4 +866,53 @@ fn copy_dir(from: &Path, to: &Path) {
             std::fs::copy(entry.path(), target).expect("copy");
         }
     }
+}
+
+#[test]
+fn a_rebuild_stopped_at_exit_resumes_from_its_checkpoint_when_its_library_opens_again() {
+    let dir = fresh_dir("rebuild-exit");
+    let (library, root) = donor_library(&dir.join("donor"));
+    let desktop = Desktop::launch(dir.join("data"));
+    let open = |desktop: &Desktop| {
+        let location = desktop.register(&root);
+        let body = json!({ "location_id": location, "library_id": library });
+        assert_eq!(desktop.command("/api/v1/libraries/openings", body).0, 200);
+    };
+    open(&desktop);
+    desktop.quitting.store(true, Ordering::SeqCst);
+    let (status, rebuilt) = desktop.command(
+        "/api/v1/libraries/rebuilds",
+        json!({ "library_id": library }),
+    );
+    assert_eq!(status, 200, "{rebuilt}");
+    let job = rebuilt["job_id"].as_str().expect("job id").to_string();
+    let mut view = Value::Null;
+    for _ in 0..MAX_JOB_POLLS {
+        view = desktop.get(&format!("/api/v1/jobs/{job}")).1;
+        if view["state"] == "pending" && view["attempts"] == 1 {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(view["state"], "pending", "suspended at exit: {view}");
+    assert_eq!(view["done"], 1, "its checkpoint after the object in hand");
+    let (data, entries) = desktop.stop();
+    let suspended = entries.iter().filter(|e| e.operation == "job.suspended");
+    assert_eq!(suspended.count(), 1, "the exit suspended it once");
+    let desktop = Desktop::launch(data);
+    let (_, view) = desktop.get(&format!("/api/v1/jobs/{job}"));
+    assert_eq!(
+        view["state"], "pending",
+        "not run before its library opens: {view}"
+    );
+    open(&desktop);
+    let view = desktop.finished_job(&job);
+    assert_eq!(view["state"], "completed", "{view}");
+    assert_eq!(view["attempts"], 2, "resumed once");
+    assert_eq!(
+        view["result"]["objects"].as_array().expect("objects").len(),
+        1,
+        "no checkpointed object read again"
+    );
+    desktop.stop();
 }
