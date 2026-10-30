@@ -17,6 +17,7 @@ import pkg from "../../package.json";
 import { CONTRACT_VERSION } from "../api/contract-version";
 import {
   ClientFileSource,
+  ClientDownloadSource,
   ClientHistorySource,
   ClientMetadataSource,
   ClientLibrarySource,
@@ -87,5 +88,6 @@ if (shell) {
 if (shell) {
   const files = { labels, source: new ClientFileSource(client) };
   const history = new ClientHistorySource(client);
-  bindFilesRoute(shell, { ...files, history, metadata: new ClientMetadataSource(client) });
+  const filePanel = { history, download: new ClientDownloadSource(client) };
+  bindFilesRoute(shell, { ...files, filePanel, metadata: new ClientMetadataSource(client) });
 }

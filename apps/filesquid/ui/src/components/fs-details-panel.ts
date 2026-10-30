@@ -3,8 +3,9 @@
  * tab of the file panel (UI-S-031, mockup `resources/ui-mockups/v3/35-panel-file-info.svg`). It
  * shows the storage facts of the opened file version, each owned by the OCFL module (UI-S-003):
  * the original file name, extension, MIME type, size, digests, OCFL object and version, read
- * through `GET /api/v1/files/details` and `GET /api/v1/files/versions` only. The stored name, the
- * logical path and any content location never reach the DOM (UI-S-019, API-S-005).
+ * through `GET /api/v1/files/details` and `GET /api/v1/files/versions`, and the bytes its
+ * history keeps through `GET /api/v1/files/history-size` (UI-F2.11; the row is left out when that
+ * read fails). The stored name, the logical path and any content location never reach the DOM (UI-S-019, API-S-005).
  *
  * It is a panel of the file panel's named slots: it receives the file as its `fileRef`
  * property and holds no reference to any other panel, so it mounts alone. Its table is the
@@ -24,8 +25,9 @@ import type { FileRef } from "../files/model";
 import type { FileSource } from "../files/source";
 import type { HistorySource } from "../files/history-source";
 
-/** The reads the panel needs: the storage facts and the object's versions. */
-export type DetailsSource = Pick<FileSource, "details"> & Pick<HistorySource, "versions">;
+/** The reads the panel needs: the storage facts, the object's versions and the history size. */
+export type DetailsSource = Pick<FileSource, "details"> &
+  Pick<HistorySource, "versions" | "historySize">;
 
 /** What the panel needs. */
 export interface DetailsPanelOptions {
@@ -120,18 +122,35 @@ export class FsDetailsPanel extends HTMLElement {
     table.loading();
     try {
       const signal = abort.signal;
-      const [details, versions] = await Promise.all([
+      const [details, versions, history] = await Promise.all([
         options.source.details(file, { signal }),
         options.source.versions(file, { signal }),
+        readHistorySize(options.source, file, signal),
       ]);
       if (generation !== this.generation) return;
       const locale = document.documentElement.lang || "en";
-      table.rows(detailRows(details, versions, options.labels, locale));
+      table.rows(detailRows(details, versions, options.labels, locale, history));
     } catch (error) {
       if (generation !== this.generation || abort.signal.aborted) return;
       console.warn("FileSquid could not read file details", errorName(error));
       table.error(error);
     }
+  }
+}
+
+/** The file's history size; one that cannot be read leaves its row out and is logged. */
+async function readHistorySize(
+  source: DetailsSource,
+  file: FileRef,
+  signal: AbortSignal,
+): Promise<{ versions: number; bytes: number } | undefined> {
+  try {
+    return await source.historySize(file, { signal });
+  } catch (error) {
+    // A read this panel cancelled itself (its next load, or leaving the document) is not a failure.
+    if (!signal.aborted)
+      console.warn("FileSquid could not read the history size", errorName(error));
+    return undefined;
   }
 }
 

@@ -4,7 +4,8 @@
  * a metadata source is given) and the Versions view behind its history button, puts it in the
  * shell's `panel` slot while a file is open in the browser, and reloads the browser's listing
  * after a panel commits a version (a restore, or a metadata edit). The panels read and write
- * only through the file source, the history source and the metadata source (UI-S-012, ADR 030).
+ * only through the file source, the history source, the download source and the metadata
+ * source (UI-S-012, ADR 030).
  */
 import type { FsDetailsPanel } from "../components/fs-details-panel";
 import type { FsMetadataPanel } from "../components/fs-metadata-panel";
@@ -14,17 +15,23 @@ import type { FsVersionsPanel, VersionsSource } from "../components/fs-versions-
 import type { FileRef } from "../files/model";
 import type { FileSource } from "../files/source";
 import type { HistorySource } from "../files/history-source";
+import type { DownloadSource } from "../files/download-source";
 import type { MetadataSource } from "../files/metadata-source";
 import type { LabelTable } from "../theme/labels";
 
-/** What the file panel needs: the labels, the file source and the history source. */
+/**
+ * What the file panel needs: the labels, the file source, the history source and the
+ * download source.
+ */
 export interface FilePanelRouteOptions {
   /** The active label table. */
   readonly labels: LabelTable;
-  /** Reads storage facts and restores. */
+  /** Reads storage facts, restores and sets version labels. */
   readonly source: FileSource;
   /** Reads histories, versions and history sizes. */
   readonly history: HistorySource;
+  /** Reads the whole file of one version for saving (Download this version). */
+  readonly download: DownloadSource;
   /** Reads and writes statements; without it the panel has no Description tab. */
   readonly metadata?: MetadataSource;
 }
@@ -33,19 +40,25 @@ export interface FilePanelRouteOptions {
 const PANEL_TAG = "fs-file-panel";
 
 /**
- * The reads and the restore the panels use, from the file source and the history source. Pure.
+ * The reads, the restore, the label edit and the download the panels use, from the file source,
+ * the history source and the download source. Pure.
  *
  * @param source The file source.
  * @param history The history source.
- * @returns One object with the five methods, each delegating to its source.
+ * @param download The download source.
+ * @returns One object with the seven methods, each delegating to its source.
  */
 export function panelSource(
   source: FileSource,
   history: HistorySource,
+  download: DownloadSource,
 ): VersionsSource & Pick<FileSource, "details"> {
   return {
     details: (file, options) => source.details(file, options),
     restore: (object, version, paths, options) => source.restore(object, version, paths, options),
+    setVersionLabel: (object, version, label, options) =>
+      source.setVersionLabel(object, version, label, options),
+    readVersionFile: (file, options) => download.readVersionFile(file, options),
     history: (file, options) => history.history(file, options),
     versions: (object, options) => history.versions(object, options),
     historySize: (file, options) => history.historySize(file, options),
@@ -55,7 +68,7 @@ export function panelSource(
 /** Build the file panel with its File info and Description tabs and Versions view. */
 function createPanel(options: FilePanelRouteOptions): FsFilePanel {
   const { labels } = options;
-  const source = panelSource(options.source, options.history);
+  const source = panelSource(options.source, options.history, options.download);
   const panel = document.createElement(PANEL_TAG) as FsFilePanel;
   panel.slot = "panel";
   panel.configure({ labels });
@@ -88,7 +101,8 @@ function createPanel(options: FilePanelRouteOptions): FsFilePanel {
  *
  * @param shell The element the panel is slotted into (the app shell).
  * @param browser The file browser whose open file the panel shows.
- * @param options Labels, the file source and the history source.
+ * @param options Labels, the file, history and download sources, and optionally the metadata
+ *   source.
  */
 export function bindFilePanel(
   shell: HTMLElement,

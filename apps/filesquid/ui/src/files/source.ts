@@ -118,6 +118,16 @@ export interface FileSource {
     paths: readonly string[],
     options: RestoreOptions,
   ): Promise<FileCommit>;
+  /**
+   * Set or clear the label of one version after it was committed (API-F2.5); commits one
+   * version of the object's labels record. Writes.
+   */
+  setVersionLabel(
+    object: ObjectRef,
+    version: string,
+    label: string | null,
+    options: WriteOptions,
+  ): Promise<FileCommit>;
 }
 
 /** The part of `FileSquidClient` the source needs (injectable in tests). */
@@ -421,20 +431,47 @@ export class ClientFileSource implements FileSource {
   }
 
   /**
-   * `POST /api/v1/files/<route>` of the command `{ envelope, input }` with a new operation id,
-   * scoped to `input`'s library and expecting `options.revision`. Network I/O.
+   * Set or clear a version's label with `PUT /api/v1/files/labels`. Network I/O; commits a
+   * version. The API refuses a label that would change nothing as `conflict`, so callers
+   * compare first.
+   *
+   * @param object The library and object.
+   * @param version The version to label: `v1`, `v2`, ...
+   * @param label The label (1 to 512 bytes, not blank, no control characters), or null to
+   *   clear it.
+   * @param options The object's head as last read, and abort signal.
+   * @returns The version published.
+   * @throws ApiError when the API refuses, `conflict` included.
+   */
+  setVersionLabel(
+    object: ObjectRef,
+    version: string,
+    label: string | null,
+    options: WriteOptions,
+  ): Promise<FileCommit> {
+    const body = { ...bodyOf(object), version, label };
+    return this.send<FileCommit>("labels", body, options, "PUT");
+  }
+
+  /**
+   * `POST` (or `PUT`) `/api/v1/files/<route>` of the command `{ envelope, input }` with a new
+   * operation id, scoped to `input`'s library and expecting `options.revision`. Network I/O.
    */
   private async send<T>(
     route: string,
     input: { readonly library_id: string; readonly [field: string]: unknown },
     options: WriteOptions,
+    method?: "PUT",
   ): Promise<T> {
     const path = `/api/v1/files/${route}`;
     const envelope = commandEnvelope({
       scope: `library:${input.library_id}`,
       expectedRevision: options.revision,
     });
-    const answer = await this.client.command<T>(path, envelope, input, { signal: options.signal });
+    const answer = await this.client.command<T>(path, envelope, input, {
+      signal: options.signal,
+      ...(method ? { method } : {}),
+    });
     return committedResult(answer, path);
   }
 }

@@ -28,6 +28,24 @@ export interface VersionRow {
   readonly current: boolean;
 }
 
+/** One action of a version's row menu (UI-S-009, mockup 26). */
+export type VersionAction = "restore" | "download" | "edit-label";
+
+/**
+ * The actions a version's row menu offers, in the order of mockup 26: Restore as new version,
+ * Download this version, Edit label. The current version already is the content shown, so it
+ * is not restored; a version that removed the file holds no file to restore or download, and
+ * only its label can change. No action deletes, expires or thins a version. Pure.
+ *
+ * @param row The row.
+ * @returns The actions, never empty.
+ */
+export function versionActions(row: VersionRow): VersionAction[] {
+  if (row.removed) return ["edit-label"];
+  if (row.current) return ["download", "edit-label"];
+  return ["restore", "download", "edit-label"];
+}
+
 /**
  * The rows of a file's history, newest first; the newest is current unless it removed the
  * file. Pure.
