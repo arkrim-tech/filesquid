@@ -80,7 +80,7 @@ where
             caller: &caller,
             kind: OperationKind::Upload,
             label,
-            operation: UPLOAD_OPERATION,
+            operation: Some(UPLOAD_OPERATION),
             library_id: &query.library_id,
             object_id: &target.object_id,
             metadata: false,
