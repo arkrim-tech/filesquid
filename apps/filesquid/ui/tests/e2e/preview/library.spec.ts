@@ -30,6 +30,17 @@ const REFUSED = /status of (409|503)/;
 /** A path-like string: a drive letter, or a rooted folder of a user or volume. */
 const PATH = /[A-Za-z]:\\|\/Users\/|\/home\/|\/Volumes\//;
 
+/** The command body the UI sends (API-F2.19): a fresh operation id, `scope`, `revision`. */
+const command = (scope: string, revision: string, input: unknown) => ({
+  envelope: {
+    schema_version: 1,
+    operation_id: expect.any(String) as unknown as string,
+    expected_revision: revision,
+    scope,
+  },
+  input,
+});
+
 const start = (page: Page): Locator => page.locator("fs-library-start");
 /** The start page's own title, not the inline host statement's heading. */
 const startTitle = (page: Page): Locator => start(page).locator(".page > h2");
@@ -92,7 +103,11 @@ test("(1) create asks for a folder, passes the location ID on and shows the libr
   ]);
   expect(api.seen.slice(0, 2).map(({ path, method, body }) => [method, path, body])).toEqual([
     ["POST", "/api/v1/libraries/location-choices", { purpose: "create" }],
-    ["POST", "/api/v1/libraries", { location_id: "loc-create" }],
+    [
+      "POST",
+      "/api/v1/libraries",
+      command("location:loc-create", "0", { location_id: "loc-create" }),
+    ],
   ]);
   expect(JSON.stringify(api.seen)).not.toMatch(PATH);
   expect(await page.locator("body").innerText()).not.toMatch(PATH);
@@ -107,13 +122,13 @@ test("(1) open passes the location ID to the open route", async ({ page }) => {
   await expect(page).toHaveURL(new RegExp(`#/library/${LIB}$`));
   expect(api.seen.map(({ path, body }) => [path, body])).toContainEqual([
     "/api/v1/libraries/openings",
-    { location_id: "loc-open" },
+    command("location:loc-open", "0", { location_id: "loc-open" }),
   ]);
   expect(api.to("/api/v1/libraries")).toEqual([]);
   expect(errors).toEqual([]);
 });
 
-test("(1) recover opens the copy, rebuilds from files and reports without repairing", async ({
+test("(1) recover opens the copy, starts its rebuild job expecting the opened revision and repairs nothing", async ({
   page,
 }) => {
   const errors = trackErrors(page);
@@ -130,18 +145,11 @@ test("(1) recover opens the copy, rebuilds from files and reports without repair
       "/api/v1/libraries/rebuilds",
       "/api/v1/libraries/repair-candidates",
     ]);
-  const report = detail(page).locator('[data-result="rebuild"]');
-  await expect(report.locator("p")).toHaveText(
-    text("libraryRebuilt")
-      .replace("{objects}", "2")
-      .replace("{unreadable}", "0")
-      .replace("{invalid}", "1"),
-  );
-  await expect(report.locator("li")).toHaveText(
-    text("libraryRebuiltInvalid")
-      .replace("{object}", OBJECTS[1] ?? "")
-      .replace("{codes}", "E023"),
-  );
+  expect(api.to("/api/v1/libraries/rebuilds").map(({ body }) => body)).toEqual([
+    command(`library:${LIB}`, "1", { library_id: LIB }),
+  ]);
+  // The rebuild is a pending job (API-S-025): no report yet; UI-1.3 follows the job.
+  await expect(detail(page).locator('[data-result="rebuild"] p')).toHaveCount(0);
   await expect(detail(page).locator('[data-section="repair-note"] p')).toHaveText([
     text("libraryReadOnly").replace("{count}", "2"),
     text("libraryReadOnlyReason"),
@@ -163,7 +171,10 @@ test("(1) copy asks for a destination and passes it as destination_location_id",
     { purpose: "copy_destination" },
   ]);
   expect(api.to("/api/v1/libraries/snapshot-copies").map(({ body }) => body)).toEqual([
-    { library_id: LIB, destination_location_id: "loc-copy_destination" },
+    command(`library:${LIB}`, "1", {
+      library_id: LIB,
+      destination_location_id: "loc-copy_destination",
+    }),
   ]);
   await expect(result.locator("li")).toHaveText(
     text("libraryCopyInvalid")

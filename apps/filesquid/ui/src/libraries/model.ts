@@ -15,8 +15,10 @@ export type LocationChoice = components["schemas"]["LocationChoice"];
 export type LibraryView = components["schemas"]["LibraryView"];
 /** What a snapshot copy wrote and what its validation found. */
 export type SnapshotCopyReport = components["schemas"]["SnapshotCopyReport"];
-/** Everything a rebuild from files found. */
+/** Everything a rebuild from files found: the result of its finished job. */
 export type RebuildReport = components["schemas"]["RebuildReport"];
+/** The answer of a rebuild command: its durable job, pending (API-S-025). */
+export type RebuildJobAnswer = components["schemas"]["RebuildJobAnswer"];
 /** One object a rebuild read. */
 export type RebuiltObject = components["schemas"]["RebuiltObject"];
 /** One object a rebuild could not open. */
@@ -38,6 +40,17 @@ export type ObjectRepair = components["schemas"]["ObjectRepair"];
 
 /** The statement the consent dialog shows, as the contract names it. */
 export const REPAIR_STATEMENT_ID = "version_inventory_repair.v2";
+/**
+ * The expected revision of a library that is not open on this host yet (API-S-019): what
+ * create and open send (API-F2.19).
+ */
+export const NEW_LIBRARY_REVISION = "0";
+/**
+ * The revision a library is at once this host binds it (API-S-019): what a copy or rebuild
+ * of a library this page did not create or open expects, until a later command on this host
+ * advances it (the facts of UI-1.3 will read the current one).
+ */
+export const INITIAL_LIBRARY_REVISION = "1";
 /** Most objects one repair request may name (API-S-023). */
 export const MAX_REPAIR_OBJECTS = 1000;
 /** Most bytes one object identifier in a repair request may have. */
@@ -56,18 +69,33 @@ export type LibraryRoute =
   | { readonly kind: "library"; readonly id: string }
   | { readonly kind: "repair"; readonly id: string };
 
-/** What the elements need from the library routes (the live one is `ClientLibrarySource`). */
+/**
+ * What the elements need from the library routes (the live one is `ClientLibrarySource`).
+ * Create, open, copy and rebuild are commands (API-F2.19, UI-S-012): each carries an
+ * envelope with a fresh operation id and the expected revision, and a `conflict` outcome
+ * is raised as the `ApiError` 409 the views word.
+ */
 export interface LibrarySource {
   /** Ask the host to let the owner choose a folder; answers its location ID or `cancelled`. */
   chooseLocation(purpose: ChoicePurpose): Promise<LocationChoice>;
-  /** Create a library on the folder registered as `locationId`. */
+  /** Create a library on the folder registered as `locationId`, expecting revision `0`. */
   create(locationId: string): Promise<LibraryView>;
-  /** Open the library in the folder registered as `locationId`. */
+  /** Open the library in the folder registered as `locationId`, expecting revision `0`. */
   open(locationId: string): Promise<LibraryView>;
-  /** Copy a completed snapshot of a library into the folder registered as the destination. */
-  copy(libraryId: string, destinationLocationId: string): Promise<SnapshotCopyReport>;
-  /** Read every object of an open library from its files, writing nothing. */
-  rebuild(libraryId: string): Promise<RebuildReport>;
+  /**
+   * Copy a completed snapshot of a library into the folder registered as the destination,
+   * expecting the library's `revision` as last read.
+   */
+  copy(
+    libraryId: string,
+    destinationLocationId: string,
+    expectedRevision: string,
+  ): Promise<SnapshotCopyReport>;
+  /**
+   * Start the rebuild of an open library from its files as a durable job, expecting the
+   * library's `revision` as last read; answers the pending job, never a report.
+   */
+  rebuild(libraryId: string, expectedRevision: string): Promise<RebuildJobAnswer>;
   /** List the objects whose head lacks its version inventory or its sidecar. */
   repairCandidates(libraryId: string): Promise<RepairCandidates>;
   /** Run the consented version-inventory repair. */

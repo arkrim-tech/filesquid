@@ -2,9 +2,9 @@
 
 Filled on 29 October 2026 from [`resources/templates/product-vision-template.md`](../templates/product-vision-template.md). This is the canvas for the release that follows the FileSquid MVP. It is the same product as FileSquid. The Drive stays the daily interface. OCFL stays behind that Drive.
 
-Canonical requirements stay in the FileSquid vision and the PRD: [C-025](../product-vision.md#release-sequence), [C-031](../product-vision.md#platforms-originals-and-service-limits), [F-029](../prd.md#f-029-client-encryption-and-key-custody), [F-030](../prd.md#f-030-personal-synchronization-and-availability), [F-031](../prd.md#f-031-encrypted-backup-and-verified-restore), [F-032](../prd.md#f-032-accounts-entitlements-billing-and-cancellation) and [F-059](../prd.md#f-059-hosted-encrypted-backup-and-sync-service). The local `U-` numbers below are reading aids for this note. They are not allocated into the PRD.
+Canonical requirements stay in the FileSquid vision and the PRD: [C-025](../product-vision.md#release-sequence), [C-031](../product-vision.md#platforms-originals-and-service-limits), [F-029](../prd.md#f-029-client-encryption-and-key-custody), [F-030](../prd.md#f-030-personal-synchronization-and-availability), [F-031](../prd.md#f-031-encrypted-backup-and-verified-restore), [F-032](../prd.md#f-032-accounts-entitlements-billing-and-cancellation), [F-043](../prd.md#f-043-c2pa-records-and-action-disclosure), [F-046](../prd.md#f-046-media-metadata-inspection-correction-and-privacy-exports) and [F-059](../prd.md#f-059-hosted-encrypted-backup-and-sync-service). The local `U-` numbers below are reading aids for this note. They are not allocated into the PRD.
 
-The order is the owner decision of 29 October 2026 ([ADR 029](../architecture/029-filesquid-unified-product-and-distributions.md)): the macOS MVP (Task FS-3.9), then this backup release (phase F4, Task FS-4.2), then the first consumer release (phase F3R, Task FS-3.5), then ImageSquid. The design record is the [backup design report](FileSquid%20backup%20design%20report.html).
+The order is the owner decision of 29 October 2026 ([ADR 029](../architecture/029-filesquid-unified-product-and-distributions.md)): the macOS MVP (Task FS-3.9), then this backup release (phase F4, Task FS-4.2) with the Ubuntu (GNOME) and Windows Tauri desktop releases (Task FS-3.11) beside it, then the rest of the first consumer release (phase F3R, Task FS-3.5), then ImageSquid. The design record is the [backup design report](FileSquid%20backup%20design%20report.html).
 
 ## Product Vision
 
@@ -20,16 +20,17 @@ The same person the FileSquid Drive is for: someone who wants a private, durable
 
 The job after the MVP is protection that survives a deleted file, a bad sync, or a dead disk, without handing the operator the keys or asking the owner to run a second archive product. The gain is a restorable point, visible in the Drive, with the local library still theirs if they cancel.
 
-A second person in this picture is someone the Drive owner allows to upload into that Drive. The owner enrolls that person's device key. The upload crosses a network the owner does not trust, so the bytes are encrypted before they leave the uploader's device.
+Several devices may upload into one Drive. The owner enrolls each device's public key onto that node's whitelist. A key that is not listed is refused. The upload crosses a network the owner does not trust, so the bytes are encrypted before they leave the uploading device.
 
-Linux, Windows, `filesquid-server` and ImageSquid follow this release. They are the same product's later hosts and distributions, and they are not a gate on the first backup. The first backup is already a Drive whose recovery points sit in more than one geography.
+Ubuntu (GNOME) and Windows Tauri desktop releases start when the MVP closes and run beside this release. They are not a gate on the first backup, and this release is not a gate on them. `filesquid-server` and ImageSquid follow this release. The first backup is already a Drive whose recovery points sit in more than one geography.
 
 ## Core Features
 
 - Client encryption and key custody before any upload: recovery phrase shown once, device wrap, revocation ([F-029](../prd.md#f-029-client-encryption-and-key-custody)).
-- The Drive owner grants upload permission by enrolling another user's device public key. A password is not that permission. Revoking the key stops later uploads, and the key cannot delete a recovery point ([F-029](../prd.md#f-029-client-encryption-and-key-custody)).
-- Recovery points that stay independent of live sync deletions, with restore of a chosen point onto a clean device and a plaintext check on the client. Each Drive's backup keeps those points in more than one geography ([F-031](../prd.md#f-031-encrypted-backup-and-verified-restore)).
-- Personal sync as a separate guarantee, turned on only after a clean-device restore has passed ([F-030](../prd.md#f-030-personal-synchronization-and-availability)).
+- The Drive owner grants upload permission by enrolling each device's public key onto that node's whitelist. Several devices may be on it. A password is not that permission. Revoking a key stops later uploads, and the key cannot delete a recovery point ([F-029](../prd.md#f-029-client-encryption-and-key-custody)).
+- Recovery points that stay independent of live sync deletions, with restore of a chosen point onto a clean device and a plaintext check on the client. The owner commits and pushes the current snapshot on demand, or on a schedule of 1 hour or 24 hours. Each Drive's backup keeps those points in more than one geography ([F-031](../prd.md#f-031-encrypted-backup-and-verified-restore)).
+- Personal sync as a separate guarantee, turned on only after a clean-device restore has passed. Whitelisted devices on one node sync the live working set with Automerge. Automerge is not a recovery point ([F-030](../prd.md#f-030-personal-synchronization-and-availability)).
+- On upload, EXIF and any other embedded metadata, and any sidecar, move into that file's `<file-uuid>.metadata.md`. The stored bytes are the stripped content. The upload adds a Prov-O record and a C2PA proof on the ProofMode model, signed by the uploading device key ([F-046](../prd.md#f-046-media-metadata-inspection-correction-and-privacy-exports)).
 - A ciphertext-only hosted service at `*.filesquid.tech`, with accounts, entitlements, visible quotas and cancellation that leaves the local library in place ([F-032](../prd.md#f-032-accounts-entitlements-billing-and-cancellation), [F-059](../prd.md#f-059-hosted-encrypted-backup-and-sync-service)).
 - Resumable upload: the client encrypts, persists a checkpoint, and writes S3 multipart parts. Completion is idempotent. The offset survives a reboot of every FileSquid process ([ADR 012](../architecture/012-s3-compatible-ciphertext-storage.md)).
 - Objects first, manifest last. Two hosted credentials: one may append, one may retain. The sync credential cannot delete recovery points.
@@ -46,8 +47,11 @@ Linux, Windows, `filesquid-server` and ImageSquid follow this release. They are 
 - **U-08.** I want a proved restore before anyone claims the paid sync is reliable. Canonical: [F-031](../prd.md#f-031-encrypted-backup-and-verified-restore).
 - **U-09.** I want to leave with a library I can still read. Canonical: [F-042](../prd.md#f-042-ocfl-preservation-and-portable-recovery).
 - **U-10.** I want the charge, the quota and the cancellation window stated before I pay, and my local library kept after I cancel. Canonical: [F-032](../prd.md#f-032-accounts-entitlements-billing-and-cancellation).
-- **U-11.** I want to let someone upload into my Drive by enrolling their device key, and I want a password to be unable to grant that upload. Canonical: [F-029](../prd.md#f-029-client-encryption-and-key-custody).
+- **U-11.** I want to let several devices upload into my Drive by putting each device key on the node whitelist, and I want a password to be unable to grant that upload. Canonical: [F-029](../prd.md#f-029-client-encryption-and-key-custody).
 - **U-12.** I want my Drive's backup to keep copies in more than one geography, so one place failing leaves another copy I can restore. Canonical: [F-031](../prd.md#f-031-encrypted-backup-and-verified-restore), [F-059](../prd.md#f-059-hosted-encrypted-backup-and-sync-service).
+- **U-13.** I want the devices on my node's whitelist to sync the live working set with Automerge, and I want that sync to stay distinct from a recovery point. Canonical: [F-030](../prd.md#f-030-personal-synchronization-and-availability).
+- **U-14.** I want to commit the current state to OCFL on demand, or every 1 hour or every 24 hours, as the snapshot backup package. Canonical: [F-031](../prd.md#f-031-encrypted-backup-and-verified-restore).
+- **U-15.** I want an upload to move embedded and sidecar metadata into the file's Markdown record and to add a Prov-O record and a C2PA proof of that upload. Canonical: [F-046](../prd.md#f-046-media-metadata-inspection-correction-and-privacy-exports), [F-043](../prd.md#f-043-c2pa-records-and-action-disclosure).
 
 ## Technical Stack
 
@@ -59,8 +63,9 @@ The stack stays the one FileSquid already decided.
 - Bytes go from the client to S3-compatible multipart storage. A tus process may sit in front of those same parts if a server must terminate the bytes. That process is not a second file identity.
 - Resume is a durable offset plus idempotent completion. It is not a reason to move the desktop, the mailbox or `filesquid-ocfl` onto Elixir or BEAM ([ADR 012](../architecture/012-s3-compatible-ciphertext-storage.md), [ADR 013](../architecture/013-cargo-svelte-workspaces.md)).
 - The operational database holds accounts and devices and stays empty of private titles.
+- Automerge syncs the live working set among the devices on one node's whitelist. The hosted mailbox does not read that document. OCFL versions remain the snapshots.
 
-Left out of this release: restic, Borg or Kopia as the store; age, ChaCha20-Poly1305 or BLAKE3 as the content suite; a phone PWA; Iroh; Automerge.
+Left out of this release: restic, Borg or Kopia as the store; age, ChaCha20-Poly1305 or BLAKE3 as the content suite; a phone PWA; Iroh. Automerge is in this release as live sync, and it is not the store.
 
 ## Standards, Laws, and Regulations
 
@@ -86,9 +91,11 @@ The daily interface is a Drive. The bytes underneath are an encrypted OCFL libra
 
 ## Key Constraints
 
-- This release starts when Task FS-3.9 is checked. Phase F3R waits until Task FS-4.2 is checked. The desktop backup path does not wait for `filesquid-server`.
+- This release starts when Task FS-3.9 is checked. Task FS-3.11 (Ubuntu and Windows desktop) starts then too and does not wait on Task FS-4.2. The rest of phase F3R waits until Task FS-4.2 is checked. The desktop backup path does not wait for `filesquid-server`.
 - Task FS-4.1 depends on Task FS-3.9 and Task 0.2.
-- Upload permission for a Drive is an enrolled device public key. A password is not that permission.
+- Upload permission for a Drive is a device public key on that node's whitelist. Several devices may be on it. A password is not that permission.
+- Live sync among those devices is Automerge. A recovery point is an OCFL snapshot, on demand or every 1 or 24 hours.
+- An upload strips embedded and sidecar metadata into `<file-uuid>.metadata.md` and adds a Prov-O record and a C2PA proof of that upload.
 - Each Drive's backup keeps recovery points in more than one geography. Further destinations, physical seeding and paid assurance exercises stay F-035.
 - Restore is demonstrated before a paid sync reliability claim.
 - The content suite stays ADR 009. The store stays the encrypted OCFL profile.
@@ -110,7 +117,7 @@ The Drive, local capture, metadata controls, preservation packaging and export s
 
 ## Sales Channels
 
-The macOS desktop is the first client, as an early-access build of the Drive, then as a subscriber of `*.filesquid.tech`. The account is the channel for the paid service. Linux, Windows and `filesquid-server` enrol in the same service after this release. No separate field-capture app ships with the first backup.
+The macOS desktop is the first client, as an early-access build of the Drive, then as a subscriber of `*.filesquid.tech`. Ubuntu (GNOME) and Windows Tauri desktops join as Release 1 beside this release. The account is the channel for the paid service. `filesquid-server` enrols in the same service after this release. No separate field-capture app ships with the first backup.
 
 ## Key Resources & Partnerships
 

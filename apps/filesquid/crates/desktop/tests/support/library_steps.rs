@@ -49,6 +49,8 @@ pub struct LibraryRig {
     library: Option<String>,
     root: Option<PathBuf>,
     answer: Option<(u16, String)>,
+    /// Operation IDs handed out by [`LibraryRig::command`].
+    operations: u64,
     remove_on_drop: bool,
 }
 
@@ -129,6 +131,7 @@ impl LibraryRig {
             library: None,
             root: None,
             answer: None,
+            operations: 0,
             remove_on_drop: true,
         }
     }
@@ -144,6 +147,40 @@ impl LibraryRig {
     fn choose(&mut self, folder: PathBuf) {
         self.location = Some(self.locations.register(&folder).expect("registered"));
         self.folder = Some(folder);
+    }
+
+    /// POST the library command `input` to `path` as the owner, under a fresh operation ID
+    /// with the scope and expected revision the route takes (API-F2.19): `location:<id>` and
+    /// `0` for create and open, `library:<id>` and `1` for copy and rebuild; keep the status
+    /// and, for a 200, the outcome's `result`, else the whole body.
+    async fn command(&mut self, path: &str, input: Value) {
+        let binds = path == "/api/v1/libraries" || path.ends_with("/openings");
+        let (scope, revision) = match binds {
+            true => (
+                format!("location:{}", input["location_id"].as_str().unwrap_or("")),
+                "0",
+            ),
+            false => (
+                format!("library:{}", input["library_id"].as_str().unwrap_or("")),
+                "1",
+            ),
+        };
+        let operation = format!("op-{}-{}", std::process::id(), self.operations);
+        self.operations += 1;
+        let body = json!({
+            "envelope": {
+                "schema_version": 1,
+                "operation_id": operation,
+                "expected_revision": revision,
+                "scope": scope,
+            },
+            "input": input,
+        });
+        self.post(path, body).await;
+        let (status, answer) = self.answer();
+        if status == 200 {
+            self.answer = Some((status, answer["result"].to_string()));
+        }
     }
 
     /// POST `body` to `path` as the owner and keep the answer.
@@ -176,6 +213,8 @@ impl LibraryRig {
         let mut fresh = Self::launch_in(self.dir.clone());
         fresh.library = self.library.take();
         fresh.root = self.root.take();
+        // Operation IDs stay unique across the restart: receipts from before it may persist.
+        fresh.operations = self.operations;
         std::mem::swap(self, &mut fresh);
         fresh.remove_on_drop = false;
     }
@@ -291,7 +330,7 @@ async fn open_donor(rig: &mut LibraryRig, w010: bool) {
     }
     let location = rig.locations.register(&root).expect("registered");
     let body = json!({ "location_id": location, "library_id": library });
-    rig.post("/api/v1/libraries/openings", body).await;
+    rig.command("/api/v1/libraries/openings", body).await;
     assert_eq!(rig.answer().0, 200, "{:?}", rig.answer);
     rig.library = Some(library);
     rig.root = Some(root);
@@ -309,14 +348,14 @@ fn chose_inside(world: &mut DesktopWorld) {
 async fn create_there(world: &mut DesktopWorld) {
     let rig = rig(world);
     let location = rig.location.clone().expect("a chosen folder");
-    rig.post("/api/v1/libraries", json!({ "location_id": location }))
+    rig.command("/api/v1/libraries", json!({ "location_id": location }))
         .await;
 }
 
 #[when("the app creates a library in a folder the host never registered")]
 async fn create_unknown(world: &mut DesktopWorld) {
     let rig = rig(world);
-    rig.post("/api/v1/libraries", json!({ "location_id": "loc-unknown" }))
+    rig.command("/api/v1/libraries", json!({ "location_id": "loc-unknown" }))
         .await;
 }
 
@@ -327,7 +366,7 @@ async fn copy_there(world: &mut DesktopWorld) {
         "library_id": rig.library.clone().expect("library"),
         "destination_location_id": rig.location.clone().expect("a chosen folder"),
     });
-    rig.post("/api/v1/libraries/snapshot-copies", body).await;
+    rig.command("/api/v1/libraries/snapshot-copies", body).await;
 }
 
 #[when("the app asks to repair it without the owner's consent")]
@@ -477,7 +516,7 @@ fn copy_chosen(world: &mut DesktopWorld) {
 async fn open_copy(world: &mut DesktopWorld) {
     let rig = rig(world);
     let body = json!({ "location_id": rig.location.clone().expect("location") });
-    rig.post("/api/v1/libraries/openings", body).await;
+    rig.command("/api/v1/libraries/openings", body).await;
 }
 
 #[then("the answer should name the library the copied folder holds")]

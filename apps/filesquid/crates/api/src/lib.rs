@@ -54,6 +54,7 @@ pub mod auth;
 pub mod canonical;
 pub mod client_events;
 pub mod content;
+pub mod envelope;
 pub mod error;
 pub mod events;
 pub mod files;
@@ -84,7 +85,7 @@ pub use routes::{route_actions, routed_paths, router, Liveness};
 use std::sync::{Arc, OnceLock};
 
 /// Version of the FileSquid API contract. Bumped when the contract changes.
-pub const API_VERSION: &str = "0.30.0";
+pub const API_VERSION: &str = "0.31.0";
 
 /// URL prefix shared by every API route.
 pub const API_PREFIX: &str = "/api/v1";
@@ -325,6 +326,12 @@ impl ApiState {
 
     /// The receipts of the file write commands.
     pub fn file_receipts(&self) -> &Arc<files::CommandReceipts> {
+        &self.file_receipts
+    }
+
+    /// The receipts of every command route of this host: one store, so an operation ID is
+    /// one idempotency key across the file write routes and the library routes (API-S-019).
+    pub fn command_receipts(&self) -> &Arc<files::CommandReceipts> {
         &self.file_receipts
     }
 

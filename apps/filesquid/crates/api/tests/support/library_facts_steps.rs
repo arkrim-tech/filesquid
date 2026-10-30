@@ -1,7 +1,9 @@
 //! Step definitions for `library_facts_API-S-038.feature` (Task API-F2.18; API-S-038): library
 //! names, facts and recent libraries through the router, over real OCFL roots on disk.
 
-use crate::library_routes_fixture::{Answer, LibraryRig, Mount};
+use crate::library_routes_fixture::{
+    library_command, location_command, operation_id, Answer, LibraryRig, Mount,
+};
 use crate::MonitorWorld;
 use cucumber::{given, then, when};
 use filesquid_api::auth::Principal;
@@ -54,13 +56,22 @@ impl NavigationAccess for Except {
     }
 }
 
+/// `body`, a bind command, with `name` added to its input.
+fn named(mut body: Value, name: &str) -> Value {
+    body["input"]["name"] = json!(name);
+    body
+}
+
 /// Create a library named `name` on a new location `folder`.
 async fn create(w: &mut MonitorWorld, folder: &str, name: &str) {
     let location = w.facts.rig().locations.register(folder);
-    let body = json!({ "location_id": location, "name": name });
+    let body = named(
+        location_command(&location, &operation_id(), "0", None),
+        name,
+    );
     let answer = w.facts.rig().post("/api/v1/libraries", body).await;
     assert_eq!(answer.status.as_u16(), 200, "{}", answer.text());
-    let library = answer.json()["library_id"]
+    let library = answer.result()["library_id"]
         .as_str()
         .expect("id")
         .to_string();
@@ -119,7 +130,13 @@ async fn read_facts(w: &mut MonitorWorld) {
 #[when(expr = "the owner renames the library to {string}")]
 async fn rename(w: &mut MonitorWorld, name: String) {
     let (library, _) = w.facts.last();
-    let body = json!({ "library_id": library, "name": name });
+    read_facts(w).await;
+    let revision = w.facts.answer().json()["revision"]
+        .as_str()
+        .unwrap_or("1")
+        .to_string();
+    let input = json!({ "library_id": library, "name": name });
+    let body = library_command(&library, &operation_id(), &revision, input);
     let answer = w.facts.rig().post("/api/v1/libraries/renames", body).await;
     assert_eq!(answer.status.as_u16(), 200, "{}", answer.text());
     w.facts.names.push(name);
@@ -150,7 +167,10 @@ async fn create_with_control_character(w: &mut MonitorWorld) {
 /// location for the Then steps.
 async fn create_named(w: &mut MonitorWorld, name: &str) {
     let location = w.facts.rig().locations.register("checked-name");
-    let body = json!({ "location_id": location, "name": name });
+    let body = named(
+        location_command(&location, &operation_id(), "0", None),
+        name,
+    );
     w.facts.answer = Some(w.facts.rig().post("/api/v1/libraries", body).await);
     w.facts.location = Some(location);
 }
@@ -215,7 +235,7 @@ fn listed(w: &mut MonitorWorld) {
 async fn created_with_bytes(w: &mut MonitorWorld, bytes: usize) {
     let answer = w.facts.answer();
     assert_eq!(answer.status.as_u16(), 200, "{}", answer.text());
-    let library = answer.json()["library_id"]
+    let library = answer.result()["library_id"]
         .as_str()
         .expect("id")
         .to_string();

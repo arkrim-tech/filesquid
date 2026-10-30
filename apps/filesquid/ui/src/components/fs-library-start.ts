@@ -12,8 +12,9 @@
  * unavailable state with its reason and a Retry; the three choices stay on the page. No path is
  * ever shown. Words come only from the label table, styling only from tokens.
  *
- * Recover opens the chosen copy and then rebuilds its catalog from the OCFL files alone; the
- * report waits in the registry for the library page. Nothing is repaired or adopted. Retry
+ * Recover opens the chosen copy and then starts the rebuild of its catalog from the OCFL files
+ * alone as a durable job (API-F2.19); the job's progress and report come from the job routes
+ * (UI-1.3), not from this page. Nothing is repaired or adopted. Retry
  * resumes from the step that failed: a folder already chosen is not asked for again, and a
  * library already opened is not opened again.
  */
@@ -218,11 +219,14 @@ export class FsLibraryStart extends HTMLElement {
     return view;
   }
 
-  /** Rebuild a recovered copy's catalog from its files and keep the report. Network I/O. */
+  /**
+   * Start the rebuild of a recovered copy's catalog from its files as a durable job, expecting
+   * the revision the open answered (API-F2.19); its progress and report are the job's (UI-1.3).
+   * Network I/O.
+   */
   private async rebuild(view: LibraryView): Promise<void> {
-    const { source, registry } = this.options as LibraryPageOptions;
-    const report = await step("rebuild", () => source.rebuild(view.library_id));
-    registry.rememberRebuild(view.library_id, report);
+    const { source } = this.options as LibraryPageOptions;
+    await step("rebuild", () => source.rebuild(view.library_id, view.revision));
   }
 
   /** Show a failed step, and log it to the console. */

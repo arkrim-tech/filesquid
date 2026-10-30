@@ -36,7 +36,7 @@ mod view;
 
 pub use model::{Job, JobControl, JobError, JobSpec, JobState, Lease};
 pub use runner::JobRunner;
-pub use service::{Halt, Jobs, RunningJob};
+pub use service::{mint_job_id, Halt, Jobs, RunningJob};
 pub use slots::{JobClass, JobLimits};
 pub use store::{
     same_id, JobFilter, JobList, JobStore, MemoryJobStore, SlotKinds, MAX_LISTED_JOBS,
