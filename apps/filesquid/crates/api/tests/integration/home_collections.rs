@@ -433,3 +433,127 @@ async fn a_collection_move_gives_a_file_another_folder_keeping_its_name_and_its_
     );
     assert_redacted(&rig, &["beach", "Archive", "Summer"]);
 }
+
+/// Ask for the collection folder `folder` with the extra fields of `extra`; answer the answer.
+async fn foldered(rig: &FilesRig, folder: &str, extra: Value) -> Answer {
+    let mut body = json!({
+        "library_id": LIBRARY, "collection_id": HOME_COLLECTION, "folder": folder
+    });
+    let fields = body.as_object_mut().expect("object");
+    for (key, value) in extra.as_object().expect("extra fields") {
+        match value {
+            Value::Null => fields.remove(key),
+            _ => fields.insert(key.clone(), value.clone()),
+        };
+    }
+    rig.command("/api/v1/files/folders", body).await
+}
+
+#[tokio::test]
+async fn a_new_folder_at_a_taken_path_is_numbered_beside_it_and_nothing_is_written() {
+    let rig = FilesRig::new().await;
+    rig.home
+        .place(&placed_id(1), &home(), "filepathX/directoryY/a.jpg");
+    let answer = foldered(&rig, "filepathX/directoryY", json!({})).await;
+    assert_eq!(answer.status, StatusCode::OK, "{:?}", answer.json());
+    assert_eq!(
+        answer.result(),
+        json!({
+            "library_id": LIBRARY, "collection_id": HOME_COLLECTION,
+            "path": "filepathX/directoryY-1", "pending": true
+        })
+    );
+    rig.home
+        .place(&placed_id(2), &home(), "filepathX/directoryY-1/b.jpg");
+    let again = foldered(&rig, "filepathX/directoryY", json!({})).await;
+    assert_eq!(again.result()["path"], "filepathX/directoryY-2");
+    let fresh = foldered(&rig, "filepathX/Fresh", json!({})).await;
+    assert_eq!(fresh.result()["path"], "filepathX/Fresh");
+    assert!(rig.home.journal().is_empty(), "no snapshot version");
+    assert_eq!(
+        rig.home.placed(&placed_id(1)),
+        Some((home(), "filepathX/directoryY/a.jpg".into())),
+        "nothing moved"
+    );
+    assert_redacted(&rig, &["filepathX", "directoryY", "Fresh"]);
+}
+
+#[tokio::test]
+async fn a_new_folder_at_a_file_path_is_numbered_beside_the_file() {
+    let rig = FilesRig::new().await;
+    rig.home.place(&placed_id(1), &home(), "Summer/notes");
+    let answer = foldered(&rig, "Summer/notes", json!({})).await;
+    assert_eq!(answer.status, StatusCode::OK, "{:?}", answer.json());
+    assert_eq!(answer.result()["path"], "Summer/notes-1");
+}
+
+#[tokio::test]
+async fn a_new_folder_names_its_collection_or_is_refused_with_the_rule_code() {
+    let cases = [
+        (
+            json!({ "collection_id": null }),
+            (400, "invalid_request"),
+            "destination_required",
+            "Summer",
+        ),
+        (
+            json!({ "collection_id": STRANGER }),
+            (404, "not_found"),
+            "collection_not_found",
+            "Summer",
+        ),
+        (
+            json!({}),
+            (400, "invalid_request"),
+            "invalid_path",
+            "provenance",
+        ),
+        (
+            json!({}),
+            (400, "invalid_request"),
+            "invalid_path",
+            ".filesquid/notes",
+        ),
+    ];
+    for (extra, status, journal_code, folder) in cases {
+        let rig = FilesRig::new().await;
+        let answer = foldered(&rig, folder, extra).await;
+        assert_refused(&rig, &answer, status, journal_code, "files.create_folder");
+        assert_redacted(&rig, &["Summer"]);
+    }
+}
+
+#[tokio::test]
+async fn after_9999_numbers_a_new_folder_is_path_suffix_exhausted() {
+    let rig = FilesRig::new().await;
+    rig.home.place(&placed_id(0), &home(), "full/a.txt");
+    for n in 1..=MAX_SUFFIX {
+        rig.home
+            .place(&placed_id(n), &home(), &format!("full-{n}/a.txt"));
+    }
+    let answer = foldered(&rig, "full", json!({})).await;
+    assert_refused(
+        &rig,
+        &answer,
+        (409, "conflict"),
+        "path_suffix_exhausted",
+        "files.create_folder",
+    );
+    assert!(rig.home.journal().is_empty(), "no snapshot version");
+}
+
+#[tokio::test]
+async fn a_numbered_folder_over_255_bytes_is_name_too_long() {
+    let rig = FilesRig::new().await;
+    let long = "d".repeat(255);
+    rig.home
+        .place(&placed_id(1), &home(), &format!("{long}/a.txt"));
+    let answer = foldered(&rig, &long, json!({})).await;
+    assert_refused(
+        &rig,
+        &answer,
+        (400, "invalid_request"),
+        "name_too_long",
+        "files.create_folder",
+    );
+}
