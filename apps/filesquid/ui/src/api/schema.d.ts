@@ -1517,7 +1517,7 @@ export interface components {
          * @description The kind of a committed operation: one activity of the PROV-O history.
          * @enum {string}
          */
-        OperationKind: "import" | "upload" | "copy" | "rename" | "move" | "hide" | "unhide" | "delete" | "restore" | "purge" | "metadata.edit" | "label" | "revert" | "reinstate" | "snapshot" | "catalog" | "repair" | "export" | "scrub" | "backfill" | "unknown";
+        OperationKind: "import" | "upload" | "copy" | "rename" | "move" | "hide" | "unhide" | "delete" | "restore" | "purge" | "metadata.edit" | "label" | "revert" | "reinstate" | "snapshot" | "catalog.organisation" | "repair" | "export" | "scrub" | "publish" | "backfill" | "unknown";
         /** @description One OCFL object version. */
         VersionRef: {
             object_id: string;

@@ -4783,10 +4783,11 @@
           "revert",
           "reinstate",
           "snapshot",
-          "catalog",
+          "catalog.organisation",
           "repair",
           "export",
           "scrub",
+          "publish",
           "backfill",
           "unknown"
         ]

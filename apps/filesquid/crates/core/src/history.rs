@@ -35,6 +35,10 @@ const MAX_MESSAGE_MEMBERS: usize = 8;
 /// Longest decimal revision accepted (fits `u64`).
 const MAX_REVISION_DIGITS: usize = 19;
 
+/// The token catalog organisation was written as before it became
+/// `catalog.organisation`; read only (see [`OperationKind::parse`]).
+pub const FORMER_CATALOG_TOKEN: &str = "catalog";
+
 /// The kind of a committed operation: one activity of the PROV-O history.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum OperationKind {
@@ -76,6 +80,8 @@ pub enum OperationKind {
     Export,
     /// A scrubbed (privacy-filtered) output.
     Scrub,
+    /// A share or publication output.
+    Publish,
     /// A reconstruction of missing history records.
     Backfill,
     /// An operation whose kind was not recorded.
@@ -84,7 +90,7 @@ pub enum OperationKind {
 
 impl OperationKind {
     /// Every kind, in declaration order.
-    pub const ALL: [Self; 21] = [
+    pub const ALL: [Self; 22] = [
         Self::Import,
         Self::Upload,
         Self::Copy,
@@ -104,6 +110,7 @@ impl OperationKind {
         Self::Repair,
         Self::Export,
         Self::Scrub,
+        Self::Publish,
         Self::Backfill,
         Self::Unknown,
     ];
@@ -126,17 +133,25 @@ impl OperationKind {
             Self::Revert => "revert",
             Self::Reinstate => "reinstate",
             Self::Snapshot => "snapshot",
-            Self::CatalogOrganisation => "catalog",
+            Self::CatalogOrganisation => "catalog.organisation",
             Self::Repair => "repair",
             Self::Export => "export",
             Self::Scrub => "scrub",
+            Self::Publish => "publish",
             Self::Backfill => "backfill",
             Self::Unknown => "unknown",
         }
     }
 
-    /// The kind whose token is `token`, if any.
+    /// The kind whose token is `token`, if any. The former token
+    /// [`FORMER_CATALOG_TOKEN`] is still read as
+    /// [`CatalogOrganisation`](Self::CatalogOrganisation), because OCFL
+    /// versions committed before the rename carry it in their immutable
+    /// messages and records; it is never written.
     pub fn parse(token: &str) -> Option<Self> {
+        if token == FORMER_CATALOG_TOKEN {
+            return Some(Self::CatalogOrganisation);
+        }
         Self::ALL.into_iter().find(|kind| kind.as_str() == token)
     }
 }
