@@ -16,6 +16,8 @@ Amended: 2026-10-18 by [ADR 037](./037-c2pa-in-release-2.md): the first consumer
 
 Amended: 2026-10-19 by [ADR 040](./040-prov-o-history.md): the `prov` module joins the modules and ships in the FileSquid MVP and release 1 with `ocfl` and `metadata` (Decision 7), and its optional `ocfl` feature is the second allowed optional cross-module dependency (Decision 4).
 
+Amended: 2026-10-29 (owner decision): encrypted backup and sync is the primary product immediately after the MVP and before the first consumer release. The Drive is the daily interface. OCFL, the encrypted OCFL profile and PROV-O stay behind that Drive (Decision 7).
+
 ## Context / Requirement Reference
 
 Until now this repository delivered ImageSquid, a photo and video manager. Three engines (`filesquid-ocfl`, `filesquid-metadata`, `filesquid-provenance`) were separate products that ImageSquid called, each meant to move to its own repository ([ADR 023](./023-filesquid-ocfl-engine-and-parquet.md), [ADR 024](./024-filesquid-metadata-engine.md), [ADR 026](./026-filesquid-provenance-engine.md)). A generic FileSquid product was planned for after ImageSquid 1.0.
@@ -25,7 +27,7 @@ The owner reversed that order. FileSquid is now the product this repository deli
 Requirements that drive this decision:
 
 - One Cargo workspace of module crates, with no default cross-module dependency; the optional ones are the `metadata` module's `ocfl` store and, since [ADR 040](./040-prov-o-history.md), the `prov` module's `ocfl` feature, and each crate building and testing alone ([T-052](../product-vision.md#api-and-hosts)).
-- Release order: FileSquid first, encrypted backup and sync second, ImageSquid after that ([C-025](../product-vision.md#release-sequence), [FE-078](../product-vision.md#platform-api-and-hosts)). Arkrim and other milestones later ([C-052](../product-vision.md#release-sequence)).
+- Release order, amended 2026-10-29: the macOS MVP first, then encrypted backup and sync as the primary product, then the first consumer release, then ImageSquid ([C-025](../product-vision.md#release-sequence), [FE-078](../product-vision.md#platform-api-and-hosts)). Arkrim and other milestones later ([C-052](../product-vision.md#release-sequence)). The Drive is the interface. OCFL stays behind it.
 - Distributions reuse FileSquid through its API and add no backend ([C-026](../product-vision.md#release-sequence)). Arkrim's curation jobs, Parquet and FAIR features are FileSquid modules ([FE-079](../product-vision.md#institutional-interoperability), [C-051](../product-vision.md#platforms-originals-and-service-limits)).
 - The module engines stay independently usable by programs that never run FileSquid ([FE-069](../product-vision.md#independent-library), [FE-070](../product-vision.md#independent-library), [FE-072](../product-vision.md#independent-library), [C-047](../product-vision.md#module-rules), [C-048](../product-vision.md#module-rules), [C-054](../product-vision.md#module-rules)).
 - Each distribution MUST be extractable to its own repository ([Constraint requirements](../product-vision.md#constraint-requirements)).
@@ -55,12 +57,13 @@ Requirements that drive this decision:
 
 **6. Arkrim.** Arkrim is the digital-archives and records-management distribution. Its curation jobs (for example transcoding), Parquet projection and FAIR reporting are FileSquid modules exposed through the API to an Arkrim dashboard ([FE-079](../product-vision.md#institutional-interoperability)).
 
-**7. Release order.**
+**7. Release order.** Amended 2026-10-29. The Drive is the interface people use for day-to-day file work. OCFL compliance, the encrypted OCFL profile and PROV-O stay behind that Drive.
 
-1. FileSquid: the API and the default Drive-style UI, with the `ocfl`, `metadata` and `prov` modules ([ADR 040](./040-prov-o-history.md)), on the desktop and `filesquid-server` hosts (the `c2pa` module moved to the ImageSquid release by [ADR 037](./037-c2pa-in-release-2.md)).
-2. Encrypted backup and sync at `*.filesquid.tech` ([ADR 032](./032-hosting-and-privacy-model.md)).
-3. ImageSquid, as a FileSquid distribution, with FileSquid's `c2pa` module.
-4. Arkrim and the other later milestones, in an order the owner chooses ([C-052](../product-vision.md#release-sequence)).
+1. The FileSquid MVP: the default Drive on the macOS desktop, with the `ocfl`, `metadata` and `prov` modules behind it ([ADR 035](./035-macos-first-desktop-mvp.md), [ADR 040](./040-prov-o-history.md)).
+2. Encrypted backup and sync at `*.filesquid.tech`, the primary product after the MVP ([ADR 032](./032-hosting-and-privacy-model.md)). It does not wait for `filesquid-server` or the rest of the first consumer release. The owner of a Drive enrolls device keys for uploads into that Drive. That Drive's backup keeps recovery points in more than one geography ([ADR 012](./012-s3-compatible-ciphertext-storage.md)).
+3. The first consumer release: Linux and Windows desktop, `filesquid-server`, and the remaining release-1 scope, still the default Drive over the `ocfl`, `metadata` and `prov` modules (the `c2pa` module moved to the ImageSquid release by [ADR 037](./037-c2pa-in-release-2.md)).
+4. ImageSquid, as a FileSquid distribution, with FileSquid's `c2pa` module.
+5. Arkrim and the other later milestones, in an order the owner chooses ([C-052](../product-vision.md#release-sequence)).
 
 **8. Module rename.** The C2PA module is `filesquid-c2pa`, in `apps/filesquid/crates/c2pa/`. It replaces the name `filesquid-provenance`. [ADR 026](./026-filesquid-provenance-engine.md) keeps its filename as history; its technical content applies to `filesquid-c2pa`.
 

@@ -1,0 +1,1001 @@
+<!DOCTYPE html>
+<html lang="en" data-mode="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>FileSquid backup design report</title>
+<script>
+(function () {
+  var saved = null;
+  try { saved = localStorage.getItem("fs-theme"); } catch (e) {}
+  var dark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+  document.documentElement.setAttribute("data-mode", saved || (dark ? "dark" : "light"));
+})();
+</script>
+<style>
+/* FileSquid design guide v1. Flat fills, one accent, no gradients, no drop shadows.
+   Tokens match the guide. Sizing follows the written scale, not the denser catalog page. */
+*, *::before, *::after { box-sizing: border-box; }
+html { font-size: 16px; scroll-padding-top: 24px; }
+html[data-mode="light"] {
+  --bg: #FFFFFF;
+  --card: #FFFFFF;
+  --raised: #F5F5F5;
+  --border-sub: #E0E0E0;
+  --border-def: #CCCCCC;
+  --text-head: #000000;
+  --text-body: #111111;
+  --text-sec: #555555;
+  --text-muted: #777777;
+  --text-link: #16AC49;
+  --code-bg: #F5F5F5;
+  --code-text: #111111;
+  --code-border: #E0E0E0;
+  --green: #16AC49;
+  --green-tint: #F0FAF4;
+  --green-text: #0f8a39;
+  --error: #E53935;
+  --nav-bg: #FFFFFF;
+  color-scheme: light;
+}
+html[data-mode="dark"] {
+  --bg: #141414;
+  --card: #1C1C1C;
+  --raised: #242424;
+  --border-sub: #2A2A2A;
+  --border-def: #333333;
+  --text-head: #F5F5F5;
+  --text-body: #E0E0E0;
+  --text-sec: #A0A0A0;
+  --text-muted: #6A6A6A;
+  --text-link: #16AC49;
+  --code-bg: #1C1C1C;
+  --code-text: #E0E0E0;
+  --code-border: #2A2A2A;
+  --green: #16AC49;
+  --green-tint: #0D2B18;
+  --green-text: #4ACA74;
+  --error: #EF5350;
+  --nav-bg: #1C1C1C;
+  color-scheme: dark;
+}
+html, body { margin: 0; background: var(--bg); color: var(--text-body); }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  line-height: 1.65;
+  min-height: 100vh;
+}
+.page {
+  max-width: 1200px;
+  margin: 0 auto;
+  display: flex;
+  align-items: flex-start;
+  min-height: 100vh;
+}
+.sidenav {
+  width: 240px;
+  flex-shrink: 0;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
+  background: var(--card);
+  border-right: 1px solid var(--border-sub);
+  display: flex;
+  flex-direction: column;
+  padding: 20px 0 24px;
+}
+.wordmark {
+  padding: 0 16px 16px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid var(--border-sub);
+  text-decoration: none;
+}
+.wordmark strong {
+  display: block;
+  font-family: Georgia, Charter, "Palatino Linotype", serif;
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text-head);
+  letter-spacing: -0.01em;
+  line-height: 1.1;
+}
+.wordmark small {
+  display: block;
+  margin-top: 4px;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  font-weight: 400;
+}
+.nav-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  padding: 16px 16px 4px;
+}
+.nav-item {
+  display: block;
+  padding: 6px 16px;
+  font-size: 13px;
+  color: var(--text-sec);
+  text-decoration: none;
+  border-left: 2.5px solid transparent;
+}
+.nav-item:hover { color: var(--text-body); background: var(--raised); }
+.nav-item.active {
+  color: var(--green);
+  border-left-color: var(--green);
+  background: var(--green-tint);
+}
+.sidenav-footer { margin-top: auto; padding: 16px 16px 0; }
+.mode-toggle {
+  display: flex;
+  border: 1px solid var(--border-sub);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--raised);
+}
+.mode-btn {
+  flex: 1;
+  padding: 7px 0;
+  font: 600 12px/1 inherit;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.mode-btn.on {
+  background: var(--card);
+  color: var(--text-head);
+  outline: 1px solid var(--border-def);
+}
+.main {
+  flex: 1;
+  min-width: 0;
+  padding: 48px 40px 96px;
+}
+.prose { max-width: 700px; }
+h1, h2, h3.feature {
+  font-family: Georgia, Charter, "Palatino Linotype", serif;
+  color: var(--text-head);
+  font-weight: 700;
+  letter-spacing: -0.025em;
+  line-height: 1.05;
+  text-wrap: balance;
+}
+h1 { font-size: clamp(48px, 6vw, 64px); margin: 0 0 16px; }
+h2 {
+  font-size: clamp(30px, 4vw, 36px);
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+  margin: 64px 0 16px;
+}
+h3.feature {
+  font-size: 22px;
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+  margin: 40px 0 8px;
+}
+h3.label {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-sec);
+  margin: 32px 0 12px;
+}
+p { font-size: 17px; line-height: 1.65; margin: 0 0 16px; }
+.standfirst { font-size: 20px; line-height: 1.5; margin: 0 0 16px; }
+.eyebrow {
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin: 0 0 12px;
+}
+.meta { font-size: 13px; color: var(--text-sec); margin: 0 0 20px; }
+a { color: var(--text-link); text-decoration: none; }
+a:hover { text-decoration: underline; }
+code {
+  font-family: "SF Mono", "Fira Code", "Fira Mono", "Roboto Mono", Consolas, monospace;
+  font-size: 0.86em;
+  background: var(--code-bg);
+  border: 1px solid var(--code-border);
+  color: var(--code-text);
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+strong { font-weight: 600; color: var(--text-head); }
+ul, ol { margin: 0 0 16px; padding-left: 1.25em; }
+li { margin-bottom: 8px; font-size: 17px; line-height: 1.65; }
+hr { border: 0; border-top: 1px solid var(--border-sub); margin: 48px 0; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 20px 0 0; }
+.chip {
+  font-family: "SF Mono", "Fira Code", "Fira Mono", "Roboto Mono", Consolas, monospace;
+  font-size: 13px;
+  padding: 3px 10px;
+  border: 1px solid var(--border-def);
+  border-radius: 4px;
+  color: var(--text-body);
+  background: var(--bg);
+}
+.chip.on { background: var(--green-tint); color: var(--green-text); border-color: var(--green-tint); }
+.two {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 16px;
+  margin: 16px 0 24px;
+}
+.two > div, .card, .callout, .slice {
+  border: 1px solid var(--border-sub);
+  border-radius: 8px;
+  background: var(--card);
+}
+.two > div, .card { padding: 20px 22px; }
+.two h3.feature, .card h3.feature { margin-top: 0; }
+.two ul, .card ul { margin-bottom: 0; }
+.callout {
+  border-left: 3px solid var(--green);
+  padding: 16px 20px;
+  margin: 24px 0;
+}
+.callout.err { border-left-color: var(--error); }
+.callout .t {
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+.callout p:last-child, .callout ul:last-child { margin-bottom: 0; }
+.tbl { overflow-x: auto; margin: 16px 0 24px; }
+table { border-collapse: collapse; width: 100%; font-size: 15px; min-width: 560px; }
+th {
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-align: left;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border-def);
+}
+td {
+  padding: 11px 12px;
+  vertical-align: top;
+  border-bottom: 1px solid var(--border-sub);
+  line-height: 1.5;
+}
+td:first-child { font-weight: 600; color: var(--text-head); }
+.badge {
+  display: inline-block;
+  font-family: "SF Mono", "Fira Code", "Fira Mono", "Roboto Mono", Consolas, monospace;
+  font-size: 12px;
+  padding: 2px 8px;
+  border: 1px solid var(--border-def);
+  border-radius: 4px;
+  color: var(--text-sec);
+  white-space: nowrap;
+}
+.badge.on { background: var(--green-tint); color: var(--green-text); border-color: var(--green-tint); }
+.flow { list-style: none; padding: 0; margin: 16px 0 8px; }
+.flow li {
+  border: 1px solid var(--border-sub);
+  border-radius: 8px;
+  padding: 14px 16px;
+  margin: 0 0 8px;
+  font-size: 15px;
+}
+.flow li.plain {
+  background: var(--green-tint);
+  border-color: var(--green);
+  color: var(--green-text);
+}
+.flow li.plain strong { color: var(--green-text); }
+.flow .arrow {
+  display: block;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 13px;
+  border: 0;
+  padding: 0;
+  margin: 0 0 8px;
+}
+figure { margin: 28px 0 36px; }
+figcaption { font-size: 13px; color: var(--text-sec); margin-top: 10px; }
+.slice { padding: 20px 22px; margin: 0 0 16px; }
+.slice h3.feature { margin: 0 0 8px; }
+.slice .when {
+  font-size: 13px;
+  color: var(--text-sec);
+  margin: 0 0 12px;
+}
+.sources { columns: 2; column-gap: 40px; list-style: none; padding: 0; }
+.sources li { break-inside: avoid; border-bottom: 1px solid var(--border-sub); padding: 6px 0; margin: 0; font-size: 15px; }
+footer {
+  margin-top: 64px;
+  padding-top: 24px;
+  border-top: 1px solid var(--border-sub);
+  font-size: 13px;
+  color: var(--text-sec);
+}
+:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
+@media (max-width: 860px) {
+  .page { display: block; }
+  .sidenav {
+    position: relative;
+    width: auto;
+    height: auto;
+    border-right: 0;
+    border-bottom: 1px solid var(--border-sub);
+  }
+  .main { padding: 32px 16px 64px; }
+  .sources { columns: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; }
+}
+@media print {
+  html, html[data-mode="light"], html[data-mode="dark"] {
+    --bg: #FFFFFF;
+    --card: #FFFFFF;
+    --raised: #F5F5F5;
+    --border-sub: #E0E0E0;
+    --border-def: #CCCCCC;
+    --text-head: #000000;
+    --text-body: #111111;
+    --text-sec: #555555;
+    --text-muted: #777777;
+    --text-link: #0f8a39;
+    --code-bg: #F5F5F5;
+    --code-text: #111111;
+    --code-border: #E0E0E0;
+    --green: #16AC49;
+    --green-tint: #F0FAF4;
+    --green-text: #0f8a39;
+    --error: #E53935;
+    --nav-bg: #FFFFFF;
+    color-scheme: light;
+  }
+  @page { size: A4; margin: 16mm 14mm 18mm; }
+  html, body { background: #FFFFFF; }
+  * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .sidenav { display: none !important; }
+  .page { display: block; max-width: none; min-height: 0; }
+  .main { padding: 0; }
+  .prose { max-width: none; }
+  h1 { font-size: 28pt; }
+  h2 { font-size: 16pt; margin: 22pt 0 8pt; break-after: avoid; }
+  h3.feature, h3.label { break-after: avoid; }
+  p, li { font-size: 11pt; }
+  .standfirst { font-size: 13pt; }
+  a { text-decoration: none; }
+  .tbl { overflow: visible; }
+  table { min-width: 0; font-size: 9.5pt; }
+  tr, .callout, .flow li, figure, .card, .two > div { break-inside: avoid; }
+  footer { break-inside: avoid; }
+}
+</style>
+</head>
+<body>
+<div class="page">
+<nav class="sidenav" aria-label="Contents">
+  <a class="wordmark" href="#top"><strong>FileSquid</strong><small>Design report</small></a>
+  <div class="nav-label">Start</div>
+  <a class="nav-item" href="#document">This document</a>
+  <a class="nav-item" href="#pipeline">The field pipeline</a>
+  <div class="nav-label">Prospectus</div>
+  <a class="nav-item" href="#backup-vs-sync">Backup and sync</a>
+  <a class="nav-item" href="#crdts">Conflicts and CRDTs</a>
+  <a class="nav-item" href="#p2p">Peer-to-peer transport</a>
+  <a class="nav-item" href="#meta">Syncing the backups</a>
+  <a class="nav-item" href="#requirements">Field and threats</a>
+  <a class="nav-item" href="#architecture">Reference architecture</a>
+  <a class="nav-item" href="#upload">Resumable upload</a>
+  <a class="nav-item" href="#e2e">End-to-end encryption</a>
+  <a class="nav-item" href="#operations">Operations</a>
+  <a class="nav-item" href="#summary">Summary and sources</a>
+  <div class="nav-label">Design</div>
+  <a class="nav-item" href="#lands">Backup is the product</a>
+  <a class="nav-item" href="#carry">What to carry across</a>
+  <a class="nav-item" href="#product">What backup is</a>
+  <a class="nav-item" href="#decisions">Decisions before code</a>
+  <a class="nav-item" href="#plan">Development plan</a>
+  <a class="nav-item" href="#changes">Changes to the plan</a>
+  <div class="sidenav-footer">
+    <div class="mode-toggle" role="group" aria-label="Colour mode">
+      <button type="button" class="mode-btn" data-mode="light">Light</button>
+      <button type="button" class="mode-btn" data-mode="dark">Dark</button>
+    </div>
+  </div>
+</nav>
+
+<main class="main" id="top">
+<div class="prose">
+
+<section class="hero" id="document">
+  <p class="eyebrow">Design report · 29 October 2026 · owner correction the same day</p>
+  <h1>Backup after the MVP</h1>
+  <p class="standfirst">Backup is the product that follows the FileSquid MVP. People do their daily work in a Drive. OCFL stays behind that Drive.</p>
+  <p class="meta">This file holds two things. The field prospectus is reproduced in full, because its backup rules are product requirements. The design half says how those rules become filesquid-backup, and in what order to build them once the MVP is finished.</p>
+  <div class="chips">
+    <span class="chip on">backup</span>
+    <span class="chip">Drive</span>
+    <span class="chip">recovery point</span>
+    <span class="chip">resume</span>
+    <span class="chip">OCFL</span>
+  </div>
+</section>
+
+<hr>
+
+<section id="pipeline">
+  <p class="eyebrow">Source</p>
+  <h2 style="margin-top:0">The field pipeline</h2>
+  <p>The source is <a href="FileSquid%20field%20media%20pipeline.html">FileSquid field media pipeline</a>, technical prospectus v1, 29 October 2026. Its claim is narrow. Large files move from places with poor wifi and unreliable power into three independent archives. Encryption runs on the device before any byte leaves. Nodes, archives and relays see ciphertext.</p>
+  <p>The prospectus says the only custom software is the phone upload queue. Everything else is configuration of existing open-source tools. The diagrams below are redrawn as flat figures. Their labels match the prospectus.</p>
+  <p>Styling of this report follows <a href="../assets/FileSquid-design-guide-v1.pdf">FileSquid design guide v1</a>: one flat surface, a serif heading scale, a sans body, a single green accent, and the same layout in light and dark.</p>
+</section>
+
+<section id="backup-vs-sync">
+  <p class="eyebrow">Prospectus · 1</p>
+  <h2>Backup is not sync</h2>
+  <p>Backup is a point-in-time copy kept separately so you can go back. Sync keeps two or more live copies the same so you can continue from anywhere.</p>
+  <p>The decisive difference is what happens to a mistake. Delete a file in a synced folder and it is deleted everywhere within seconds. Delete it in a backed-up folder and yesterday’s snapshot still has it. Sync propagates. Backup preserves. A system that needs both availability and recovery needs both layers.</p>
+  <div class="two">
+    <div>
+      <h3 class="feature">Backup</h3>
+      <ul>
+        <li>One-way, source to store</li>
+        <li>Scheduled snapshots, versioned, often immutable</li>
+        <li>Goal: recovery from deletion, ransomware or a dead disk</li>
+        <li>Hard problem: retention and restore testing</li>
+        <li>Verified by restoring</li>
+      </ul>
+    </div>
+    <div>
+      <h3 class="feature">Sync</h3>
+      <ul>
+        <li>Two-way or many-way</li>
+        <li>Continuous; latest state wins</li>
+        <li>Goal: one working set on every device</li>
+        <li>Hard problem: conflicts when two sides change the same thing</li>
+        <li>Verified by comparing</li>
+      </ul>
+    </div>
+  </div>
+  <h3 class="label">Common open-source tools</h3>
+  <div class="tbl"><table>
+    <thead><tr><th>Tool</th><th>Type</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr><td><a href="https://restic.net">restic</a></td><td><span class="badge">backup</span></td><td>Snapshots, deduplication, encryption, many storage backends</td></tr>
+      <tr><td><a href="https://www.borgbackup.org">BorgBackup</a></td><td><span class="badge">backup</span></td><td>Deduplication, compression, append-only mode; local or SSH</td></tr>
+      <tr><td><a href="https://kopia.io">Kopia</a></td><td><span class="badge">backup</span></td><td>GUI and CLI, snapshots, cloud backends, repository sync</td></tr>
+      <tr><td>rsync</td><td><span class="badge">grey area</span></td><td>One-way mirror; with <code>--link-dest</code> (rsnapshot) it becomes versioned backup</td></tr>
+      <tr><td><a href="https://syncthing.net">Syncthing</a></td><td><span class="badge on">sync</span></td><td>Peer-to-peer, no server; conflicts saved as <code>.sync-conflict</code> files</td></tr>
+      <tr><td><a href="https://github.com/bcpierce00/unison">Unison</a></td><td><span class="badge on">sync</span></td><td>Bidirectional, prompts on conflict</td></tr>
+      <tr><td>Nextcloud</td><td><span class="badge on">sync</span></td><td>Server-based; keeps versions, still not a backup</td></tr>
+      <tr><td>git, git-annex</td><td><span class="badge">both</span></td><td>Full history (backup-like) plus merge (sync-like)</td></tr>
+    </tbody>
+  </table></div>
+  <p>A sane baseline pairs one of each: Syncthing between laptop and phone for working files, restic to a separate location nightly, following the 3-2-1 rule of three copies, two media types, one off-site.</p>
+</section>
+
+<section id="crdts">
+  <p class="eyebrow">Prospectus · 2</p>
+  <h2>Conflicts and CRDTs</h2>
+  <p>File-level sync resolves a conflict by picking a winner or duplicating the file. A conflict-free replicated data type resolves it inside the data, so every replica converges without a referee.</p>
+  <p>A CRDT represents each edit as an operation that commutes with every other. Two devices can edit offline for a week, exchange their logs in any order, and arrive at identical documents. This is the basis of local-first software (Kleppmann, Wiggins, van Hardenberg and McGranaghan, 2019), where the user’s device holds the primary copy and servers are optional.</p>
+  <h3 class="feature">Automerge</h3>
+  <p><a href="https://github.com/automerge/automerge">Automerge</a> provides fast implementations of several CRDTs (maps, lists, text, counters), a compact compression format, and a sync protocol that sends a peer only the operations it lacks. The core is Rust, compiled to WebAssembly for the JavaScript package, with C bindings that have spawned further ports, including an R package on CRAN. The protocol’s thrift suits intermittent connections.</p>
+  <div class="callout">
+    <div class="t">Trade-offs</div>
+    <ul>
+      <li>Metadata grows with history. Deletions leave tombstones.</li>
+      <li>Merges are consistent, and they are not a judgement. Two people editing one sentence get an interleaving.</li>
+      <li>Large binaries do not belong in a CRDT. The CRDT holds the index and metadata. A blob store holds the bytes.</li>
+    </ul>
+  </div>
+  <div class="tbl"><table>
+    <thead><tr><th>Library</th><th>Language</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr><td>Automerge</td><td>Rust, JS, C</td><td>Rich history, sync protocol, local-first focus</td></tr>
+      <tr><td><a href="https://yjs.dev">Yjs</a></td><td>JS</td><td>Very fast, widely used in collaborative editors</td></tr>
+      <tr><td>Loro</td><td>Rust, JS</td><td>Newer, focused on performance and rich text</td></tr>
+      <tr><td>Diamond Types</td><td>Rust</td><td>Text CRDT optimised for speed</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="p2p">
+  <p class="eyebrow">Prospectus · 3</p>
+  <h2>Peer-to-peer transport</h2>
+  <p>CRDTs decide what to merge. Something still has to move bytes between devices that sit behind NAT, on cellular, or off the public internet.</p>
+  <p><a href="https://iroh.computer">Iroh</a> is a Rust library for establishing the most direct QUIC connection possible between two devices, addressed by public key rather than IP. It reached 1.0 and is dual-licensed MIT and Apache 2.0.</p>
+  <ul>
+    <li><strong>Identity is the key.</strong> Each endpoint has an Ed25519 keypair. The public key is both the address and the TLS certificate subject, so no certificate authority is involved.</li>
+    <li><strong>QUIC over UDP</strong> gives encryption, multiplexed streams and connection migration. A phone moving from wifi to cellular keeps its connection.</li>
+    <li><strong>Hole punching</strong> gets through most NATs automatically.</li>
+    <li><strong>Relay fallback</strong> carries traffic when a direct connection fails. Relays see only ciphertext. The relay server is open source.</li>
+    <li><strong>Discovery</strong> resolves a key to current addresses through DNS or Pkarr. n0’s public infrastructure can be swapped for your own.</li>
+  </ul>
+  <div class="tbl"><table>
+    <thead><tr><th>Crate</th><th>Purpose</th><th>Role in this design</th></tr></thead>
+    <tbody>
+      <tr><td><a href="https://github.com/n0-computer/iroh-blobs">iroh-blobs</a></td><td>Content-addressed transfer with BLAKE3, verified streaming, resumption</td><td>Moving backup chunks between archive nodes</td></tr>
+      <tr><td>iroh-gossip</td><td>Publish-subscribe overlay</td><td>Announcing “I have these hashes”</td></tr>
+      <tr><td>iroh-docs</td><td>Eventually consistent key-value store</td><td>Replicating small manifests</td></tr>
+    </tbody>
+  </table></div>
+  <p>Automerge over Iroh is a serverless sync stack: CRDT documents for mutable state, blobs for large files, gossip for discovery, QUIC for transport. It gives offline-capable multi-device sync with no server. It still gives no backup. A corrupted or maliciously edited document converges everywhere. Comparable stacks are libp2p (IPFS), Hyperswarm (Holepunch) and Syncthing’s own protocol.</p>
+</section>
+
+<section id="meta">
+  <p class="eyebrow">Prospectus · 4</p>
+  <h2>Syncing the backups</h2>
+  <p>Replicating a backup repository is a third layer. Here sync becomes safe again, because what is being synced is already immutable and versioned.</p>
+  <figure>
+    <ol class="flow">
+      <li><strong>Layer 1 · Working files.</strong> Sync: mutable, conflict-prone. Syncthing, CRDTs.</li>
+      <li class="arrow" aria-hidden="true">snapshot hourly or daily</li>
+      <li><strong>Layer 2 · Snapshots.</strong> Backup: immutable, versioned, append-only. restic, Borg, Kopia.</li>
+      <li class="arrow" aria-hidden="true">replicate to 3 or more nodes</li>
+      <li class="plain"><strong>Layer 3 · Snapshot replication.</strong> Sync of immutable objects: conflict-free. Only prune is dangerous.</li>
+    </ol>
+    <figcaption>Three layers. Layer 3 turns “I have a backup” into “I have a backup that survives the backup disk dying.”</figcaption>
+  </figure>
+  <h3 class="feature">Why it works</h3>
+  <p>A restic, Borg or Kopia repository is content-addressed. Chunks are named by their hash, and snapshot manifests point at chunks. Files are only ever added, never modified in place. Deletion happens only through an explicit prune. Two copies with different sets of objects are reconciled by taking the union. That is a grow-only set, the simplest CRDT, so replication is conflict-free by construction.</p>
+  <div class="tbl"><table>
+    <thead><tr><th>Tool</th><th>Mechanism</th></tr></thead>
+    <tbody>
+      <tr><td>restic</td><td><code>restic copy</code> between repositories (different keys allowed); rclone backend to any object store</td></tr>
+      <tr><td>BorgBackup</td><td>rsync the repository directory; <code>borg transfer</code>; borgmatic targets several repositories</td></tr>
+      <tr><td>Kopia</td><td><code>kopia repository sync-to</code> mirrors a repository to another backend</td></tr>
+      <tr><td>ZFS, btrfs</td><td><code>zfs send</code> piped to <code>zfs recv</code>: incremental snapshot streams at the filesystem level</td></tr>
+      <tr><td>Syncthing</td><td>Send-only folder carrying a repository to a remote machine</td></tr>
+    </tbody>
+  </table></div>
+  <h3 class="label">Hazards</h3>
+  <ul>
+    <li><strong>Prune propagation.</strong> Prune the primary, sync, and the deletion propagates. Use object lock or immutable buckets, or a sync mode that never deletes on the mirror.</li>
+    <li><strong>Partial sync.</strong> A half-copied manifest references missing chunks. <code>restic check</code> detects it. Writing chunks before manifests keeps a partial copy consistent.</li>
+    <li><strong>Ransomware.</strong> An attacker with write access to the primary corrupts it, and sync carries the corruption. Pull-based replication and append-only modes (Borg <code>--append-only</code>, restic rest-server <code>--append-only</code>) break the chain.</li>
+    <li><strong>Lock files.</strong> Sync only when no backup run is in progress.</li>
+  </ul>
+  <div class="callout">
+    <div class="t">Where Iroh fits</div>
+    <p>A repository is a set of BLAKE3-addressed blobs plus a small manifest, which is exactly what iroh-blobs transfers. Archive nodes gossip the hashes they hold and fetch the difference from any peer: a serverless 3-2-1 across sites behind NAT. Retention is the one operation that needs a policy rather than a merge, which is why pruning is the hard part of every such system. git-annex and Perkeep already work this way.</p>
+  </div>
+</section>
+
+<section id="requirements">
+  <p class="eyebrow">Prospectus · 5</p>
+  <h2>The field and its threats</h2>
+  <p>Users upload large media from places with spotty wifi, unreliable electricity and hostile observers. Each constraint drives one design choice.</p>
+  <div class="tbl"><table>
+    <thead><tr><th>Constraint</th><th>Consequence</th><th>Design response</th></tr></thead>
+    <tbody>
+      <tr><td>Spotty wifi</td><td>Uploads interrupted many times</td><td>Resumable chunked upload (tus); small chunks; retry with backoff</td></tr>
+      <tr><td>Unreliable electricity</td><td>Phones die mid-upload; nodes reboot</td><td>Upload state in IndexedDB; partial uploads on a journaled disk; battery-backed node</td></tr>
+      <tr><td>Snooping</td><td>Café wifi, ISPs and relays observe traffic</td><td>Encrypt on-device before upload; TLS as a second layer; minimal metadata in headers</td></tr>
+      <tr><td>Node seizure</td><td>A field node is taken</td><td>Node holds ciphertext only and no decryption key</td></tr>
+      <tr><td>Site loss</td><td>A whole location is destroyed</td><td>Hourly or daily snapshots replicated to three or more nodes elsewhere</td></tr>
+      <tr><td>Lost phone</td><td>Queued media on the device</td><td>Queue holds ciphertext; the device has no decryption key</td></tr>
+    </tbody>
+  </table></div>
+  <h3 class="feature">What a PWA can do</h3>
+  <ul>
+    <li><strong>iOS Safari</strong> has no Background Sync. Uploads progress only while the PWA is open, so the field guidance is “open the app when you have signal.”</li>
+    <li><strong>Android Chrome</strong> supports Background Sync and Background Fetch, so queued uploads continue after the app is closed.</li>
+    <li>Service workers and IndexedDB work on both, which is enough for durable queues and resume.</li>
+  </ul>
+</section>
+
+<section id="architecture">
+  <p class="eyebrow">Prospectus · 6</p>
+  <h2>Reference architecture</h2>
+  <p>Media flows from phone to field node to three archives to receiver. Only the phone and the receiver ever see plaintext.</p>
+  <figure>
+    <ol class="flow">
+      <li class="plain"><strong>Field phone · PWA.</strong> age-encrypt to recipient keys. Sign with the device key. BLAKE3 hash of the ciphertext. Queue in IndexedDB. The tus client resumes from the server’s offset.</li>
+      <li class="arrow" aria-hidden="true">tus resumable upload over TLS</li>
+      <li><strong>Field node · one per site.</strong> tusd receives chunks and verifies the hash. Ciphertext sits on disk or in Garage. restic snapshot every 1 to 24 hours, append-only. The node holds a TLS certificate only.</li>
+      <li class="arrow" aria-hidden="true">archives pull over Iroh, by public key</li>
+      <li><strong>Archive A.</strong> Another field site. restic copy. Prune policy lives here.</li>
+      <li><strong>Archive B.</strong> Datacentre bucket. S3 object lock, immutable.</li>
+      <li><strong>Archive C.</strong> Offline disk, rotated by hand. Cold copy, air-gapped.</li>
+      <li class="arrow" aria-hidden="true">fetch ciphertext</li>
+      <li class="plain"><strong>Receiver app · desktop or PWA.</strong> Decrypt locally with a hardware-backed key. Verify the sender signature. Thumbnails are made on the device. The receiver never uploads plaintext.</li>
+    </ol>
+    <figcaption>Green nodes hold plaintext. Archives pull, so no field credential can write to an archive and a compromised site cannot touch the others.</figcaption>
+  </figure>
+  <div class="tbl"><table>
+    <thead><tr><th>Layer</th><th>Component</th><th>Open-source choice</th><th>Trust level</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td>Capture and upload</td><td>PWA with tus-js-client, age, BLAKE3 WASM, IndexedDB</td><td><span class="badge on">plaintext, sender key</span></td></tr>
+      <tr><td>2</td><td>Field storage node</td><td>tusd on a journaled disk, or <a href="https://garagehq.deuxfleurs.fr">Garage</a>; battery-backed mini-PC</td><td><span class="badge">ciphertext only</span></td></tr>
+      <tr><td>3</td><td>Snapshot</td><td>restic or Kopia, append-only mode, hourly or daily timer</td><td><span class="badge">ciphertext, repo key</span></td></tr>
+      <tr><td>4</td><td>Replication</td><td>restic copy or rclone to 3 or more targets; iroh-blobs for peers behind NAT</td><td><span class="badge">ciphertext, repo key</span></td></tr>
+      <tr><td>5</td><td>Verification</td><td>restic check, healthcheck pings, restore drills</td><td><span class="badge">ciphertext</span></td></tr>
+      <tr><td>6</td><td>Receiver</td><td>Desktop or PWA client holding an age private key</td><td><span class="badge on">plaintext, receiver key</span></td></tr>
+    </tbody>
+  </table></div>
+  <div class="callout">
+    <div class="t">On Garage</div>
+    <p>Garage is an open-source S3-compatible store built by Deuxfleurs for geo-distributed clusters on cheap, flaky hardware. Running it across sites with replication factor 3 gives object-level replication for free. Snapshots are still required, because replication propagates deletions and corruption instantly.</p>
+  </div>
+</section>
+
+<section id="upload">
+  <p class="eyebrow">Prospectus · 7</p>
+  <h2>Resumable upload</h2>
+  <p>The PWA keeps uploading until the server confirms the last byte, however many times the connection, the app or the phone dies in between.</p>
+  <p>The protocol is <a href="https://tus.io/protocols/resumable-upload">tus</a>, with <code>tus-js-client</code> in the browser and <a href="https://github.com/tus/tusd">tusd</a> on the node. The client never guesses what arrived. After any interruption it asks the server for its offset and continues from there.</p>
+  <div class="tbl"><table>
+    <thead><tr><th>Step</th><th>Who</th><th>What</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td>User action</td><td>Encrypt, hash, and hand the blob to the queue</td></tr>
+      <tr><td>2</td><td>Service worker and IndexedDB</td><td>Save the handle and the hash before any network call</td></tr>
+      <tr><td>3</td><td>Client to tusd</td><td><code>POST</code> with <code>Upload-Length</code> and the hash. The <code>201</code> returns an upload URL, saved to IndexedDB</td></tr>
+      <tr><td>4</td><td>Client to tusd</td><td><code>PATCH</code> 2 MB chunks from offset 0, then from 2 MB</td></tr>
+      <tr><td>5</td><td>Interruption</td><td>Wifi drops, the app is killed, or the phone dies. The queue survives on disk</td></tr>
+      <tr><td>6</td><td>Reopen</td><td>Read the queue from IndexedDB. <code>HEAD</code> the upload URL. The server answers <code>Upload-Offset</code>, for example 4 MB</td></tr>
+      <tr><td>7</td><td>Client to tusd</td><td><code>PATCH</code> from that offset until the end. <code>204</code> when offset equals length and the hash matches</td></tr>
+      <tr><td>8</td><td>Queue</td><td>Mark complete and remove the item</td></tr>
+    </tbody>
+  </table></div>
+  <p>One interruption is shown. The same HEAD-then-PATCH loop handles any number.</p>
+  <h3 class="label">Design rules</h3>
+  <ul>
+    <li><strong>Persist first, upload second.</strong> The moment the user picks media, the encrypted blob, its hash and the upload URL are written to IndexedDB. Nothing is held only in memory.</li>
+    <li><strong>Small chunks.</strong> 1 to 4 MB on poor wifi so each round trip has a chance to complete. The size can adapt to measured throughput.</li>
+    <li><strong>Hash the ciphertext.</strong> The node verifies the BLAKE3 hash on completion and rejects mismatches. The same hash is the deduplication key and the content address for later layers.</li>
+    <li><strong>Retry with backoff</strong> and resume on every app open and every <code>online</code> event. On Android, also through Background Sync.</li>
+    <li><strong>Idempotent finish.</strong> A completed upload the client failed to record shows up on the next HEAD, when offset equals length, and is marked done.</li>
+    <li><strong>Minimal metadata.</strong> tus headers carry only hash and size. Filename, timestamps and location travel inside the encrypted payload.</li>
+  </ul>
+</section>
+
+<section id="e2e">
+  <p class="eyebrow">Prospectus · 8</p>
+  <h2>End-to-end encryption</h2>
+  <p>The field worker’s phone and the authorised viewer are the two ends. Everything between them, including FileSquid’s own nodes, archives and relays, sees only ciphertext.</p>
+  <figure>
+    <ol class="flow">
+      <li class="plain"><strong>Phone · plaintext.</strong> Holds recipient public keys and its own signing key.</li>
+      <li class="arrow" aria-hidden="true">ciphertext zone · nothing here can read the media</li>
+      <li><strong>Field node.</strong> tusd, Garage, TLS endpoint. Holds a TLS certificate only.</li>
+      <li><strong>Archives ×3.</strong> restic repositories, with Iroh relays between them. Holds the restic repository key, never the media key.</li>
+      <li class="arrow" aria-hidden="true">leave the ciphertext zone</li>
+      <li class="plain"><strong>Receiver · plaintext.</strong> Holds the age private key, hardware-backed.</li>
+    </ol>
+    <figcaption>Two keys, two custodians. The media key never visits an archive. The repository key never visits a phone.</figcaption>
+  </figure>
+  <h3 class="feature">Encryption scheme</h3>
+  <ul>
+    <li><a href="https://age-encryption.org/v1">age</a> is the primitive: X25519 per-recipient key wrapping, streaming ChaCha20-Poly1305 for large files, several recipients in one envelope. A <a href="https://github.com/FiloSottile/typage">TypeScript implementation</a> runs in the PWA. The CLI serves the viewing side.</li>
+    <li>Each media file gets a random file key, wrapped for every recipient. Adding a receiver later means re-wrapping file keys, not re-encrypting media.</li>
+    <li>The sidecar (filename, timestamp, GPS, notes) is a separate small age blob. The server sees an opaque id, a size and an upload time.</li>
+  </ul>
+  <h3 class="feature">Key custody</h3>
+  <ul>
+    <li>Recipient public keys are baked into the PWA build or fetched from a signed manifest with a pinned fingerprint, so a hostile server cannot substitute its own key.</li>
+    <li>Receiver private keys live only on receiver devices, ideally hardware-backed. age has YubiKey and FIDO2 plugins. They never sit on a node or an archive.</li>
+    <li>Each phone generates its own keypair on first run and signs every upload. Receivers verify which device captured what. A lost phone’s key goes on a revocation list in the manifest.</li>
+    <li>A lost phone holds no decryption keys. Pending uploads are ciphertext at rest in IndexedDB. The worst case is “we lost the files not yet uploaded”, never “the adversary can read them”. WebCrypto non-extractable keys and a device PIN protect the sender key too.</li>
+  </ul>
+  <h3 class="feature">How it meets the other layers</h3>
+  <ul>
+    <li>Hash the ciphertext for tus resume and deduplication. The server can verify it. Put the plaintext hash inside the encrypted sidecar for receivers.</li>
+    <li>Deduplication across identical captures is lost, since a random file key yields different ciphertext. The prospectus accepts that for field media. Convergent encryption would restore it at the cost of leaking “same file” to the server.</li>
+    <li>restic’s encryption becomes a second layer around the first. The repository key protects integrity and structure. The age key protects content.</li>
+    <li>Iroh’s transport encryption is a third layer. It does not add content confidentiality. It helps metadata hygiene. Who talks to whom is still visible to a relay.</li>
+    <li>The receiver app pulls ciphertext from an archive, decrypts locally, and never uploads plaintext. Thumbnails are generated on the receiver, not the server. A signed audit log records who decrypted what.</li>
+  </ul>
+  <div class="callout err">
+    <div class="t">What end-to-end encryption does not solve</div>
+    <ul>
+      <li>Traffic analysis: upload sizes and timings from a location. Pad sizes or batch uploads if that is in the threat model.</li>
+      <li>A phone compromised before encryption. No scheme helps. This is device hygiene.</li>
+      <li>Legal compulsion of a receiver who holds a key.</li>
+    </ul>
+  </div>
+</section>
+
+<section id="operations">
+  <p class="eyebrow">Prospectus · 9</p>
+  <h2>Operations</h2>
+  <p>A backup nobody has restored is a hypothesis. The schedule below turns it into evidence.</p>
+  <div class="tbl"><table>
+    <thead><tr><th>When</th><th>What</th><th>Where</th></tr></thead>
+    <tbody>
+      <tr><td>Every 1 to 24 h</td><td>restic snapshot of the node’s data directory, append-only</td><td>Field node</td></tr>
+      <tr><td>After each snapshot</td><td>Archives pull the new objects (restic copy, rclone or iroh-blobs)</td><td>Archives A, B, C</td></tr>
+      <tr><td>Daily</td><td><code>restic check</code>; weekly with <code>--read-data-subset</code></td><td>Each archive</td></tr>
+      <tr><td>Continuous</td><td>Each node pings a Healthchecks-style endpoint. Silence from a site is the alarm</td><td>Monitoring</td></tr>
+      <tr><td>Monthly</td><td>Prune by policy from the archive side only, never from a field node</td><td>Archives</td></tr>
+      <tr><td>Quarterly</td><td>Restore drill: decrypt one random media file end to end on a receiver</td><td>Receiver</td></tr>
+    </tbody>
+  </table></div>
+  <ul>
+    <li><strong>Pull, never push.</strong> Field nodes hold no credential that writes to an archive.</li>
+    <li><strong>Separate custodians.</strong> The restic repository key and the age private key are never held by the same role.</li>
+    <li><strong>Object lock</strong> on the datacentre bucket gives a retention floor no credential can override.</li>
+    <li><strong>Power.</strong> A battery or UPS lets a node finish writes and shut down cleanly. A journaled filesystem survives the times it cannot.</li>
+  </ul>
+</section>
+
+<section id="summary">
+  <p class="eyebrow">Prospectus · 10</p>
+  <h2>Summary and sources</h2>
+  <p>Only the PWA’s upload queue is custom. Everything else is configuration of existing open-source software.</p>
+  <div class="tbl"><table>
+    <thead><tr><th>Concept</th><th>One line</th><th>Tooling</th></tr></thead>
+    <tbody>
+      <tr><td>Backup vs sync</td><td>Sync propagates. Backup preserves. Use both.</td><td>restic, Borg, Kopia; Syncthing, Unison</td></tr>
+      <tr><td>CRDTs</td><td>Conflicts resolved inside the data. Replicas converge without a server.</td><td>Automerge, Yjs, Loro</td></tr>
+      <tr><td>Peer-to-peer transport</td><td>Dial devices by public key through NAT. Relays see ciphertext.</td><td>Iroh, iroh-blobs, iroh-gossip</td></tr>
+      <tr><td>Syncing snapshots</td><td>Immutable, content-addressed repositories replicate without conflicts. Guard prune.</td><td>restic copy, rclone, object lock</td></tr>
+      <tr><td>Resumable upload</td><td>Persist first, ask the server its offset, continue until done.</td><td>tus, tusd, IndexedDB</td></tr>
+      <tr><td>End-to-end</td><td>Plaintext only at the two ends. Key custody is the hard part.</td><td>age, WebCrypto, YubiKey plugin</td></tr>
+    </tbody>
+  </table></div>
+  <h3 class="label">Sources named in the prospectus</h3>
+  <ul class="sources">
+    <li><a href="https://iroh.computer/llms.txt">Iroh documentation</a></li>
+    <li><a href="https://docs.rs/crate/iroh/1.0.3">iroh crate 1.0.3</a></li>
+    <li><a href="https://github.com/n0-computer/iroh-blobs">iroh-blobs</a></li>
+    <li><a href="https://github.com/automerge/automerge">Automerge</a></li>
+    <li><a href="https://doi.org/10.1145/3359591.3359737">Local-first software (Kleppmann et al., 2019)</a></li>
+    <li><a href="https://restic.readthedocs.io/en/stable/045_working_with_repos.html">restic copy</a></li>
+    <li><a href="https://github.com/restic/rest-server">restic rest-server, append-only</a></li>
+    <li><a href="https://borgbackup.readthedocs.io/en/stable/usage/notes.html#append-only-mode">Borg append-only mode</a></li>
+    <li><a href="https://kopia.io/docs/reference/command-line/common/repository-sync-to/">Kopia repository sync-to</a></li>
+    <li><a href="https://tus.io/protocols/resumable-upload">tus protocol</a></li>
+    <li><a href="https://github.com/tus/tusd">tusd</a></li>
+    <li><a href="https://garagehq.deuxfleurs.fr">Garage</a></li>
+    <li><a href="https://age-encryption.org/v1">age specification</a></li>
+    <li><a href="https://github.com/FiloSottile/typage">age in TypeScript</a></li>
+    <li><a href="https://github.com/str4d/age-plugin-yubikey">age YubiKey plugin</a></li>
+    <li><a href="https://developer.mozilla.org/en-US/docs/Web/API/Background_Synchronization_API">Background Sync API</a></li>
+    <li><a href="https://perkeep.org">Perkeep</a></li>
+    <li><a href="https://yjs.dev">Yjs</a></li>
+  </ul>
+</section>
+
+<hr>
+
+<section id="lands">
+  <p class="eyebrow">Design · 1 · owner decision, 29 October 2026</p>
+  <h2 style="margin-top:0">Backup is the product</h2>
+  <div class="callout">
+    <div class="t">Correction</div>
+    <p>An earlier draft of this report said the prospectus should stay a reference and should not become a second product beside the OCFL library. That sentence is withdrawn. Backup is the primary product. OCFL is a value underneath it.</p>
+  </div>
+  <p>Adding backup is the most immediate priority after the MVP is finished. Task FS-3.9 closes the MVP. Backup work starts then. People manage files every day in a Drive: folders, files, search, and versions they can see and restore. OCFL compliance and the preservation layout stay behind that Drive. They are how a recovery point remains readable and how a library can leave the service. They are not the thing the owner operates, and they are not a reason to ship backup later.</p>
+  <p>The field prospectus supplies the product’s threat model, its resumable upload, the split between backup and sync, and the rule that a backup is real only after a restore. Those are requirements of filesquid-backup. The phone PWA, age, restic, and a field node are not the interface. The Drive is.</p>
+  <p>Phase F4 in <code>resources/implementation-plan.md</code> is still the named body of work: encrypted backup and sync at <code>*.filesquid.tech</code>, requirements F-029 through F-032, F-042 and F-059, architecture ADR 004, ADR 009, ADR 010, ADR 012 and ADR 032. There is no separate <code>filesquid-backup</code> crate. The product is this work, moved to the front of the queue.</p>
+  <p>The product vision, the PRD, the SRS, the architecture document, ADR 029, the implementation plan and the checklist now record the same order. Backup follows Task FS-3.9 and precedes Task FS-3.5. The Drive is the interface. OCFL stays behind it. Phase F4 is the Backup section of the checklist, between the MVP and release 1. Release-1 work that backup leaves for later, including Linux and Windows installers, virtual exhibits and the activity stream, waits until Task FS-4.2 is checked.</p>
+  <p>The same decision is written out as a product canvas in <a href="FileSquid%20backup%20product%20vision.md">FileSquid backup product vision</a>. That note stays under C-025 and ADR 029. Its local U-numbers are reading aids for this release. They are not allocated into the PRD.</p>
+  <p>The MVP Drive is the working library. Trash and visible version history protect against a mistake on that disk. F-031 already says that history is not a disaster-recovery service. Backup adds retained recovery points that survive a deleted file, a bad sync, or a dead disk, and it puts those points where the owner can restore them from the Drive.</p>
+</section>
+
+<section id="carry">
+  <p class="eyebrow">Design · 2</p>
+  <h2>What to carry across</h2>
+  <div class="tbl"><table>
+    <thead><tr><th>Prospectus idea</th><th>Use in filesquid-backup</th></tr></thead>
+    <tbody>
+      <tr><td>Backup and sync are different guarantees</td><td>Already required (U-09, C-003, F-031, F-059, ADR 032). Keep it as a product rule and as a split in the task list. Task 5.2 currently builds both in one task.</td></tr>
+      <tr><td>Three layers: working files, immutable snapshots, replication of those snapshots</td><td>This is the shape of the backup product. Layer 1 is the Drive on this computer. Layer 2 is a recovery point: a named, retained generation of that library, independent of later deletions. Layer 3 is multiple copies of those points, in different geographies. The live sync head is not a recovery point. OCFL is the format of layers 1 and 2, behind the Drive.</td></tr>
+      <tr><td>restic, Borg, Kopia</td><td>Borrow their repository rules: content-addressed objects, append-only writes, manifest published last, union of immutable objects, prune as an explicit policy. Behind the Drive, the store is the encrypted OCFL profile (ADR 010, ADR 016). The owner never chooses a repository format. A second archive format would put a second product behind the same Drive and drop the exit path.</td></tr>
+      <tr><td>age, ChaCha20-Poly1305, BLAKE3</td><td>Leave them out of the content suite. ADR 009 is the suite: AES-256-GCM, HKDF-SHA-256, SHA-256, Ed25519, X25519, Argon2id, shared by Rust, WASM and WebCrypto. Fixity stays SHA-256 because that is the OCFL digest.</td></tr>
+      <tr><td>Per-file key, wrapped to recipients; rewrap without re-encrypting bytes</td><td>Already the ADR 009 rule: X25519 wrap, and rewrap must not rewrite historical ciphertext. Library, evidence and wrap keys stay separate.</td></tr>
+      <tr><td>A server-held repository key as a second envelope</td><td>Do not add one. The hosted service holds no library key (ADR 004, ADR 032). Integrity is the client checking AEAD tags and SHA-256 inventories.</td></tr>
+      <tr><td>tus resume, 1–4 MB chunks, server offset is authoritative, idempotent completion</td><td>ADR 012 already allows tus as a front door onto S3 multipart, and forbids tus as a second file identity. The desktop durable job is the stand-in for the prospectus’s IndexedDB queue: encrypt and record the checkpoint, then upload. Headers carry an opaque id, size and ciphertext hash.</td></tr>
+      <tr><td>PWA, IndexedDB, Background Sync, field phone</td><td>Out of this feature. C-001 forbids promising background camera backup after the browser closes. The encrypted browser host is phase F5, after Task FS-4.2, and it is the receiver, not the capture pipeline.</td></tr>
+      <tr><td>Field node running tusd and Garage</td><td>Out of this feature. <code>filesquid-server</code> is an operator-readable library server. <code>*.filesquid.tech</code> is a separate ciphertext mailbox. Garage is one acceptable S3-compatible backend under ADR 012, not a required component.</td></tr>
+      <tr><td>Iroh, gossip, dial-by-public-key</td><td>A later transport if a user-run site needs NAT traversal. The geo-distributed copies of a Drive are the backup itself, over HTTPS and S3-compatible storage, not an Iroh mesh.</td></tr>
+      <tr><td>Automerge and other CRDTs</td><td>File bytes stay OCFL versions. ADR 016 already rebases or reports a conflict when two writers move the same head. The prospectus itself says a CRDT sync is not a backup, because a bad edit converges everywhere. Collaborative CRDTs stay the optional later item the PRD already lists.</td></tr>
+      <tr><td>Pull replication, append-only, object lock, prune only from the archive side</td><td>Adopt this as the hosted threat model. A client credential that can upload a new recovery point cannot delete or overwrite an existing one. Retention prune uses a different credential, cannot break an object-lock floor, and never runs from the desktop’s sync credential. A half-written manifest is not a recovery point.</td></tr>
+      <tr><td>Three archives: another site, an immutable bucket, an air-gapped disk</td><td>The Drive's own backup. Each Drive keeps multiple copies of its recovery points in different geographies. The working Drive is not one of those copies. Which providers and which regions stay the open operations choice, and the choice names more than one geography before paying users. An air-gapped disk, a further destination and a paid restore exercise stay F-035. A three-site pull mesh is not required for the first backup.</td></tr>
+      <tr><td>Lost ciphertext on a seized node is acceptable; readable media is not</td><td>Already the mailbox guarantee. Say it in the backup threat model in the prospectus’s words: the worst loss is files not yet in a recovery point.</td></tr>
+      <tr><td>What encryption does not fix: traffic size and timing, a compromised endpoint, a compelled key holder</td><td>Already C-004. v1 accepts size and timing leakage. Padding is not a launch gate.</td></tr>
+      <tr><td>Snapshot, check, silence alarm, scheduled prune, quarterly restore of one real file</td><td>Turn Task 5.5 from “assemble a packet” into this cadence. F-031 already forbids a reliability claim before restore exercises pass.</td></tr>
+    </tbody>
+  </table></div>
+  <p>Deduplication follows the same boundary the prospectus draws. Random per-object keys mean the service cannot see that two accounts hold the same file. F-029 already forbids cross-account plaintext-hash deduplication. Deduplication inside one library key is a client choice. Convergent encryption is out.</p>
+</section>
+
+<section id="product">
+  <p class="eyebrow">Design · 3</p>
+  <h2>What filesquid-backup is</h2>
+  <p>filesquid-backup is the product that follows the MVP. The owner lives in the Drive. Backup, restore, and later sync are actions in that Drive. Phase F4 is the implementation, on the desktop and a new hosted binary. OCFL compliance is the storage and the exit path under those actions.</p>
+  <div class="card" style="margin-bottom:16px">
+    <h3 class="feature">The Drive</h3>
+    <p>Day-to-day file management: folders, files, search, copy, move, and Trash. The MVP library is this Drive on the owner’s disk. Version history the owner can see stays here. The OCFL layout is underneath it. An owner restores a file without learning object identifiers.</p>
+  </div>
+  <div class="card" style="margin-bottom:16px">
+    <h3 class="feature">Who may upload</h3>
+    <p>The owner of a Drive installation grants another user permission to upload into that Drive by enrolling the user's device public key (Ed25519, ADR 009). That is the permission for network-sensitive uploads: bytes that cross a network the owner does not trust. The uploader encrypts on their device before any byte leaves. The mailbox authorises the key and sees ciphertext. A password is not that permission. Revoking the key stops later uploads. The key can append a recovery point and cannot delete one. Share-link passwords in the release-1 sharing panel are a different control.</p>
+  </div>
+  <div class="card" style="margin-bottom:16px">
+    <h3 class="feature">Recovery point</h3>
+    <p>A retained generation of that library, stored as an encrypted OCFL profile and shown in the Drive as a point in time the owner can return to. Objects are written first. The manifest is published only when every referenced ciphertext object is present and hashed. Later deletes in the Drive do not remove it.</p>
+  </div>
+  <div class="card" style="margin-bottom:16px">
+    <h3 class="feature">Hosted copies of recovery points</h3>
+    <p>Each Drive has its own backup. <code>*.filesquid.tech</code> stores ciphertext, issues scoped upload URLs, checks lengths and checksums, and fences publication. It keeps multiple copies of that Drive's recovery points in different geographies. The working Drive is not one of those copies. It does not parse OCFL, render thumbnails, or hold keys. The binary is the one Task SV-F4.1 creates, with the dependency-graph gate. It is not <code>filesquid-server</code>.</p>
+  </div>
+  <div class="card" style="margin-bottom:16px">
+    <h3 class="feature">Restore</h3>
+    <p>A chosen recovery point, on a clean library directory, unlocked with the recovery phrase, verified on the client. Missing objects are reported. A partial tree is not presented as a library.</p>
+  </div>
+  <div class="card" style="margin-bottom:16px">
+    <h3 class="feature">Sync, after the first rehearsed restore</h3>
+    <p>Live head replication between devices. Deletes propagate. The UI shows backup and sync as separate facts. The host indicator already has this rule waiting on API-F4.1.</p>
+  </div>
+  <div class="callout">
+    <div class="t">The decisive test</div>
+    <p>Delete a file, let sync run, restore yesterday’s recovery point, and the file is back. That sentence is the prospectus’s difference between the two layers, turned into an acceptance test.</p>
+  </div>
+</section>
+
+<section id="decisions">
+  <p class="eyebrow">Design · 4</p>
+  <h2>Decisions to write before implementation</h2>
+  <p>One design record, written as soon as the MVP gate is the predecessor and before backup code, should freeze these points so they are not reinvented inside handlers.</p>
+  <ol>
+    <li>Backup is the product that follows the MVP. The Drive is the interface for daily file work. OCFL compliance stays behind that Drive.</li>
+    <li>A recovery point is a pinned encrypted OCFL generation. The owner sees a restorable point in time. The owner does not see a restic repository.</li>
+    <li>Objects first, manifest last. A manifest with missing chunks is not restorable and is not published.</li>
+    <li>Two hosted credentials: append, and retain. The sync credential cannot delete recovery points.</li>
+    <li>Object lock, or an equivalent retention floor, on the recovery-point prefix. Providers and regions stay the open operations choice in ADR 012, and that choice names more than one geography.</li>
+    <li>Resume state lives in the desktop job store. The server’s part offset wins. Completion is idempotent.</li>
+    <li>Object keys and request metadata are an opaque id, a size and a ciphertext hash. Names, capture timestamps and location stay inside ciphertext. Upload time remains visible service metadata, and the UI says so.</li>
+    <li>Verification is a ladder: upload receipt, ciphertext hash, a scheduled read of a subset, then a client restore that decrypts and checks the plaintext digest.</li>
+    <li>The owner of a Drive enrolls a device public key as permission to upload into that Drive. A password is not that permission. The uploader encrypts before the bytes leave. Revoking the key stops later uploads, and the key cannot delete a recovery point.</li>
+    <li>Each Drive has its own backup, and that backup keeps multiple copies of its recovery points in different geographies. One hosted region plus the laptop is not that design. Further destinations, an air-gapped disk and a paid restore exercise stay F-035.</li>
+    <li>Paid sync claims wait until one clean-device restore has passed. The plan already says this. The task split below makes it enforceable.</li>
+    <li>Non-goals for this feature: field PWA capture, age as the content suite, restic as the store, tusd as a product, Iroh, Automerge, server-side thumbnails, convergent encryption, traffic padding, and background phone backup. Postponing backup until after release 1 is also out.</li>
+  </ol>
+  <p>That record is an amendment or a short successor to ADR 010 and ADR 012. The implementation plan, the checklist and ADR 029 already place phase F4 immediately after the MVP and ahead of phase F3R. The record leaves ADR 009 unchanged.</p>
+</section>
+
+<section id="plan">
+  <p class="eyebrow">Design · 5</p>
+  <h2>Development plan</h2>
+  <p>The plan follows the existing task IDs. Two orders change. Backup moves ahead of the rest of release 1, and inside backup the restore works before sync is called reliable. Hour figures in parentheses are the ones already in the implementation plan. This report adds no new estimates.</p>
+
+  <article class="slice">
+    <h3 class="feature">Slice A · Design record</h3>
+    <p class="when">The moment the MVP gate closes, before backup code. No new crate.</p>
+    <p>Write the decisions above, including the product order, and a threat table rewritten for a Mac, a Drive, and a ciphertext mailbox. Give each hazard one test name: a killed upload, a manifest ahead of its chunks, a prune from the client credential, delete-then-sync-then-restore, a seized server that has no key, an upload from a revoked key, and one geography unavailable.</p>
+    <p>This slice records the order the plan now uses. Backup is ahead of the rest of release 1. Task FS-4.1 depends on Task FS-3.9 and Task 0.2.</p>
+  </article>
+
+  <article class="slice">
+    <h3 class="feature">Slice B · Keys, on the desktop only</h3>
+    <p class="when">Task 5.1 (40 hours): CO-5.1, then DE-5.1, then UI-5.1.</p>
+    <p>ADR 009 envelopes, a recovery phrase shown once, device wrap, and revocation. Interoperability vectors across Rust and WebCrypto are part of this task even though the browser host is phase F5. Local envelope tests can proceed before the independent protocol review. The review remains a hard gate before other people’s ciphertext is stored (Tasks 5.4 and 5.5).</p>
+  </article>
+
+  <article class="slice">
+    <h3 class="feature">Slice C · Local recovery points</h3>
+    <p class="when">A first cut of DE-5.2 and the encrypted-profile path hook ADR 010 already reserves. Destination: a folder or disk the owner chooses.</p>
+    <p>No account, and no <code>*.filesquid.tech</code>. Persist the job, encrypt, write objects, publish the manifest, restore onto an empty directory, and check plaintext hashes. This is the prospectus’s layer 2. It can start once the MVP gate has passed, without waiting for Linux installers, virtual exhibits, or the hosted service. Interrupted jobs resume from the checkpoint. A second run of the same point is a no-op.</p>
+  </article>
+
+  <article class="slice">
+    <h3 class="feature">Slice D · Hosted append-only store</h3>
+    <p class="when">After the MVP gate and the desktop can encrypt. It does not wait for FS-3.5.</p>
+    <p>Task FS-4.1 (40 hours) creates the hosted binary and the dependency-graph test. Task 0.6 (24 hours) adds accounts, devices, quotas and logs with no private titles. Task IO-5.1 closes the MVP’s known writer-fencing gap (<code>OCFL-S-018</code>) before a second writer shares an S3 root. Task 5.4 (32 hours) publishes per-user encrypted OCFL roots.</p>
+    <p>Upload uses S3 multipart. tus is optional and terminates into those parts. The append credential fails when it tries to delete or overwrite a locked object. Logs and metrics contain no filenames and no plaintext.</p>
+  </article>
+
+  <article class="slice">
+    <h3 class="feature">Slice E · Restore drill, before sync is called reliable</h3>
+    <p class="when">Split today’s Task 5.2 (52 hours). The backup half lands with slices C and D.</p>
+    <p>Status states are selected, queued, uploaded, verified and recoverable. A thumbnail-only copy does not count. Task 5.3 (32 hours) publishes quota, retention and the cancellation download window, with a payment test double. Task 5.5 (16 hours) records one clean-device restore, the silence alarm, the retain-credential prune, and the runbook.</p>
+    <p>The UI shows backup on and sync off, with ADR 032’s sentence: files are encrypted on the device before upload, and the service never has the keys.</p>
+  </article>
+
+  <article class="slice">
+    <h3 class="feature">Slice F · Sync</h3>
+    <p class="when">The remainder of Task 5.2.</p>
+    <p>CO-5.2 conflict and tombstone types, live head replication, rebase or an explicit conflict. The delete-then-sync-then-restore test is the exit criterion. Tombstone compaction must not let a long-offline device resurrect a purged file, and it must not delete a recovery point.</p>
+  </article>
+
+  <article class="slice">
+    <h3 class="feature">Slice G · Release gate</h3>
+    <p class="when">Task FS-4.2 (12 hours).</p>
+    <p>Desktop and, when a server library is a backup client, <code>filesquid-server</code> encrypting before upload. Evidence for RC-003 and RC-006: distinct guarantees, restore without the live service catalog, a revoked device, a ciphertext-only dependency graph, and published terms. Evidence also shows an enrolled uploader key that can append and cannot delete a recovery point, and one Drive's recovery points present in more than one geography. No SLA is invented. Paying users still wait on the crypto-protocol audit, named providers and regions in more than one geography, a payment processor, and the GDPR role analysis (F-059).</p>
+  </article>
+
+  <p>Task 0.11, the browser commit protocol (12 hours), stays a written protocol in F4 and an implementation in phase F5. Desktop backup does not need the browser writer.</p>
+  <h3 class="feature">After FS-4.2</h3>
+  <ul>
+    <li>The encrypted browser host (phase F5), which is the prospectus’s receiver: decrypt locally, and make thumbnails on the device.</li>
+    <li><code>filesquid-server</code> as a backup client of the same service.</li>
+    <li>A further destination, physical seeding, and inheritance (F-035). The multiple geographies of a Drive's own backup are already in this release.</li>
+    <li>A peer transport, if a user-run third site needs NAT traversal.</li>
+    <li>Phone capture, as a native-app decision. The PWA in the prospectus is not that decision.</li>
+  </ul>
+</section>
+
+<section id="changes">
+  <p class="eyebrow">Design · 6</p>
+  <h2>What this changes in the current plan</h2>
+  <p>F4’s task list is the right skeleton for the backup product. The implementation plan and the checklist now place it immediately after Task FS-3.9. The prospectus fills in behaviour the skeleton names and does not specify: manifest after objects, a credential that cannot prune, object lock, resume that trusts the server offset, and a restore that is a scheduled proof rather than a demo. Build backup until restore works in the Drive, and only then turn sync on.</p>
+  <p>The owner’s product is backup, used through the Drive. OCFL, the ADR 009 suite, and the ciphertext-only mailbox stay behind that Drive so a recovery point can be restored and a library can still be read without the service. Shipping restic, tusd, age, and Iroh as a separate field dropbox would hide a second product behind the same window. It would not make backup more primary. The plan change is the order: backup first after the MVP, preservation format unchanged and unseen.</p>
+  <div class="tbl"><table>
+    <thead><tr><th>Existing task</th><th>Hours</th><th>Role in this report</th></tr></thead>
+    <tbody>
+      <tr><td>Task 5.1 · CO-5.1, DE-5.1, UI-5.1</td><td>40</td><td>Slice B. Keys before any upload.</td></tr>
+      <tr><td>DE-5.2, local destination first</td><td>part of 52</td><td>Slice C. Starts after FS-3.9. Recovery points appear in the Drive.</td></tr>
+      <tr><td>FS-4.1 · SV-F4.1, SV-F4.2, API-F4.1</td><td>40</td><td>Slice D. Starts after FS-3.9. The plan dependency is Task FS-3.9 and Task 0.2.</td></tr>
+      <tr><td>Task 0.6</td><td>24</td><td>Slice D. Operational schema with no private titles.</td></tr>
+      <tr><td>IO-5.1</td><td>inside 5.2</td><td>Slice D. Close the writer-fencing gap before a second S3 writer.</td></tr>
+      <tr><td>Task 5.4 · DE-5.4, BE-5.3</td><td>32</td><td>Slice D. Hosted encrypted OCFL roots.</td></tr>
+      <tr><td>Task 5.2 backup half, Task 5.3, Task 5.5</td><td>32 + 16, plus the backup half of 52</td><td>Slice E. Restore before a sync reliability claim.</td></tr>
+      <tr><td>Task 5.2 sync half · CO-5.2</td><td>remainder of 52</td><td>Slice F. After the restore drill.</td></tr>
+      <tr><td>Task 0.11</td><td>12</td><td>Protocol in F4. Implementation in F5.</td></tr>
+      <tr><td>Task FS-4.2</td><td>12</td><td>Slice G. Release gate. No invented SLA.</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<footer>
+  FileSquid · backup design report · 29 October 2026, corrected the same day. Backup is the product that follows the MVP. The Drive is the interface. OCFL stays behind it. The Drive owner grants upload access with a device key, and that Drive keeps backup copies in more than one geography. Incorporates the field media pipeline prospectus v1. Styled to the FileSquid design guide v1. In development. Open source under the MIT licence.
+</footer>
+
+</div>
+</main>
+</div>
+<script>
+(function () {
+  var root = document.documentElement;
+  function paint() {
+    var mode = root.getAttribute("data-mode") || "light";
+    document.querySelectorAll(".mode-btn").forEach(function (btn) {
+      var on = btn.getAttribute("data-mode") === mode;
+      btn.classList.toggle("on", on);
+      btn.setAttribute("aria-pressed", on ? "true" : "false");
+    });
+  }
+  function setMode(mode) {
+    root.setAttribute("data-mode", mode);
+    try { localStorage.setItem("fs-theme", mode); } catch (e) {}
+    paint();
+  }
+  document.querySelectorAll(".mode-btn").forEach(function (btn) {
+    btn.addEventListener("click", function () { setMode(btn.getAttribute("data-mode")); });
+  });
+  paint();
+  var links = Array.prototype.slice.call(document.querySelectorAll(".nav-item"));
+  var sections = links.map(function (a) {
+    return document.querySelector(a.getAttribute("href"));
+  }).filter(Boolean);
+  if ("IntersectionObserver" in window) {
+    var current = null;
+    var observer = new IntersectionObserver(function (entries) {
+      entries.forEach(function (entry) {
+        if (entry.isIntersecting) current = entry.target;
+      });
+      links.forEach(function (a) {
+        a.classList.toggle("active", current && a.getAttribute("href") === "#" + current.id);
+      });
+    }, { rootMargin: "-20% 0px -70% 0px", threshold: 0 });
+    sections.forEach(function (section) { observer.observe(section); });
+  }
+})();
+</script>
+</body>
+</html>

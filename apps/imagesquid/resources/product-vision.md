@@ -134,7 +134,7 @@ Professional records management and digital archiving for mixed record types (do
 
 # Product roadmap
 
-ImageSquid is the **second consumer release**, after FileSquid and its encrypted backup and sync. There are no calendar dates. Interim ImageSquid releases lead to a complete consumer ImageSquid 1.0.
+ImageSquid is the **second consumer release**, after FileSquid's encrypted backup and sync and then the FileSquid release. There are no calendar dates. Interim ImageSquid releases lead to a complete consumer ImageSquid 1.0.
 
 | <img src="./assets/ImageSquid-logo.svg" alt="ImageSquid logo" width="128" height="128"> | <img src="./assets/FileSquid-logo.svg" alt="FileSquid logo" width="128" height="128"> |
 | :------------------------------------------------------------------------------------------------------: | :----------------------------------------------------------------------------------------------------: |

@@ -3,7 +3,9 @@
 //! dialog in place of the native one, the native import worker, and one library in a folder
 //! of a scratch directory that is removed when the rig is dropped, attached to its catalog
 //! index with one destination collection (`ImportRig::collection`), and the navigation and listing routes
-//! over that index.
+//! over that index. The job routes answer over the launch's job service with the import runner
+//! installed (Task DE-1.9, DE-S-020), and a [`Gate`] can hold the worker on the file in hand,
+//! after its commit and before its registration, until the test releases it.
 //!
 //! The including test crate MUST declare `mod journal` (`support/journal.rs`) at its root.
 
@@ -12,16 +14,20 @@ use filesquid_api::imports::{ImportSource, ImportStartError};
 use filesquid_api::journal::JournalEntry;
 use filesquid_api::library::{CommandRequest, LibraryCatalog, LibraryCommand, LibraryService};
 use filesquid_api::local_library::{LocalLibraryService, MemoryRepairLedger};
+use filesquid_api::operation::OperationId as IntentOperation;
 use filesquid_api::operation::{CommandEnvelope, ExpectedRevision, OperationId, OperationScope};
-use filesquid_api::ApiState;
-use filesquid_core::{InstallationId, LibraryId};
+use filesquid_api::{ApiEvent, ApiState};
+use filesquid_core::{CollectionId, InstallationId, LibraryId};
 use filesquid_desktop_lib::api_protocol::handle;
 use filesquid_desktop_lib::imports::{ImportStarting, SourceDialog};
 use filesquid_desktop_lib::{
-    import_build, install_file_scopes, install_import_route, install_launch_token,
-    installation_repository, open_host_monitor, open_library_catalog,
+    import_build, install_file_scopes, install_import_route, install_import_runner,
+    install_launch_token, installation_repository, open_host_monitor, open_library_catalog,
 };
-use filesquid_native::catalog::{LibraryFolder, DEFAULT_LIBRARY_NAME};
+use filesquid_native::catalog::{
+    LibraryFolder, PendingIntent, RegisterFile, Registration, DEFAULT_LIBRARY_NAME,
+};
+use filesquid_native::import::index::ImportIndex;
 use filesquid_native::import::job::IMPORT_FILE_OPERATION;
 use filesquid_native::import::plans::SqliteImportPlans;
 use filesquid_native::import::worker::{ImportServices, ImportWorker};
@@ -34,7 +40,7 @@ use filesquid_ocfl::storage::FsBackend;
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 /// The library every rig imports into.
@@ -91,12 +97,101 @@ impl SourceDialog for SharedDialog {
     }
 }
 
+/// Longest the gate holds the worker, so a test that never releases it cannot hang.
+const GATE_HOLD: Duration = Duration::from_secs(30);
+
+/// Holds the import worker on the first file registered after [`Gate::arm`], until
+/// [`Gate::release`]: that file is committed and still in hand, before its checkpoint.
+#[derive(Debug, Default)]
+pub struct Gate {
+    /// (armed, holding, released).
+    state: Mutex<(bool, bool, bool)>,
+    changed: Condvar,
+}
+
+impl Gate {
+    /// Hold the next registration.
+    pub fn arm(&self) {
+        *self.state.lock().expect("gate") = (true, false, false);
+    }
+
+    /// Wait (at most [`GATE_HOLD`]) until the worker is held; answer whether it is.
+    pub fn wait_held(&self) -> bool {
+        let guard = self.state.lock().expect("gate");
+        let (guard, _) = self
+            .changed
+            .wait_timeout_while(guard, GATE_HOLD, |(_, holding, _)| !*holding)
+            .expect("gate");
+        guard.1
+    }
+
+    /// Let the held worker go on.
+    pub fn release(&self) {
+        self.state.lock().expect("gate").2 = true;
+        self.changed.notify_all();
+    }
+
+    /// Hold the calling worker if the gate is armed (once), at most [`GATE_HOLD`].
+    fn pass(&self) {
+        let mut guard = self.state.lock().expect("gate");
+        if !guard.0 {
+            return;
+        }
+        *guard = (false, true, false);
+        self.changed.notify_all();
+        let _released = self
+            .changed
+            .wait_timeout_while(guard, GATE_HOLD, |(_, _, released)| !*released)
+            .expect("gate");
+    }
+}
+
+/// The catalog index behind a [`Gate`].
+struct GatedIndex {
+    inner: Arc<SqliteCatalog>,
+    gate: Arc<Gate>,
+}
+
+impl ImportIndex for GatedIndex {
+    fn has_collection(
+        &self,
+        library: &LibraryId,
+        collection: &CollectionId,
+    ) -> Result<bool, String> {
+        ImportIndex::has_collection(self.inner.as_ref(), library, collection)
+    }
+
+    fn path_taken(&self, collection: &CollectionId, path: &str) -> Result<bool, String> {
+        ImportIndex::path_taken(self.inner.as_ref(), collection, path)
+    }
+
+    fn begin(&self, intent: &PendingIntent) -> Result<(), String> {
+        ImportIndex::begin(self.inner.as_ref(), intent)
+    }
+
+    fn register(
+        &self,
+        library: &LibraryId,
+        file: &RegisterFile,
+        journal: JournalEntry,
+    ) -> Result<Registration, String> {
+        self.gate.pass();
+        ImportIndex::register(self.inner.as_ref(), library, file, journal)
+    }
+
+    fn finish(&self, library: &LibraryId, operation: &IntentOperation) -> Result<(), String> {
+        ImportIndex::finish(self.inner.as_ref(), library, operation)
+    }
+}
+
 /// The desktop of one test.
 pub struct ImportRig {
     /// The scratch directory: `data/`, the storage root `root/` and the picked sources.
     pub dir: PathBuf,
     /// The scripted dialog.
     pub dialog: Arc<ScriptedDialog>,
+    /// The gate that can hold the worker on the file in hand.
+    pub gate: Arc<Gate>,
     /// The library's catalog index, until the rig shuts down.
     catalog: Option<Arc<SqliteCatalog>>,
     /// The destination collection of [`ImportRig::import`].
@@ -142,10 +237,12 @@ impl ImportRig {
             picked,
             shown: Mutex::new(0),
         });
-        let launch = start(&dir, &dialog, true).await;
+        let gate = Arc::new(Gate::default());
+        let launch = start(&dir, &dialog, &gate, true).await;
         Self {
             dir,
             dialog,
+            gate,
             catalog: Some(launch.catalog),
             collection: launch.collection,
             state: launch.state,
@@ -160,7 +257,7 @@ impl ImportRig {
     /// directory, as a new process would, resuming every unfinished import job.
     pub async fn relaunch(&mut self) {
         self.shut_down();
-        let launch = start(&self.dir, &self.dialog, false).await;
+        let launch = start(&self.dir, &self.dialog, &self.gate, false).await;
         self.catalog = Some(launch.catalog);
         self.collection = launch.collection;
         self.state = launch.state;
@@ -225,6 +322,16 @@ impl ImportRig {
         }
         let bytes = body.to_string().into_bytes();
         self.send("POST", "/api/v1/imports", bytes).await
+    }
+
+    /// POST `path` with no body through the scheme as the owner (the job controls).
+    pub async fn post(&self, path: &str) -> (u16, Value) {
+        self.send("POST", path, Vec::new()).await
+    }
+
+    /// A subscriber to this launch's event bus, the bus the desktop event channel forwards.
+    pub fn subscribe(&self) -> tokio::sync::broadcast::Receiver<ApiEvent> {
+        self.state.events.subscribe()
     }
 
     /// GET `path` through the scheme as the owner.
@@ -321,9 +428,9 @@ async fn create_root(dir: &Path, host: &HostMonitor) {
 /// Launch the import route over `<dir>/data`: the token, the file service with [`LIBRARY`]
 /// open at `<dir>/root` (created first when `create`, with its destination collection),
 /// attached to its catalog index, the navigation and listing over it, the jobs, the plans,
-/// the worker (which runs every unfinished import job when idle) and the route with
-/// `dialog`.
-async fn start(dir: &Path, dialog: &Arc<ScriptedDialog>, create: bool) -> Launch {
+/// the worker (which runs every unfinished import job when idle, through the index behind
+/// `gate`), the job routes with the import runner, and the route with `dialog`.
+async fn start(dir: &Path, dialog: &Arc<ScriptedDialog>, gate: &Arc<Gate>, create: bool) -> Launch {
     let state = ApiState::new();
     let token = install_launch_token(&state).expect("token");
     let files = install_file_service(&state).expect("files");
@@ -342,14 +449,20 @@ async fn start(dir: &Path, dialog: &Arc<ScriptedDialog>, create: bool) -> Launch
     filesquid_desktop_lib::navigation::install_navigation(&state, catalog.clone(), &installation)
         .expect("navigation");
     install_file_scopes(&files, &catalog).expect("scopes");
-    let jobs = open_jobs(&data, &host).expect("jobs");
+    let jobs = open_jobs(&data, &host)
+        .expect("jobs")
+        .with_events(state.events.clone());
+    assert!(state.install_jobs(Arc::new(jobs.clone())), "the job routes");
     let plans = Arc::new(SqliteImportPlans::open(&data.join(JOURNAL_FILE)).expect("plans"));
     let stop = Arc::new(AtomicBool::new(false));
     let worker = Arc::new(
         ImportWorker::spawn(ImportServices {
             jobs: jobs.clone(),
             files: files.clone(),
-            index: catalog.clone(),
+            index: Arc::new(GatedIndex {
+                inner: catalog.clone(),
+                gate: gate.clone(),
+            }),
             plans: plans.clone(),
             journal: host.monitor().journal(),
             build: import_build(),
@@ -369,6 +482,7 @@ async fn start(dir: &Path, dialog: &Arc<ScriptedDialog>, create: bool) -> Launch
         dialog: Box::new(SharedDialog(dialog.clone())),
     };
     install_import_route(&state, starting).expect("route");
+    install_import_runner(&state, worker.clone()).expect("runner");
     Launch {
         catalog,
         collection,

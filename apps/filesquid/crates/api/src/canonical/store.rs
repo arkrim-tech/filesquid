@@ -6,14 +6,14 @@ use super::entity::{decode, encode, LibraryHead, SnapshotEntity, SnapshotFile, V
 use super::layout::{file_object_root, SnapshotKey, SNAPSHOT_ROOT};
 use super::message::{parse_operation_message, OperationRecord};
 use super::original::{
-    check_new_original, check_same_original, companion_path, decode_record, encode_record,
-    original_path_of, FileOriginal,
+    check_new_content, check_new_original, check_same_original, companion_path, decode_record,
+    encode_record, original_path_of, FileOriginal,
 };
 use super::{CanonicalError, ProfileTransform};
 use filesquid_core::{Collection, FileId, Folder};
 use filesquid_metadata::file_record::FileRecord;
 use filesquid_metadata::store::ocfl::MAX_RECORD_BYTES;
-use filesquid_ocfl::change::{ChangeError, ChangeModel, VersionMeta};
+use filesquid_ocfl::change::{ChangeError, ChangeModel, PathChange, VersionMeta};
 use filesquid_ocfl::digest::DigestAlgorithm;
 use filesquid_ocfl::read::{LogicalFile, Object, ReadError};
 use filesquid_ocfl::storage::{
@@ -365,6 +365,74 @@ where
     match model.commit(meta).instrument(span).await {
         Err(ChangeError::NothingToCommit) => Ok(None),
         result => published(result).map(Some),
+    }
+}
+
+/// Commit the original of the new file object of `file_id`, already staged at its stored path
+/// through [`ChangeModel::stage_file`] as content of SHA-256 `digest` and `size` bytes, with
+/// its metadata record `record` in the same version, with `meta` (Task DE-1.9, OCFL-S-026):
+/// the streamed counterpart of [`commit_file_original`] for an object that has no head yet.
+/// The record is stored as [`OwnerReadable`](super::OwnerReadable) content, as the original
+/// is: a streamed original cannot be sealed by a profile transform.
+///
+/// # Errors
+/// As [`commit_file_original`]; [`CanonicalError::Encode`] for a record that does not cite
+/// the staged content; [`CanonicalError::Conflict`] when committing would change nothing.
+pub async fn commit_staged_original<B, R, S>(
+    model: &ChangeModel<'_, B, R, S>,
+    file_id: &FileId,
+    record: &FileRecord,
+    (digest, size): (&str, u64),
+    meta: VersionMeta,
+) -> Result<CommitReceipt, CanonicalError>
+where
+    B: StorageBackend,
+    R: VersionReservations,
+    S: StorageBackend,
+{
+    let path = original_path_of(file_id, record)?;
+    check_new_content(file_id, record, None, &path, (digest, size))?;
+    check_staged(model, &path, digest).await?;
+    let companion = companion_path(file_id)?;
+    model
+        .stage_bytes(&companion, &encode_record(record))
+        .await?;
+    let span = super::message::commit_span(meta.message.as_deref());
+    match model.commit(meta).instrument(span).await {
+        Err(ChangeError::NothingToCommit) => Err(CanonicalError::Conflict),
+        result => published(result),
+    }
+}
+
+/// Refuse to commit unless `model` stages exactly one new file, `path`, with the content
+/// `digest`, so a record can never cite content its version does not hold. Storage I/O.
+///
+/// # Errors
+/// [`CanonicalError::Encode`] when the staged state is anything else; a read failure.
+async fn check_staged<B, R, S>(
+    model: &ChangeModel<'_, B, R, S>,
+    path: &str,
+    digest: &str,
+) -> Result<(), CanonicalError>
+where
+    B: StorageBackend,
+    R: VersionReservations,
+    S: StorageBackend,
+{
+    let status = model.status().await?;
+    let staged = match status.changes.as_slice() {
+        [PathChange::Added {
+            path: staged,
+            digest: content,
+            ..
+        }] => staged == path && content == digest,
+        _ => false,
+    };
+    match staged {
+        true => Ok(()),
+        false => Err(CanonicalError::Encode(
+            "the original is not staged with the content the record cites".into(),
+        )),
     }
 }
 

@@ -14,6 +14,8 @@ Accepted: 2026-09-16T01:01:07Z. Revised: 2026-09-22T04:34:37Z. Revised: 2026-10-
 
 Amended 2026-10-15 by [ADR 032](./032-hosting-and-privacy-model.md): this ciphertext mailbox is re-scoped to the paid `*.filesquid.tech` backup and sync service. The owner-operated `filesquid-server` is a separate deployment type that MAY link the modules and process plaintext. The former `apps/backend` scaffold is now `filesquid-server` at `apps/filesquid/crates/server/`.
 
+Noted 2026-10-29: resumable upload does not reopen the Elixir/BEAM alternative. The durable offset is specified in [ADR 012](./012-s3-compatible-ciphertext-storage.md).
+
 ## Context / Requirement Reference
 
 Novice mental model: a web app is a REST backend that holds files plus an HTML/JS frontend that asks for collections. FileSquid's hosted privacy rules forbid that. The hosted service MUST NOT receive library keys or ordinary private plaintext (titles, captions, search, pixels) ([T-001](../product-vision.md#client-processing-and-hosted-mailbox), [U-20](../product-vision.md#one-api-hosts-and-distributions), [FE-033](../product-vision.md#portable-preservation)). The browser MUST unlock, browse and export available uploaded content with desktops off ([FE-017](../product-vision.md#cross-platform-access), [T-002](../product-vision.md#client-processing-and-hosted-mailbox)).
@@ -79,7 +81,7 @@ FastAPI would still be a mailbox if used correctly, but it would be a second bac
 
 ## Alternatives Considered
 
-- **Phoenix/Elixir/Oban:** Strong hosted jobs. Rejected as a second application runtime beside Rust.
+- **Phoenix/Elixir/Oban:** Strong hosted jobs. Rejected as a second application runtime beside Rust. Resumable upload does not reopen this alternative: the durable offset is the client checkpoint plus S3 multipart, not a BEAM process ([ADR 012](./012-s3-compatible-ciphertext-storage.md)).
 - **LiveView for the web UI:** Would need plaintext on the server for a conventional collection browse. Rejected.
 - **FastAPI:** Acceptable mailbox in isolation; rejected as a parallel stack once Rust is the application language.
 - **Server-side thumbnail workers on plaintext:** Forbidden by the privacy model.
