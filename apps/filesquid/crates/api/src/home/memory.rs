@@ -234,16 +234,18 @@ fn relocate_in(state: &mut State, library_id: &LibraryId, request: &HomeRequest)
         Some(place) if &place.0 == library_id => place.clone(),
         _ => return Placed::Refused("not_found"),
     };
+    let key = (library_id.clone(), request.collection_id.clone());
+    if !state.collections.contains(&key) {
+        return Placed::Refused("collection_not_found");
+    }
     if (&current.1, &current.2) == (&request.collection_id, &request.path) {
         return Placed::AlreadyRegistered {
             collection_id: current.1,
             path: current.2,
         };
     }
-    let key = (library_id.clone(), request.collection_id.clone());
-    if !state.collections.contains(&key) {
-        return Placed::Refused("collection_not_found");
-    }
+    // The file leaves its path, so it is set aside while the free path is found: it never
+    // takes its own target, at it, below it or above it (as the SQLite catalog).
     state.files.remove(&request.file_id);
     let found = state.free(
         library_id,

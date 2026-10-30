@@ -171,8 +171,10 @@ fn home_of(
 }
 
 /// Relocate `request`'s file inside `tx`: refuse an unregistered file and a collection the
-/// library does not hold; answer a file already there as it is; else give it the first free
-/// path, its own path never counting as taken, and store its new home. Database I/O.
+/// library does not hold (checked first, so a file left in a removed collection is never
+/// answered as already there); answer a file already there as it is; else give it the first
+/// free path, the file itself never taking it at, below or above its own path, and store its
+/// new home. Database I/O.
 fn relocate_in(
     tx: &Transaction<'_>,
     library_id: &LibraryId,
@@ -181,20 +183,18 @@ fn relocate_in(
     let Some((home, current)) = home_of(tx, &request.file_id)? else {
         return Ok(Placed::Refused("not_found"));
     };
+    if rows::collection(tx, library_id, &request.collection_id)?.is_none() {
+        return Ok(Placed::Refused("collection_not_found"));
+    }
     if home == request.collection_id && current == request.path {
         return Ok(Placed::AlreadyRegistered {
             collection_id: home,
             path: current,
         });
     }
-    if rows::collection(tx, library_id, &request.collection_id)?.is_none() {
-        return Ok(Placed::Refused("collection_not_found"));
-    }
-    let own = |candidate: &str| home == request.collection_id && candidate == current;
-    let mut taken = |candidate: &str| match own(candidate) {
-        true => Ok(false),
-        false => placement::taken(tx, &request.collection_id, candidate),
-    };
+    let moving = Some(&request.file_id);
+    let mut taken =
+        |candidate: &str| placement::taken_by_other(tx, &request.collection_id, candidate, moving);
     let path = match free_path(&request.path, ItemKind::File, &mut taken)? {
         Ok(path) => path,
         Err(refused) => return Ok(Placed::Refused(refused.error_code())),
