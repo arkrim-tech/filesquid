@@ -423,8 +423,9 @@ async fn an_upload_creates_its_own_file_object_and_is_journaled() {
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].outcome, Outcome::Succeeded);
     assert_eq!(entries[0].actor, "owner");
-    assert!(entries[0].target_ids.contains(&"v1".to_string()));
+    assert!(entries[0].target_ids.contains(&object_id));
     assert!(entries[0].target_ids.contains(&LIBRARY.to_string()));
+    // The version is named by the object reference (API-S-028).
     let object_ref = format!("{object_id}@v1");
     assert_eq!(entries[0].object_ref.as_deref(), Some(object_ref.as_str()));
 }
