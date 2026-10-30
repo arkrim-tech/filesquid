@@ -61,6 +61,10 @@ pub struct LocationRequest {
     /// The library ID to use; a new UUID v4 is minted when absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub library_id: Option<LibraryId>,
+    /// The library's name (API-S-038): kept when given; a library first bound without one is
+    /// named [`super::UNTITLED_LIBRARY`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
 }
 
 /// The answer to create and open: the library and what its storage root holds.

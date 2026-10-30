@@ -382,8 +382,11 @@ fn every_routed_path_declares_its_action() {
             | "/api/v1/libraries/openings"
             | "/api/v1/libraries/snapshot-copies"
             | "/api/v1/libraries/rebuilds"
-            | "/api/v1/libraries/location-choices" => Action::ManageLibraries,
-            "/api/v1/libraries/repair-candidates" => Action::ReadLibraries,
+            | "/api/v1/libraries/location-choices"
+            | "/api/v1/libraries/renames" => Action::ManageLibraries,
+            "/api/v1/libraries/repair-candidates"
+            | "/api/v1/libraries/{library}/facts"
+            | "/api/v1/libraries/recent" => Action::ReadLibraries,
             "/api/v1/libraries/repairs" => Action::RepairLibraries,
             "/api/v1/navigation" => Action::ReadNavigation,
             "/api/v1/preferences" => Action::ManagePreferences,

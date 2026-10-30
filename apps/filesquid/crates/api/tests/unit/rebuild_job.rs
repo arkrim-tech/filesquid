@@ -195,6 +195,30 @@ impl LibraryOperations for ScriptedLibrary {
     fn repair(&self, _: Principal, _: RepairRequest) -> LibraryFuture<'_, RepairAnswer> {
         unused()
     }
+
+    fn rename(
+        &self,
+        _: String,
+        _: filesquid_api::local_library::RenameLibraryRequest,
+    ) -> LibraryFuture<'_, filesquid_api::local_library::LibraryFacts> {
+        unused()
+    }
+
+    fn facts(
+        &self,
+        _: String,
+        _: LibraryId,
+    ) -> LibraryFuture<'_, filesquid_api::local_library::LibraryFacts> {
+        unused()
+    }
+
+    fn recent(
+        &self,
+        _: String,
+        _: filesquid_api::local_library::Readable,
+    ) -> LibraryFuture<'_, filesquid_api::local_library::RecentLibraries> {
+        unused()
+    }
 }
 
 /// A job service over an in-memory store and journal with a hand-moved clock, and a
@@ -699,6 +723,30 @@ impl LibraryOperations for Refusing {
     }
 
     fn repair(&self, _: Principal, _: RepairRequest) -> LibraryFuture<'_, RepairAnswer> {
+        unused()
+    }
+
+    fn rename(
+        &self,
+        _: String,
+        _: filesquid_api::local_library::RenameLibraryRequest,
+    ) -> LibraryFuture<'_, filesquid_api::local_library::LibraryFacts> {
+        unused()
+    }
+
+    fn facts(
+        &self,
+        _: String,
+        _: LibraryId,
+    ) -> LibraryFuture<'_, filesquid_api::local_library::LibraryFacts> {
+        unused()
+    }
+
+    fn recent(
+        &self,
+        _: String,
+        _: filesquid_api::local_library::Readable,
+    ) -> LibraryFuture<'_, filesquid_api::local_library::RecentLibraries> {
         unused()
     }
 }

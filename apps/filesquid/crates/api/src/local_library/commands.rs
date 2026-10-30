@@ -7,6 +7,10 @@
 //! here once, under the operation's own name.
 
 use super::error::LocalLibraryError;
+use super::facts::{
+    check_name, FreeSpace, LibraryFacts, LibraryRegistry, RecentLibraries, RecentLibrary,
+    RegistryEntry, RenameLibraryRequest, MAX_RECENT_LIBRARIES,
+};
 use super::locations::{
     LibraryLocations, LibraryRequest, LibraryRoot, LibraryView, LocationRequest,
     SnapshotCopyRequest, MAX_LOCATION_ID_BYTES,
@@ -14,8 +18,8 @@ use super::locations::{
 use super::rebuild::{RebuildEnd, RebuildProgress};
 use super::repair::{RepairAnswer, RepairCandidates, RepairRequest, REPAIR_OPERATION};
 use super::service::{
-    LocalLibraryService, CANDIDATES_OPERATION, COPY_OPERATION, CREATE_OPERATION, OPEN_OPERATION,
-    REBUILD_OPERATION,
+    LocalLibraryService, CANDIDATES_OPERATION, COPY_OPERATION, CREATE_OPERATION, FACTS_OPERATION,
+    OPEN_OPERATION, REBUILD_OPERATION, RECENT_OPERATION, RENAME_OPERATION,
 };
 use super::snapshot::CopyReport;
 use crate::auth::Principal;
@@ -57,6 +61,9 @@ pub struct LibraryCommands<L: LibraryLocations> {
     locations: Arc<L>,
     /// The location of each open library, by library ID.
     open: Mutex<HashMap<LibraryId, String>>,
+    /// What the host remembers of the libraries it bound (API-S-038); without one, the
+    /// facts, recent and rename routes are unavailable.
+    registry: Option<Arc<dyn LibraryRegistry>>,
     /// Serialises create, open and copy, so two of them cannot bind one location or library
     /// twice between the check and the binding, and no library is opened in a copy's
     /// destination while the copy runs.
@@ -76,8 +83,125 @@ impl<L: LibraryLocations> LibraryCommands<L> {
             service,
             locations,
             open: Mutex::new(HashMap::new()),
+            registry: None,
             binding: tokio::sync::Mutex::new(()),
         }
+    }
+
+    /// These commands, remembering each library they bind in `registry` and answering the
+    /// library facts from it (API-S-038).
+    pub fn with_registry(mut self, registry: Arc<dyn LibraryRegistry>) -> Self {
+        self.registry = Some(registry);
+        self
+    }
+
+    /// Rename a library this host opened, for `actor`, and answer its facts. A rename that
+    /// changes nothing answers the facts and is not journaled.
+    ///
+    /// # Errors
+    ///
+    /// `invalid_name`, `library_not_found` (a library this host never opened), or
+    /// `unavailable` without a registry; each journaled once.
+    pub async fn rename(
+        &self,
+        actor: &str,
+        request: RenameLibraryRequest,
+    ) -> Result<LibraryFacts, LocalLibraryError> {
+        let library = &request.library_id;
+        let checked = self.registry().and_then(|registry| {
+            name_or_refusal(Some(&request.name))?;
+            let renamed = registry.rename(library, &request.name);
+            renamed
+                .map(|changed| (registry, changed))
+                .ok_or_else(library_not_found)
+        });
+        let (registry, changed) = self.refused(actor, RENAME_OPERATION, Some(library), checked)?;
+        if changed {
+            self.service
+                .journal_success(actor, RENAME_OPERATION, library);
+        }
+        let entry = registry.entry(library).ok_or(LocalLibraryError::Internal)?;
+        let space = read_free_space(registry, &entry.location_id).await;
+        Ok(LibraryFacts::of(&entry, &space))
+    }
+
+    /// The facts of a library this host opened, for `actor`: its name and the free space of
+    /// its volume.
+    ///
+    /// # Errors
+    ///
+    /// `library_not_found`, or `unavailable` without a registry; each journaled once.
+    pub async fn facts(
+        &self,
+        actor: &str,
+        library: &LibraryId,
+    ) -> Result<LibraryFacts, LocalLibraryError> {
+        let checked = self.registry().and_then(|registry| {
+            let entry = registry.entry(library).ok_or_else(library_not_found)?;
+            Ok((registry, entry))
+        });
+        let (registry, entry) = self.refused(actor, FACTS_OPERATION, Some(library), checked)?;
+        let space = read_free_space(registry, &entry.location_id).await;
+        Ok(LibraryFacts::of(&entry, &space))
+    }
+
+    /// The libraries this host opened that `readable` keeps, then at most
+    /// [`MAX_RECENT_LIBRARIES`] of them, newest first, with the free space of each one's
+    /// volume, for `actor`.
+    ///
+    /// # Errors
+    ///
+    /// `unavailable` without a registry, journaled once.
+    pub async fn recent(
+        &self,
+        actor: &str,
+        readable: &(dyn Fn(&LibraryId) -> bool + Send + Sync),
+    ) -> Result<RecentLibraries, LocalLibraryError> {
+        let registry = self.refused(actor, RECENT_OPERATION, None, self.registry())?;
+        let open = self.lock().clone();
+        let listed: Vec<RegistryEntry> = registry
+            .entries()
+            .into_iter()
+            .filter(|entry| readable(&entry.library_id))
+            .take(MAX_RECENT_LIBRARIES)
+            .collect();
+        let locations = listed
+            .iter()
+            .map(|entry| entry.location_id.clone())
+            .collect();
+        let spaces = read_free_spaces(registry, locations).await;
+        let libraries = listed
+            .iter()
+            .zip(spaces.iter())
+            .map(|(entry, space)| {
+                RecentLibrary::of(entry, open.contains_key(&entry.library_id), space)
+            })
+            .collect();
+        Ok(RecentLibraries { libraries })
+    }
+
+    /// Remember the library just bound from `request` in `registry`, journaling a rename
+    /// when the request's name replaces a different one this host knew.
+    fn remember(
+        &self,
+        actor: &str,
+        registry: &dyn LibraryRegistry,
+        library_id: &LibraryId,
+        request: &LocationRequest,
+    ) {
+        let known = registry.entry(library_id).map(|entry| entry.name);
+        let now = self.service.now_ms();
+        let name = request.name.as_deref();
+        let kept = registry.remember(library_id, &request.location_id, name, now);
+        if known.is_some_and(|known| known != kept) {
+            self.service
+                .journal_success(actor, RENAME_OPERATION, library_id);
+        }
+    }
+
+    /// The installed registry, or `unavailable`.
+    fn registry(&self) -> Result<Arc<dyn LibraryRegistry>, LocalLibraryError> {
+        self.registry.clone().ok_or(LocalLibraryError::Unavailable)
     }
 
     /// The location ID the open library `library_id` lives in, so a host can serve that
@@ -232,6 +356,8 @@ impl<L: LibraryLocations> LibraryCommands<L> {
         let _serialised = self.binding.lock().await;
         let operation = binding.operation();
         let target = request.library_id.clone();
+        let named = name_or_refusal(request.name.as_deref());
+        self.refused(actor, operation, target.as_ref(), named)?;
         let request = match binding {
             Binding::Open => self.named_by_snapshot(request).await,
             Binding::Create => Ok(request),
@@ -244,6 +370,9 @@ impl<L: LibraryLocations> LibraryCommands<L> {
             Binding::Create => self.service.create_root(actor, &library_id, backend).await,
             Binding::Open => self.service.open_root(actor, &library_id, backend).await,
         }?;
+        if let Some(registry) = &self.registry {
+            self.remember(actor, registry.as_ref(), &library_id, &request);
+        }
         self.lock().insert(library_id.clone(), request.location_id);
         Ok(LibraryView {
             library_id,
@@ -426,6 +555,22 @@ fn mint_library_id() -> Result<LibraryId, LocalLibraryError> {
     LibraryId::new(raw).map_err(|_| LocalLibraryError::Internal)
 }
 
+/// `Ok` for no name or a name that keeps the rule of [`check_name`], else `invalid_name`.
+fn name_or_refusal(name: Option<&str>) -> Result<(), LocalLibraryError> {
+    match name {
+        Some(name) if !check_name(name) => Err(LocalLibraryError::invalid(
+            "invalid_name",
+            "A library name is 1 to 1,024 bytes, not blank, with no control characters.",
+        )),
+        _ => Ok(()),
+    }
+}
+
+/// The refusal for a library this host never opened.
+fn library_not_found() -> LocalLibraryError {
+    LocalLibraryError::not_found("library_not_found", "That library is not known here.")
+}
+
 /// The refusal for a library that is not open on this host.
 fn library_not_open() -> LocalLibraryError {
     LocalLibraryError::not_found(
@@ -456,6 +601,38 @@ fn too_many_libraries() -> LocalLibraryError {
         "too_many_libraries",
         "Too many libraries are open. Restart FileSquid to open another.",
     )
+}
+
+/// Read the free space of `location_id` off the async executor, since a volume query may
+/// block.
+async fn read_free_space(registry: Arc<dyn LibraryRegistry>, location_id: &str) -> FreeSpace {
+    let spaces = read_free_spaces(registry, vec![location_id.to_string()]).await;
+    spaces
+        .into_iter()
+        .next()
+        .unwrap_or(FreeSpace::VolumeUnreadable)
+}
+
+/// Read the free space of each of `locations` on one blocking thread, in order. A read that
+/// cannot finish answers every location as [`FreeSpace::VolumeUnreadable`], logged.
+async fn read_free_spaces(
+    registry: Arc<dyn LibraryRegistry>,
+    locations: Vec<String>,
+) -> Vec<FreeSpace> {
+    let count = locations.len();
+    let read = move || {
+        locations
+            .iter()
+            .map(|location| registry.free_space(location))
+            .collect()
+    };
+    match tokio::task::spawn_blocking(read).await {
+        Ok(spaces) => spaces,
+        Err(err) => {
+            tracing::warn!(target: super::LOG_TARGET, error = %err, "free space read failed");
+            vec![FreeSpace::VolumeUnreadable; count]
+        }
+    }
 }
 
 /// The refusal of an open whose folder's snapshot could not be read: `unavailable` when the

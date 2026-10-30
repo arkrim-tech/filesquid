@@ -16,8 +16,9 @@ use filesquid_api::auth::{Authoriser, LaunchToken};
 use filesquid_api::jobs::{Jobs, MemoryJobStore};
 use filesquid_api::journal::{JournalEntry, JournalQuery, JournalStore, MemoryJournal, MAX_PAGE};
 use filesquid_api::local_library::{
-    LibraryCommands, LibraryLocations, LibraryRoot, LocalLibraryService, MemoryRepairLedger,
-    RebuildRunner, CONSENT_STATEMENT_ID, REBUILD_JOB_KIND,
+    FreeSpace, LibraryCommands, LibraryLocations, LibraryRoot, LocalLibraryService,
+    MemoryLibraryRegistry, MemoryRepairLedger, RebuildRunner, CONSENT_STATEMENT_ID,
+    REBUILD_JOB_KIND,
 };
 use filesquid_api::monitor::{Monitor, MonitorConfig, StaticHostChecks};
 use filesquid_api::{router, ApiState};
@@ -199,6 +200,11 @@ pub struct LibraryRig {
     pub locations: Arc<TestLocations>,
     /// The commands installed in the state.
     pub commands: Arc<LibraryCommands<TestLocations>>,
+    /// The registry of the libraries the rig opened (API-S-038); the `without_registry` rig
+    /// builds it but does not install it, so its routes answer `unavailable`.
+    pub registry: Arc<MemoryLibraryRegistry>,
+    /// The free space each location reports; 1,000,000 bytes when not set.
+    pub free: Arc<Mutex<HashMap<String, FreeSpace>>>,
     /// The API state the router serves.
     pub state: ApiState,
     /// The caller's token.
@@ -222,9 +228,19 @@ impl Drop for LibraryRig {
 }
 
 impl LibraryRig {
-    /// A rig on `mount` with no location registered, whose job service runs rebuilds.
+    /// A rig on `mount` with no location registered, whose job service runs rebuilds and
+    /// whose commands keep a registry of the libraries they open (API-S-038).
     pub fn new(mount: Mount) -> Self {
-        let rig = Self::without_rebuild_runner(mount);
+        Self::with_rebuild_runner(Self::build(mount, true))
+    }
+
+    /// A rig on `mount` whose commands keep no registry, as a host that installs none.
+    pub fn without_registry(mount: Mount) -> Self {
+        Self::with_rebuild_runner(Self::build(mount, false))
+    }
+
+    /// `rig` with a runner for rebuilds installed in its job service.
+    fn with_rebuild_runner(rig: Self) -> Self {
         let runner = RebuildRunner::new(rig.jobs(), rig.commands.clone(), "owner");
         assert!(rig
             .state
@@ -240,6 +256,11 @@ impl LibraryRig {
     /// A rig on `mount` with a job service but no runner for rebuilds: a submitted rebuild
     /// stays pending.
     pub fn without_rebuild_runner(mount: Mount) -> Self {
+        Self::build(mount, true)
+    }
+
+    /// A rig on `mount` with a job service, with or without a library registry.
+    fn build(mount: Mount, with_registry: bool) -> Self {
         let (authoriser, token) = match mount {
             Mount::Desktop => {
                 let token = LaunchToken::generate().expect("random token");
@@ -269,8 +290,23 @@ impl LibraryRig {
             roots: Mutex::new(HashMap::new()),
         });
         let ledger = Arc::new(MemoryRepairLedger::new());
-        let service = LocalLibraryService::new(monitor.journal(), ledger.clone());
-        let commands = Arc::new(LibraryCommands::new(service, locations.clone()));
+        let now = clock.clone();
+        let service = LocalLibraryService::new(monitor.journal(), ledger.clone())
+            .with_clock(Arc::new(move || now.now()));
+        let free: Arc<Mutex<HashMap<String, FreeSpace>>> = Arc::default();
+        let reported = free.clone();
+        let registry = Arc::new(MemoryLibraryRegistry::new(move |location: &str| {
+            let reported = reported.lock().expect("free space");
+            reported
+                .get(location)
+                .cloned()
+                .unwrap_or(FreeSpace::Bytes(1_000_000))
+        }));
+        let commands = LibraryCommands::new(service, locations.clone());
+        let commands = Arc::new(match with_registry {
+            true => commands.with_registry(registry.clone()),
+            false => commands,
+        });
         assert!(state.install_libraries(commands.clone()));
         let jobs = Jobs::new(
             Arc::new(MemoryJobStore::new()),
@@ -285,6 +321,8 @@ impl LibraryRig {
             clock,
             locations,
             commands,
+            registry,
+            free,
             state,
             token,
             journal,
