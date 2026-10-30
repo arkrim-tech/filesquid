@@ -100,7 +100,21 @@ Playwright against `vite build` plus `vite preview` (`FILESQUID_E2E=1`). The pin
   144 passed (1.0m)
 ```
 
-Hook: see the pull request for the head commit's `Test scope:` line.
+Re-run before the pull request (Playwright again 144 passed against `vite build` plus `vite preview`; `browsingRows` was split so no function exceeds 60 lines).
+
+Hook, ordinary `bash scripts/pre-commit.sh` (the change scope against `origin/main` is `npm:apps/filesquid/ui`, so no Cargo step runs):
+
+```
+ℹ️  Test scope: npm:apps/filesquid/ui
+✅ All Pre-Commit Hooks Passed! Test scope: npm:apps/filesquid/ui (76s)
+```
+
+## Sync Execution Report
+
+- PRD [F-062](../../../../../resources/prd.md#f-062-drive-style-views-sorting-selection-and-layout-preferences), SRS [SRS-F-062](../../../../../resources/srs.md#srs-f-062-drive-style-views-sorting-selection-and-layout-preferences) and the module SRS rows UI-S-006, UI-S-017, UI-S-024 to UI-S-026 and UI-S-033 already state what was built; no requirement text changed. The rows that name views the API does not serve yet (home, personal, favorites, shares, tags) keep their wording, as UI-S-006 itself says they join the sidebar when their tasks ship.
+- ADR 041 (destination of move or copy) is followed unchanged; no new ADR is needed because no library, route or architecture was added.
+- BDD: [`drive_style_views_and_preferences_F-062.feature`](../../tests/features/drive_style_views_and_preferences_F-062.feature) and [`navigation_preferences_UI-S-017.feature`](../../tests/features/navigation_preferences_UI-S-017.feature) carry the scenarios for the built behaviour.
+- Module plan box for UI-F2.8 and its checklist row are ticked; the global Task FS-2.5 stays open (5 of 12 module rows), so its box is unchanged.
 
 ## Mocked Environment Variables
 
