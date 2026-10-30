@@ -176,6 +176,10 @@ name = "integration_metadata"
 path = "tests/integration/metadata.rs"
 
 [[test]]
+name = "integration_commit_linkage"
+path = "tests/integration/commit_linkage.rs"
+
+[[test]]
 name = "integration_names"
 path = "tests/integration/names.rs"
 
@@ -214,6 +218,14 @@ path = "tests/unit/location_choice.rs"
 [[test]]
 name = "unit_imports_route"
 path = "tests/unit/imports_route.rs"
+
+[[test]]
+name = "unit_import_review"
+path = "tests/unit/import_review.rs"
+
+[[test]]
+name = "unit_job_items"
+path = "tests/unit/job_items.rs"
 
 [[test]]
 name = "unit_history_jobs"

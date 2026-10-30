@@ -3,22 +3,71 @@
 //! schemas.
 
 use filesquid_api::jobs::{
-    Job, JobControl, JobControlAnswer, JobPage, JobState, JobStore, JobView, Jobs, MemoryJobStore,
+    Job, JobControl, JobControlAnswer, JobDestination, JobItem, JobItemPage, JobItemState, JobPage,
+    JobState, JobStore, JobView, Jobs, MemoryJobItems, MemoryJobStore,
 };
 use filesquid_api::monitor::Monitor;
 use filesquid_api::{ApiEvent, ApiState};
 use serde_json::Value;
 use std::sync::Arc;
 
-/// The job each job path names: one per control, so cancelling one cannot refuse another.
+/// The job each job path names: one per control and retry, so cancelling one cannot refuse
+/// another; the item of the one-file retry is [`FAILED_ITEM`].
 pub fn concrete_job(path: &str) -> String {
-    let id = ["pause", "resume", "cancel"]
+    let id = ["pause", "resume", "cancel", "retry", "retry-failed"]
         .into_iter()
         .find(|control| path.ends_with(&format!("/{control}")))
         .map_or("sample-job".to_string(), |control| {
             format!("sample-job-{control}")
         });
-    path.replace("{job}", &id)
+    path.replace("{job}", &id).replace("{item}", FAILED_ITEM)
+}
+
+/// The failed file of every sample upload job.
+pub const FAILED_ITEM: &str = "0b6f6a58-5c1d-4b5e-9f3e-2a7d8c9e0f13";
+
+/// The destination of every sample upload job.
+fn destination() -> JobDestination {
+    JobDestination {
+        collection_id: "2c0d1e2f-3a4b-4c5d-8e6f-7a8b9c0d1e2f".into(),
+        folder: Some("Site photos".into()),
+    }
+}
+
+/// The files of every sample upload job: one copied, one copying and one failed.
+fn files() -> Vec<JobItem> {
+    let file = |id: &str, name: &str, state, done, code: Option<&str>| JobItem {
+        item_id: id.into(),
+        name: name.into(),
+        folder: Some("Site photos".into()),
+        state,
+        bytes_done: done,
+        bytes_total: 6_400_000,
+        error_code: code.map(str::to_string),
+    };
+    vec![
+        file(
+            "0b6f6a58-5c1d-4b5e-9f3e-2a7d8c9e0f11",
+            "IMG_4101.JPG",
+            JobItemState::Copied,
+            6_400_000,
+            None,
+        ),
+        file(
+            "0b6f6a58-5c1d-4b5e-9f3e-2a7d8c9e0f12",
+            "IMG_4102.CR3",
+            JobItemState::Copying,
+            3_968_000,
+            None,
+        ),
+        file(
+            FAILED_ITEM,
+            "IMG_4099.JPG",
+            JobItemState::Failed,
+            0,
+            Some("source_changed"),
+        ),
+    ]
 }
 
 /// A pending job `id`. Pure.
@@ -47,10 +96,18 @@ fn pending(id: &str) -> Job {
 /// Install a job service holding the jobs [`concrete_job`] names.
 pub fn install(state: &ApiState, monitor: &Monitor) {
     let store = Arc::new(MemoryJobStore::new());
-    for suffix in ["", "-pause", "-resume", "-cancel"] {
-        store
-            .insert(&pending(&format!("sample-job{suffix}")))
-            .expect("job");
+    let items = Arc::new(MemoryJobItems::new());
+    for suffix in [
+        "",
+        "-pause",
+        "-resume",
+        "-cancel",
+        "-retry",
+        "-retry-failed",
+    ] {
+        let id = format!("sample-job{suffix}");
+        store.insert(&pending(&id)).expect("job");
+        items.put(&id, Some(destination()), files());
     }
     let jobs = Jobs::new(
         store,
@@ -58,7 +115,8 @@ pub fn install(state: &ApiState, monitor: &Monitor) {
         monitor.registry().clone(),
         "launch",
     )
-    .with_events(state.events.clone());
+    .with_events(state.events.clone())
+    .with_items(items);
     assert!(state.install_jobs(Arc::new(jobs)));
 }
 
@@ -106,10 +164,17 @@ pub fn samples() -> Vec<(&'static str, Vec<Value>)> {
             .into(),
     );
     let views = [
-        JobView::of(&pending("job")),
+        JobView::of(&pending("job")).with_destination(Some(destination())),
         JobView::of(&paused),
         JobView::of(&failed),
         JobView::of(&rebuilt),
+    ];
+    let item_states = [
+        JobItemState::Queued,
+        JobItemState::Copying,
+        JobItemState::Copied,
+        JobItemState::Skipped,
+        JobItemState::Failed,
     ];
     let states = [
         JobState::Pending,
@@ -119,6 +184,31 @@ pub fn samples() -> Vec<(&'static str, Vec<Value>)> {
         JobState::Cancelled,
     ];
     vec![
+        (
+            "JobDestination",
+            vec![
+                json(&destination()),
+                json(&JobDestination {
+                    folder: None,
+                    ..destination()
+                }),
+            ],
+        ),
+        ("JobItemState", item_states.iter().map(json).collect()),
+        ("JobItem", files().iter().map(json).collect()),
+        (
+            "JobItemPage",
+            vec![
+                json(&JobItemPage {
+                    items: files(),
+                    next_cursor: Some("3".into()),
+                }),
+                json(&JobItemPage {
+                    items: Vec::new(),
+                    next_cursor: None,
+                }),
+            ],
+        ),
         ("JobView", views.iter().map(json).collect()),
         ("JobState", states.iter().map(json).collect()),
         (

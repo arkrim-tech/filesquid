@@ -38,8 +38,8 @@ pub use outgoing::{outgoing_name, OutgoingNames};
 pub use store::{
     commit_file_original, commit_snapshot, commit_snapshot_with, commit_staged_original,
     create_storage_root, read_commit_journal, read_file_original, read_object_journal,
-    read_snapshot, read_version_journal, snapshot_library_id, LibrarySnapshot, SnapshotDelta,
-    HISTORY_PREFIX, JOURNAL_SUFFIX, MAX_JOURNAL_LINES,
+    read_snapshot, read_version_journal, snapshot_library_id, BoundMeta, LibrarySnapshot,
+    SnapshotDelta, HISTORY_PREFIX, JOURNAL_SUFFIX, MAX_JOURNAL_LINES,
 };
 pub use transform::{OwnerReadable, ProfileTransform};
 pub use unregistered::{unregistered_file_objects, FILES_ROOT};

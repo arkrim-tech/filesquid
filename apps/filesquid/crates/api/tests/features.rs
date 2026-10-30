@@ -13,7 +13,8 @@
 //! and API-S-031; the preferences, whole-file download and drive listings of API-S-011;
 //! the metadata property routes of API-S-035; the display and download names of API-S-027;
 //! the view operation, copy and storage use per collection of API-S-011; the search
-//! operation and operator grammar of API-S-012;
+//! operation and operator grammar of API-S-012; the journal and commit linkage of the file
+//! and metadata routes of API-S-028;
 //! the sealing service and journal rebuild of API-S-032; and the job routes and job events
 //! of API-S-037).
 //!
@@ -127,6 +128,9 @@ mod drive_catalog;
 mod journal_steps;
 #[path = "support/metadata_steps.rs"]
 mod metadata_steps;
+
+#[path = "support/linkage_steps.rs"]
+mod linkage_steps;
 #[path = "support/names_steps.rs"]
 mod names_steps;
 #[path = "support/search_steps.rs"]
@@ -143,6 +147,12 @@ mod job_steps;
 #[path = "support/command_steps.rs"]
 mod command_steps;
 
+#[path = "support/import_fixture.rs"]
+mod import_fixture;
+#[path = "support/import_steps.rs"]
+mod import_steps;
+#[path = "support/job_items_fixture.rs"]
+mod job_items_fixture;
 #[path = "support/library_facts_steps.rs"]
 mod library_facts_steps;
 
@@ -189,6 +199,7 @@ struct MonitorWorld {
     local: local_library_steps::LocalWorld,
     content: content_steps::ContentWorld,
     files: file_steps::FileWorld,
+    linkage: linkage_steps::LinkageWorld,
     validation: validation_steps::ValidationWorld,
 
     history: history_steps::HistoryWorld,
@@ -205,6 +216,7 @@ struct MonitorWorld {
     jobs: job_steps::JobWorld,
     commands: command_steps::CommandWorld,
     facts: library_facts_steps::FactsWorld,
+    imports: import_steps::ImportsWorld,
 }
 
 impl std::fmt::Debug for MonitorWorld {

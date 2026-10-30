@@ -423,7 +423,7 @@ export interface paths {
         get?: never;
         /**
          * Upload one file as its own object, or new content for an existing file
-         * @description The body is `multipart/form-data` with exactly three parts: `envelope` (JSON), `input` (JSON, the upload's facts) and `file` (the bytes, at most 64 MiB). Without `file_id`, the upload creates the file's own OCFL object `files/<file-id>` (identifier `urn:uuid:<file-id>`, a new UUID v4) with the original at `original/<file-uuid>.<ext>` and its metadata record (the `filesquid-metadata` file record, API-S-026) beside it in v1, never at a logical path the client chooses. With `file_id`, it is a new version of that file's object: the new bytes at the same stored path and one more import entry; the display name and statements stay. The record holds the facts the client provides (name and its normalisation form, size, last-modified time, media type) and lists every other fact as unavailable (MD-S-013). The verified size is the size of the `file` part: a declared `size` that differs fails verification, is refused (400) and commits nothing. Publishes exactly one OCFL version through the filesquid-ocfl change model, or is refused without publishing (API-S-008). The version is journaled with opaque IDs only; a refusal is journaled once. Command (Task API-F2.13, API-S-002): the body carries a `CommandEnvelope` beside the input (schema version 1; an opaque operation_id of 1 to 128 letters, digits, `.`, `_`, `-` or `:`; scope `library:<library_id>`). The expected revision is the head version of the file's object for an upload with `file_id`, and `0` for a new file. A stale revision is answered 409 with a `conflict` outcome and changes nothing. A 200 answer is a `CommandOutcome` of the same operation_id (`committed`) whose `result` is what the command made. A repeated operation_id of the same command that changed something answers its first answer again, before the revision is checked, with no second change; the same operation_id with another route, library or input is refused (400). A refusal stores no receipt, so its retry is evaluated again. Receipts are kept in memory while the host runs, at most 10,000.
+         * @description The body is `multipart/form-data` with exactly three parts: `envelope` (JSON), `input` (JSON, the upload's facts) and `file` (the bytes, at most 64 MiB). Without `file_id`, the upload creates the file's own OCFL object `files/<file-id>` (identifier `urn:uuid:<file-id>`, a new UUID v4) with the original at `original/<file-uuid>.<ext>` and its metadata record (the `filesquid-metadata` file record, API-S-026) beside it in v1, never at a logical path the client chooses. With `file_id`, it is a new version of that file's object: the new bytes at the same stored path and one more import entry; the display name and statements stay. The record holds the facts the client provides (name and its normalisation form, size, last-modified time, media type) and lists every other fact as unavailable (MD-S-013). The verified size is the size of the `file` part: a declared `size` that differs fails verification, is refused (400) and commits nothing. Publishes exactly one OCFL version through the filesquid-ocfl change model, or is refused without publishing (API-S-008). The commit is linked to the activity journal (API-S-028): its version `user` is the installation (name `FileSquid installation`, address `urn:uuid:<installation-uuid>`) once the host configures provenance, else the caller; its message is `filesquid.operation.v1` with the operation_id and kind `upload`, and the optional `message` as its `label`; with provenance configured the version carries its PROV-O record; and it is journaled with opaque IDs only, once as `ocfl.commit` and once as `files.upload`, each with the operation_id and the object reference `<object-id>@vN`. A refusal is journaled once and commits nothing. Command (Task API-F2.13, API-S-002): the body carries a `CommandEnvelope` beside the input (schema version 1; an opaque operation_id of 1 to 128 letters, digits, `.`, `_`, `-` or `:`; scope `library:<library_id>`). The expected revision is the head version of the file's object for an upload with `file_id`, and `0` for a new file. A stale revision is answered 409 with a `conflict` outcome and changes nothing. A 200 answer is a `CommandOutcome` of the same operation_id (`committed`) whose `result` is what the command made. A repeated operation_id of the same command that changed something answers its first answer again, before the revision is checked, with no second change; the same operation_id with another route, library or input is refused (400). A refusal stores no receipt, so its retry is evaluated again. Receipts are kept in memory while the host runs, at most 10,000.
          */
         put: operations["uploadFile"];
         post?: never;
@@ -464,7 +464,7 @@ export interface paths {
         put?: never;
         /**
          * Move or rename one file or folder
-         * @description A folder moves every file below it; no bytes are written. Publishes exactly one OCFL version through the filesquid-ocfl change model, or is refused (409) without publishing when nothing would change, another change is staged or the head is incomplete (API-S-008). The version is journaled with opaque IDs only; a refusal is journaled once. A file object's stored original (`original/` of `files/<file-id>`) never moves: such a move is refused (400) with a pointer to `POST /api/v1/files/renames`, since a rename changes only the display name (API-S-027). Command (Task API-F2.13, API-S-002): the body carries a `CommandEnvelope` beside the input (schema version 1; an opaque operation_id of 1 to 128 letters, digits, `.`, `_`, `-` or `:`; scope `library:<library_id>`). The expected revision is the head version of `object_id` that the caller read (`v1`, `v2`, ...). A stale revision is answered 409 with a `conflict` outcome and changes nothing. A 200 answer is a `CommandOutcome` of the same operation_id (`committed`) whose `result` is what the command made. A repeated operation_id of the same command that changed something answers its first answer again, before the revision is checked, with no second change; the same operation_id with another route, library or input is refused (400). A refusal stores no receipt, so its retry is evaluated again. Receipts are kept in memory while the host runs, at most 10,000.
+         * @description A folder moves every file below it; no bytes are written. Publishes exactly one OCFL version through the filesquid-ocfl change model, or is refused (409) without publishing when nothing would change, another change is staged or the head is incomplete (API-S-008). The commit is linked to the activity journal (API-S-028): its version `user` is the installation (name `FileSquid installation`, address `urn:uuid:<installation-uuid>`) once the host configures provenance, else the caller; its message is `filesquid.operation.v1` with the operation_id and kind `move`, and the optional `message` as its `label`; with provenance configured the version carries its PROV-O record; and it is journaled with opaque IDs only, once as `ocfl.commit` and once as `files.move`, each with the operation_id and the object reference `<object-id>@vN`. A refusal is journaled once and commits nothing. A file object's stored original (`original/` of `files/<file-id>`) never moves: such a move is refused (400) with a pointer to `POST /api/v1/files/renames`, since a rename changes only the display name (API-S-027). Command (Task API-F2.13, API-S-002): the body carries a `CommandEnvelope` beside the input (schema version 1; an opaque operation_id of 1 to 128 letters, digits, `.`, `_`, `-` or `:`; scope `library:<library_id>`). The expected revision is the head version of `object_id` that the caller read (`v1`, `v2`, ...). A stale revision is answered 409 with a `conflict` outcome and changes nothing. A 200 answer is a `CommandOutcome` of the same operation_id (`committed`) whose `result` is what the command made. A repeated operation_id of the same command that changed something answers its first answer again, before the revision is checked, with no second change; the same operation_id with another route, library or input is refused (400). A refusal stores no receipt, so its retry is evaluated again. Receipts are kept in memory while the host runs, at most 10,000.
          */
         post: operations["moveFiles"];
         delete?: never;
@@ -484,7 +484,7 @@ export interface paths {
         put?: never;
         /**
          * Remove one file or folder
-         * @description The bytes stay in the object for history and restore. Publishes exactly one OCFL version through the filesquid-ocfl change model, or is refused (409) without publishing when nothing would change, another change is staged or the head is incomplete (API-S-008). The version is journaled with opaque IDs only; a refusal is journaled once. Command (Task API-F2.13, API-S-002): the body carries a `CommandEnvelope` beside the input (schema version 1; an opaque operation_id of 1 to 128 letters, digits, `.`, `_`, `-` or `:`; scope `library:<library_id>`). The expected revision is the head version of `object_id` that the caller read (`v1`, `v2`, ...). A stale revision is answered 409 with a `conflict` outcome and changes nothing. A 200 answer is a `CommandOutcome` of the same operation_id (`committed`) whose `result` is what the command made. A repeated operation_id of the same command that changed something answers its first answer again, before the revision is checked, with no second change; the same operation_id with another route, library or input is refused (400). A refusal stores no receipt, so its retry is evaluated again. Receipts are kept in memory while the host runs, at most 10,000.
+         * @description The bytes stay in the object for history and restore. Publishes exactly one OCFL version through the filesquid-ocfl change model, or is refused (409) without publishing when nothing would change, another change is staged or the head is incomplete (API-S-008). The commit is linked to the activity journal (API-S-028): its version `user` is the installation (name `FileSquid installation`, address `urn:uuid:<installation-uuid>`) once the host configures provenance, else the caller; its message is `filesquid.operation.v1` with the operation_id and kind `delete`, and the optional `message` as its `label`; with provenance configured the version carries its PROV-O record; and it is journaled with opaque IDs only, once as `ocfl.commit` and once as `files.remove`, each with the operation_id and the object reference `<object-id>@vN`. A refusal is journaled once and commits nothing. Command (Task API-F2.13, API-S-002): the body carries a `CommandEnvelope` beside the input (schema version 1; an opaque operation_id of 1 to 128 letters, digits, `.`, `_`, `-` or `:`; scope `library:<library_id>`). The expected revision is the head version of `object_id` that the caller read (`v1`, `v2`, ...). A stale revision is answered 409 with a `conflict` outcome and changes nothing. A 200 answer is a `CommandOutcome` of the same operation_id (`committed`) whose `result` is what the command made. A repeated operation_id of the same command that changed something answers its first answer again, before the revision is checked, with no second change; the same operation_id with another route, library or input is refused (400). A refusal stores no receipt, so its retry is evaluated again. Receipts are kept in memory while the host runs, at most 10,000.
          */
         post: operations["removeFiles"];
         delete?: never;
@@ -504,7 +504,7 @@ export interface paths {
         put?: never;
         /**
          * Restore files or folders from an earlier version
-         * @description One restore operation (API-S-014): the new version points at the content the earlier version holds, a revert when it returns every file of the object to that version's and the head holds no other, else a reinstate, named so in the version's filesquid.operation.v1 message, which carries the optional label. Publishes exactly one OCFL version through the filesquid-ocfl change model and leaves earlier versions untouched, or is refused (409) without publishing when nothing would change, another change is staged or the head is incomplete (API-S-008). Paths in the reserved .filesquid folder are refused (400). With provenance configured the version carries its PROV-O record (API-S-028). The version is journaled with opaque IDs only; a refusal is journaled once. Command (Task API-F2.13, API-S-002): the body carries a `CommandEnvelope` beside the input (schema version 1; an opaque operation_id of 1 to 128 letters, digits, `.`, `_`, `-` or `:`; scope `library:<library_id>`). The expected revision is the head version of `object_id` that the caller read (`v1`, `v2`, ...). A stale revision is answered 409 with a `conflict` outcome and changes nothing. A 200 answer is a `CommandOutcome` of the same operation_id (`committed`) whose `result` is what the command made. A repeated operation_id of the same command that changed something answers its first answer again, before the revision is checked, with no second change; the same operation_id with another route, library or input is refused (400). A refusal stores no receipt, so its retry is evaluated again. Receipts are kept in memory while the host runs, at most 10,000.
+         * @description One restore operation (API-S-014): the new version points at the content the earlier version holds, a revert when it returns every file of the object to that version's and the head holds no other, else a reinstate, named so in the version's filesquid.operation.v1 message, which carries the optional label. Publishes exactly one OCFL version through the filesquid-ocfl change model and leaves earlier versions untouched, or is refused (409) without publishing when nothing would change, another change is staged or the head is incomplete (API-S-008). Paths in the reserved .filesquid folder are refused (400). The commit is linked to the activity journal (API-S-028): its version `user` is the installation (name `FileSquid installation`, address `urn:uuid:<installation-uuid>`) once the host configures provenance, else the caller; its message is `filesquid.operation.v1` with the operation_id and kind `revert` or `reinstate`; with provenance configured the version carries its PROV-O record; and it is journaled with opaque IDs only, once as `ocfl.commit` and once as `files.restore`, each with the operation_id and the object reference `<object-id>@vN`. A refusal is journaled once and commits nothing. Command (Task API-F2.13, API-S-002): the body carries a `CommandEnvelope` beside the input (schema version 1; an opaque operation_id of 1 to 128 letters, digits, `.`, `_`, `-` or `:`; scope `library:<library_id>`). The expected revision is the head version of `object_id` that the caller read (`v1`, `v2`, ...). A stale revision is answered 409 with a `conflict` outcome and changes nothing. A 200 answer is a `CommandOutcome` of the same operation_id (`committed`) whose `result` is what the command made. A repeated operation_id of the same command that changed something answers its first answer again, before the revision is checked, with no second change; the same operation_id with another route, library or input is refused (400). A refusal stores no receipt, so its retry is evaluated again. Receipts are kept in memory while the host runs, at most 10,000.
          */
         post: operations["restoreFiles"];
         delete?: never;
@@ -687,8 +687,8 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Import files or a folder the owner picks in the host's dialog
-         * @description API-S-036. The host shows its own native dialog for the source named (`files` or `folder`), and imports what the owner picks into the open library as one durable import job (kind `import`): each file's original and its metadata record with the facts the host's operating system provides are committed in one version of the file's own object, as an upload is (API-S-026, ADR 038). The body carries a CommandEnvelope whose scope is `library:<library_id>`; its operation ID is the idempotency key, so the same operation ID answers the same job instead of starting a second import. An import only adds new files, so the expected revision is not compared. The answer carries the command outcome API-S-002 requires: `pending` with the job (`import: started`), or `committed` with `import: cancelled` when the owner closed the dialog and no job was made. No path, file name or storage key crosses the API in the request, the answer, an error or the journal. Every import names its destination (owner decision 2026-10-22, "Must choose", ADR 041): `collection_id` and optionally `folder`. A request without `collection_id` is refused 400 invalid_request (`destination_required`) and an unknown collection 404 not_found (`collection_not_found`), each before any dialog and journaled once. Each imported file is registered in its home collection at its logical path in the library's collection snapshot under the request's operation ID, so it appears in navigation and in the listing by collection or folder node. A request while a dialog is open is refused 409 conflict (`dialog_open`); a library that is not open answers 404 not_found; a host without an import dialog (filesquid-server) answers 503 unavailable. Each request is journaled once as `import.start`; each file as `import.file`.
+         * Plan an import of files or a folder the owner picks in the host's dialog
+         * @description API-S-036. The host shows its own native dialog for the source named (`files` or `folder`) and, before any byte is staged, plans the import of what the owner picked into the open library (owner answer 5 of 2026-10-22, "Keep the review"): the answer is `pending` with `import: planned`, the `plan_id` and the `plan` the UI shows (files found, new and already in this library, bytes to copy, the destination, the count of names to be numbered, free bytes after the upload and the staging limit). `GET /api/v1/imports/{plan_id}/items` pages the planned files; the job starts only on `POST /api/v1/imports/{plan_id}/start`; `DELETE /api/v1/imports/{plan_id}` discards the plan, as the host does on its own after 1 hour. A host without the review (the desktop until Task DE-1.8) starts the job at once and answers `import: started` with the job. The body carries a CommandEnvelope whose scope is `library:<library_id>`; its operation ID is the idempotency key, so a repeated operation ID answers its open plan (`planned`, the same `plan_id`), its started job (`started`) or `cancelled` without a second dialog, and 404 not_found (`plan_not_found`) once its plan expired or was discarded. An import only adds new files, so the expected revision is not compared. `committed` with `import: cancelled` when the owner closed the dialog: no plan and no job were made. No path, file name or storage key crosses the API in the request, the answer, an error or the journal. Every import names its destination (owner decision 2026-10-22, "Must choose", ADR 041): `collection_id` and optionally `folder`. A request without `collection_id` is refused 400 invalid_request (`destination_required`) and an unknown collection 404 not_found (`collection_not_found`), each before any dialog and journaled once. Each imported file is registered in its home collection at its logical path in the library's collection snapshot under the request's operation ID. A request while a dialog is open is refused 409 conflict (`dialog_open`); a library that is not open answers 404 not_found; a host without an import dialog (filesquid-server) answers 503 unavailable. Each plan request is journaled once as `import.plan` (`succeeded` with the plan ID, `cancelled`, or `failed` with its code; `import.start` with the job ID when the host started at once); each file as `import.file`.
          */
         post: operations["startImport"];
         delete?: never;
@@ -787,7 +787,7 @@ export interface paths {
         get?: never;
         /**
          * Set or clear the label of one version after commit
-         * @description Commits one version (operation kind label) holding the object's application-data file .filesquid/labels.json, which maps labelled versions to their later labels; null clears a commit-time label. That version's own message carries no label. The file is recovered with the object from an ordinary copy. At most 1,000 labelled versions per object. A label that would not change what the version shows is refused (409) without publishing. Labels never affect retention. With provenance configured the version carries its PROV-O record (API-S-028). Journaled with opaque IDs only; a refusal is journaled once. Command (Task API-F2.13, API-S-002): the body carries a `CommandEnvelope` beside the input (schema version 1; an opaque operation_id of 1 to 128 letters, digits, `.`, `_`, `-` or `:`; scope `library:<library_id>`). The expected revision is the head version of `object_id` that the caller read (`v1`, `v2`, ...). A stale revision is answered 409 with a `conflict` outcome and changes nothing. A 200 answer is a `CommandOutcome` of the same operation_id (`committed`) whose `result` is what the command made. A repeated operation_id of the same command that changed something answers its first answer again, before the revision is checked, with no second change; the same operation_id with another route, library or input is refused (400). A refusal stores no receipt, so its retry is evaluated again. Receipts are kept in memory while the host runs, at most 10,000.
+         * @description Commits one version (operation kind label) holding the object's application-data file .filesquid/labels.json, which maps labelled versions to their later labels; null clears a commit-time label. That version's own message carries no label. The file is recovered with the object from an ordinary copy. At most 1,000 labelled versions per object. A label that would not change what the version shows is refused (409) without publishing. Labels never affect retention. The commit is linked to the activity journal (API-S-028): its version `user` is the installation (name `FileSquid installation`, address `urn:uuid:<installation-uuid>`) once the host configures provenance, else the caller; its message is `filesquid.operation.v1` with the operation_id and kind `label`; with provenance configured the version carries its PROV-O record; and it is journaled with opaque IDs only, once as `ocfl.commit` and once as `files.label`, each with the operation_id and the object reference `<object-id>@vN`. A refusal is journaled once and commits nothing. Command (Task API-F2.13, API-S-002): the body carries a `CommandEnvelope` beside the input (schema version 1; an opaque operation_id of 1 to 128 letters, digits, `.`, `_`, `-` or `:`; scope `library:<library_id>`). The expected revision is the head version of `object_id` that the caller read (`v1`, `v2`, ...). A stale revision is answered 409 with a `conflict` outcome and changes nothing. A 200 answer is a `CommandOutcome` of the same operation_id (`committed`) whose `result` is what the command made. A repeated operation_id of the same command that changed something answers its first answer again, before the revision is checked, with no second change; the same operation_id with another route, library or input is refused (400). A refusal stores no receipt, so its retry is evaluated again. Receipts are kept in memory while the host runs, at most 10,000.
          */
         put: operations["setVersionLabel"];
         post?: never;
@@ -911,7 +911,7 @@ export interface paths {
         get?: never;
         /**
          * Set one statement of a file
-         * @description Set or replace one statement in the file's metadata record. Unknown `dcterms:` names and unregistered prefixes are refused (400), naming the prefix. Publishes exactly one OCFL version through the metadata module's `ocfl` store with the caller as the version user, or is refused without publishing (409 when nothing would change or another writer moved the record first). The version is journaled with opaque IDs only; a refusal is journaled once.
+         * @description Set or replace one statement in the file's metadata record. Unknown `dcterms:` names and unregistered prefixes are refused (400), naming the prefix. Publishes exactly one OCFL version through the metadata module's `ocfl` store, or is refused without publishing (409 when nothing would change or another writer moved the record first). The commit is linked to the activity journal (API-S-028): its version `user` is the installation (name `FileSquid installation`, address `urn:uuid:<installation-uuid>`) once the host configures provenance, else the caller; its message is `filesquid.operation.v1` with a new operation_id and kind `metadata.edit`; with provenance configured the version carries its PROV-O record; and it is journaled with opaque IDs only, once as `ocfl.commit` and once as `files.metadata.set` and `metadata.edit`, each with the operation_id and the object reference `<object-id>@vN`. A refusal is journaled once and commits nothing.
          */
         put: operations["setFileStatement"];
         post?: never;
@@ -932,7 +932,7 @@ export interface paths {
         put?: never;
         /**
          * Remove one statement of a file
-         * @description Remove one statement from the file's metadata record; a statement the record does not hold is 404. Publishes exactly one OCFL version through the metadata module's `ocfl` store with the caller as the version user, or is refused without publishing (409 when nothing would change or another writer moved the record first). The version is journaled with opaque IDs only; a refusal is journaled once.
+         * @description Remove one statement from the file's metadata record; a statement the record does not hold is 404. Publishes exactly one OCFL version through the metadata module's `ocfl` store, or is refused without publishing (409 when nothing would change or another writer moved the record first). The commit is linked to the activity journal (API-S-028): its version `user` is the installation (name `FileSquid installation`, address `urn:uuid:<installation-uuid>`) once the host configures provenance, else the caller; its message is `filesquid.operation.v1` with a new operation_id and kind `metadata.edit`; with provenance configured the version carries its PROV-O record; and it is journaled with opaque IDs only, once as `ocfl.commit` and once as `files.metadata.remove` and `metadata.edit`, each with the operation_id and the object reference `<object-id>@vN`. A refusal is journaled once and commits nothing.
          */
         post: operations["removeFileStatement"];
         delete?: never;
@@ -992,7 +992,7 @@ export interface paths {
         put?: never;
         /**
          * Register a namespace
-         * @description Register an extension namespace (IRI and optional term list) or a custom namespace as the owner, in the library's `namespaces.md` (MD-S-012). A prefix already registered is 409. Publishes exactly one OCFL version through the metadata module's `ocfl` store with the caller as the version user, or is refused without publishing (409 when nothing would change or another writer moved the record first). The version is journaled with opaque IDs only; a refusal is journaled once.
+         * @description Register an extension namespace (IRI and optional term list) or a custom namespace as the owner, in the library's `namespaces.md` (MD-S-012). A prefix already registered is 409. Publishes exactly one OCFL version through the metadata module's `ocfl` store, or is refused without publishing (409 when nothing would change or another writer moved the record first). The commit is linked to the activity journal (API-S-028): its version `user` is the installation (name `FileSquid installation`, address `urn:uuid:<installation-uuid>`) once the host configures provenance, else the caller; its message is `filesquid.operation.v1` with a new operation_id and kind `metadata.edit`; with provenance configured the version carries its PROV-O record; and it is journaled with opaque IDs only, once as `ocfl.commit` and once as `files.metadata.register` and `metadata.edit`, each with the operation_id and the object reference `<object-id>@vN`. A refusal is journaled once and commits nothing.
          */
         post: operations["registerNamespace"];
         delete?: never;
@@ -1032,7 +1032,7 @@ export interface paths {
         put?: never;
         /**
          * Rename a file
-         * @description Set the display name of a file object's original (API-S-027): the record's display name changes and nothing else, so the stored name, the logical path, the original name and every import entry stay. Publishes exactly one new version of the file's metadata record through the metadata module's `ocfl` store with the caller as the version user, or is refused without publishing (400 for an empty name, one over 1,024 bytes or one with `/` or NUL; 409 when the name is already the display name or another writer moved the record first). The version is journaled as `files.rename` with opaque IDs only; a refusal is journaled once. Command (Task API-F2.13, API-S-002): the body carries a `CommandEnvelope` beside the input (schema version 1; an opaque operation_id of 1 to 128 letters, digits, `.`, `_`, `-` or `:`; scope `library:<library_id>`). The expected revision is the head version of the file's object `urn:uuid:<file_id>` that the caller read. A stale revision is answered 409 with a `conflict` outcome and changes nothing. A 200 answer is a `CommandOutcome` of the same operation_id (`committed`) whose `result` is what the command made. A repeated operation_id of the same command that changed something answers its first answer again, before the revision is checked, with no second change; the same operation_id with another route, library or input is refused (400). A refusal stores no receipt, so its retry is evaluated again. Receipts are kept in memory while the host runs, at most 10,000.
+         * @description Set the display name of a file object's original (API-S-027): the record's display name changes and nothing else, so the stored name, the logical path, the original name and every import entry stay. Publishes exactly one new version of the file's metadata record through the metadata module's `ocfl` store, or is refused without publishing (400 for an empty name, one over 1,024 bytes or one with `/` or NUL; 409 when the name is already the display name or another writer moved the record first). The commit is linked to the activity journal (API-S-028): its version `user` is the installation (name `FileSquid installation`, address `urn:uuid:<installation-uuid>`) once the host configures provenance, else the caller; its message is `filesquid.operation.v1` with the operation_id and kind `rename`; with provenance configured the version carries its PROV-O record; and it is journaled with opaque IDs only, once as `ocfl.commit` and once as `files.rename` and `metadata.edit`, each with the operation_id and the object reference `<object-id>@vN`. A refusal is journaled once and commits nothing. Command (Task API-F2.13, API-S-002): the body carries a `CommandEnvelope` beside the input (schema version 1; an opaque operation_id of 1 to 128 letters, digits, `.`, `_`, `-` or `:`; scope `library:<library_id>`). The expected revision is the head version of the file's object `urn:uuid:<file_id>` that the caller read. A stale revision is answered 409 with a `conflict` outcome and changes nothing. A 200 answer is a `CommandOutcome` of the same operation_id (`committed`) whose `result` is what the command made. A repeated operation_id of the same command that changed something answers its first answer again, before the revision is checked, with no second change; the same operation_id with another route, library or input is refused (400). A refusal stores no receipt, so its retry is evaluated again. Receipts are kept in memory while the host runs, at most 10,000.
          */
         post: operations["renameFile"];
         delete?: never;
@@ -1092,7 +1092,7 @@ export interface paths {
         put?: never;
         /**
          * Copy a file into a new file
-         * @description Copy the file `file_id` at its head into a new file (API-S-011, SRS-F-062): a new FileId and stored name `original/<new-uuid>.<ext>` in the new file's own object `files/<new-id>`, published as its version v1. The copy keeps the display name, the original name, the media type and every statement; its one import entry is the source's latest entry rebound to the copy, and its record names the source as the asserted statement `dcterms:source` = `urn:uuid:<source-id>@vN`. The source never changes, and the copy gets no second home collection for the same bytes: it is a new file. A source over 67,108,864 bytes is refused (400) until a streamed copy exists. The copy is journaled as `files.copy` with opaque IDs only; a refusal is journaled once. Command (Task API-F2.13, API-S-002): the body carries a `CommandEnvelope` beside the input (schema version 1; an opaque operation_id of 1 to 128 letters, digits, `.`, `_`, `-` or `:`; scope `library:<library_id>`). The expected revision is the head version of the source file's object `urn:uuid:<file_id>` that the caller read; the copy's own object is new. A stale revision is answered 409 with a `conflict` outcome and changes nothing. A 200 answer is a `CommandOutcome` of the same operation_id (`committed`) whose `result` is what the command made. A repeated operation_id of the same command that changed something answers its first answer again, before the revision is checked, with no second change; the same operation_id with another route, library or input is refused (400). A refusal stores no receipt, so its retry is evaluated again. Receipts are kept in memory while the host runs, at most 10,000.
+         * @description Copy the file `file_id` at its head into a new file (API-S-011, SRS-F-062): a new FileId and stored name `original/<new-uuid>.<ext>` in the new file's own object `files/<new-id>`, published as its version v1. The copy keeps the display name, the original name, the media type and every statement; its one import entry is the source's latest entry rebound to the copy, and its record names the source as the asserted statement `dcterms:source` = `urn:uuid:<source-id>@vN`. The source never changes, and the copy gets no second home collection for the same bytes: it is a new file. A source over 67,108,864 bytes is refused (400) until a streamed copy exists. The commit is linked to the activity journal (API-S-028): its version `user` is the installation (name `FileSquid installation`, address `urn:uuid:<installation-uuid>`) once the host configures provenance, else the caller; its message is `filesquid.operation.v1` with the operation_id and kind `copy`, and the optional `message` as its `label`; with provenance configured the version carries its PROV-O record; and it is journaled with opaque IDs only, once as `ocfl.commit` and once as `files.copy`, each with the operation_id and the object reference `<object-id>@vN`. A refusal is journaled once and commits nothing. Command (Task API-F2.13, API-S-002): the body carries a `CommandEnvelope` beside the input (schema version 1; an opaque operation_id of 1 to 128 letters, digits, `.`, `_`, `-` or `:`; scope `library:<library_id>`). The expected revision is the head version of the source file's object `urn:uuid:<file_id>` that the caller read; the copy's own object is new. A stale revision is answered 409 with a `conflict` outcome and changes nothing. A 200 answer is a `CommandOutcome` of the same operation_id (`committed`) whose `result` is what the command made. A repeated operation_id of the same command that changed something answers its first answer again, before the revision is checked, with no second change; the same operation_id with another route, library or input is refused (400). A refusal stores no receipt, so its retry is evaluated again. Receipts are kept in memory while the host runs, at most 10,000.
          */
         post: operations["copyFile"];
         delete?: never;
@@ -1315,6 +1315,126 @@ export interface paths {
         get: operations["listRecentLibraries"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/imports/{plan_id}/items": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The planned files of an import plan
+         * @description API-S-036 Review. The files of the open plan, at most 1,000 per page with a cursor, in the plan's order, each with its display name (its base name, never a folder path), its size, whether the library already holds it (the job skips it) and whether its name will be numbered because its path is taken (API-S-011). An unknown, expired, discarded or started plan is 404 not_found (`plan_not_found`); a limit outside 1 to 1000 or an unknown query field is 400 invalid_request; a host without an import dialog answers 503. A refusal is journaled once as `import.plan_items`; the display names never appear in an error or a journal entry.
+         */
+        get: operations["listImportPlanItems"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/imports/{plan_id}/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start the import job of a reviewed plan
+         * @description API-S-036 Review. Takes no body and no CommandEnvelope (API-S-002, owner decision 2026-10-30): the plan ID is the idempotency key, and the answer's outcome names the plan request's operation ID. Asks the host to submit one durable import job (API-S-033, kind `import`) for the open plan and start it in the background; answers `pending` with `import: started` and the job. A repeated start of the same plan answers the same job again and starts nothing. An unknown, expired or discarded plan is 404 not_found (`plan_not_found`); a source that changed since the plan was made is 409 conflict (`source_changed`) and the plan stays open for review; a host that cannot run the job now, or without an import dialog, answers 503. Each start is journaled once as `import.start`: `succeeded` with the job ID, or `failed` with its code. Takes no body: the plan carries the operation ID of the request that made it.
+         */
+        post: operations["startImportPlan"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/imports/{plan_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Discard an import plan
+         * @description API-S-036 Review. Takes no body and no CommandEnvelope (API-S-002, owner decision 2026-10-30): the plan ID is the idempotency key; a repeated discard is 404 not_found (`plan_not_found`) and changes nothing. Discards the open plan, changing nothing else: no byte was staged and no job is made; the plan's operation ID then answers 404 not_found (`plan_not_found`). The host discards an open plan on its own 1 hour after it was made. An unknown, expired, discarded or started plan is 404 not_found (`plan_not_found`); a host without an import dialog answers 503. Each discard is journaled once as `import.discard`.
+         */
+        delete: operations["discardImportPlan"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/jobs/{job}/items": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The files of an upload job
+         * @description API-S-037 Per-file progress (owner answer 6 of 2026-10-22, "Yes, report progress per file"). The files of the job, at most 1,000 per page with a cursor, in the job's order, each with its display name (no path), its destination folder, its state (`queued`, `copying` with bytes done of total, `copied`, `skipped` as already in the library, or `failed` with its error code), its bytes and its size. A job without files answers an empty page. An unknown job is 404 not_found (journaled as job.refused); a limit outside 1 to 1000 or an unknown query field is 400 invalid_request; a host that keeps no per-file progress answers 503.
+         */
+        get: operations["listJobItems"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/jobs/{job}/items/{item}/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Retry one failed file of an upload job
+         * @description API-S-037 Per-file progress. Puts the failed file back to `queued` and hands a pending job to the runner the host installed for its kind (`scheduled` says whether it did; a running job's worker picks the file up itself). Not a command envelope (owner decision 2 of 2026-10-23): it names the state it asks for, takes no body and answers the job view, so repeating it changes nothing and hands nothing to the runner; a file that is not failed is left as it is. A paused job is refused 409 conflict (`job_paused`) and nothing changes: resume it first. A finished or cancel-requested job refuses the retry as the controls do; an unknown job or item is 404 not_found. Each file put back is journaled once as `job.item_retried` under the job's operation ID, with the job and the item as targets; a retry that changes nothing is not journaled; a refusal is journaled as job.refused. The display name never appears in an error or a journal entry.
+         */
+        post: operations["retryJobItem"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/jobs/{job}/retry-failed": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Retry every failed file of an upload job
+         * @description API-S-037 Per-file progress. Puts every failed file of the job back to `queued` and hands a pending job to its runner (`scheduled`); a retry that puts no file back changes nothing and hands nothing to the runner. Not a command envelope (owner decision 2 of 2026-10-23): no body, the job view answered, idempotent. A paused job is refused 409 conflict (`job_paused`) and nothing changes; a finished or cancel-requested job refuses the retry as the controls do; an unknown job is 404 not_found. Each file put back is journaled once as `job.item_retried` under the job's operation ID.
+         */
+        post: operations["retryFailedJobItems"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1733,7 +1853,7 @@ export interface components {
             from: string;
             /** @description Its new logical path. */
             to: string;
-            /** @description The version message, 1 to 1,024 bytes and not blank. */
+            /** @description The version label: 1 to 512 bytes, not blank, without control characters, written as the `label` member of the version's filesquid.operation.v1 message (API-S-028, PRD F-065). */
             message?: string;
         };
         /** @description Body of POST /api/v1/files/removals: remove one file or folder in one new version; its bytes stay in the object for history and restore. */
@@ -1744,7 +1864,7 @@ export interface components {
             object_id: string;
             /** @description The file or folder to remove. */
             path: string;
-            /** @description The version message, 1 to 1,024 bytes and not blank. */
+            /** @description The version label: 1 to 512 bytes, not blank, without control characters, written as the `label` member of the version's filesquid.operation.v1 message (API-S-028, PRD F-065). */
             message?: string;
         };
         /** @description Body of POST /api/v1/files/restorations: restore files or folders to their content in an earlier version, in one new version. */
@@ -2476,10 +2596,10 @@ export interface components {
          */
         ImportSource: "files" | "folder";
         /**
-         * @description What became of an import request.
+         * @description What became of an import request: `planned` (the host planned it and waits for the owner's confirmation; `plan_id` and `plan` describe it), `started` (its job runs or ran; `job_id` names it), or `cancelled` (the owner closed the dialog; no plan and no job were made).
          * @enum {string}
          */
-        ImportOutcome: "started" | "cancelled";
+        ImportOutcome: "planned" | "started" | "cancelled";
         ImportRequest: {
             envelope: components["schemas"]["CommandEnvelope"];
             library_id: string;
@@ -2489,12 +2609,16 @@ export interface components {
             folder?: string;
             source: components["schemas"]["ImportSource"];
         };
-        /** @description The answer of an import request: the command outcome (API-S-002) and what became of the request. */
+        /** @description The answer of an import request or start: the command outcome (API-S-002) and what became of the request. */
         ImportAnswer: {
-            /** @description `pending` for a started import (its job's work is durable and not yet complete; a repeated operation ID answers it again), `committed` for a cancelled one (nothing changed). */
+            /** @description `pending` for a planned or started import (the work is durable and not yet complete; a repeated operation ID answers it again), `committed` for a cancelled one (nothing changed). */
             outcome: components["schemas"]["CommandOutcome"];
             import: components["schemas"]["ImportOutcome"];
-            /** @description The import job; absent when cancelled. */
+            /** @description The plan awaiting confirmation; present when planned. */
+            plan_id?: string;
+            /** @description What the plan shows for the review; present when planned. */
+            plan?: components["schemas"]["ImportPlan"];
+            /** @description The import job; present when started. */
             job_id?: string;
         };
         /** @description Copy one file at its head. */
@@ -2503,7 +2627,7 @@ export interface components {
             library_id: string;
             /** @description The file to copy. */
             file_id: string;
-            /** @description Optional version message of the copy's first version. */
+            /** @description The version label: 1 to 512 bytes, not blank, without control characters, written as the `label` member of the version's filesquid.operation.v1 message (API-S-028, PRD F-065). */
             message?: string;
         };
         /** @description The copy a copy request made. */
@@ -2651,6 +2775,8 @@ export interface components {
             kind: string;
             /** @description The job's operation ID. */
             operation_id: string;
+            /** @description Where an upload job's files go (API-S-037 Per-file progress); absent for a kind without a destination or on a host that keeps no per-file progress. */
+            destination?: components["schemas"]["JobDestination"];
             state: components["schemas"]["JobState"];
             /** @description Whether the job waits under a pause. */
             paused: boolean;
@@ -2806,7 +2932,7 @@ export interface components {
             last_modified?: string | null;
             /** @description The Unicode normalisation form of `name`; required for a name that is not ASCII (an ASCII name is NFC). */
             name_normalization?: ("nfc" | "nfd" | "nfkc" | "nfkd" | "unnormalised") | null;
-            /** @description The version message, 1 to 1,024 bytes and not blank. */
+            /** @description The version label: 1 to 512 bytes, not blank, without control characters, written as the `label` member of the version's filesquid.operation.v1 message (API-S-028, PRD F-065). */
             message?: string | null;
         };
         /**
@@ -2856,6 +2982,103 @@ export interface components {
             library_id: string;
             /** @description Its new name: 1 to 1,024 bytes, not blank, no control characters. */
             name: string;
+        };
+        /** @description Where an import goes: a collection of the library and a folder inside it. */
+        ImportDestination: {
+            /** @description The destination collection. */
+            collection_id: string;
+            /** @description The destination folder inside the collection, a collection logical path; the collection's root when absent. */
+            folder?: string;
+        };
+        /** @description An import plan the owner reviews before any byte is staged (API-S-036 Review; mockup 18-import-review.svg): counts, sizes and IDs only, never a path or a name. */
+        ImportPlan: {
+            /** @description The plan. */
+            plan_id: string;
+            source: components["schemas"]["ImportSource"];
+            destination: components["schemas"]["ImportDestination"];
+            /** @description The label of the volume the source is on, as the dialog showed it (never a path); absent when the host does not know it. */
+            source_volume?: string;
+            /** @description Files found in the picked source. */
+            files_found: number;
+            /** @description Files not yet in this library: the ones the job copies. */
+            files_new: number;
+            /** @description Files already in this library (by digest), which the job skips. */
+            files_present: number;
+            /** @description Bytes the job copies. */
+            bytes_to_copy: number;
+            /** @description Files and folders whose names will be numbered because their path is taken (API-S-011). */
+            names_numbered: number;
+            /** @description Free bytes on the library's volume after the upload; null when the host cannot read the volume. */
+            free_bytes_after: number | null;
+            /** @description Most bytes the host stages at once. */
+            staging_limit_bytes: number;
+            /**
+             * Format: date-time
+             * @description When the host discards the plan unless it is started or discarded first (RFC 3339, UTC).
+             */
+            expires: string;
+        };
+        /** @description One planned file. */
+        PlanItem: {
+            /** @description The file ID the host minted for it; the item ID of the job once started. */
+            item_id: string;
+            /** @description Its display name: the base name only, never a folder path. */
+            name: string;
+            /** @description Its size in bytes. */
+            bytes: number;
+            /** @description Whether the library already holds it (the job skips it). */
+            present: boolean;
+            /** @description Whether its name will be numbered because its path is taken. */
+            numbered: boolean;
+        };
+        /** @description One page of a plan's files (1 to 1,000, default 1,000), in the plan's order. */
+        PlanItemPage: {
+            /** @description The files of this page. */
+            items: components["schemas"]["PlanItem"][];
+            /** @description The cursor of the next page; null after the last. */
+            next_cursor: string | null;
+        };
+        /** @description The answer of a discarded import plan. */
+        PlanDiscarded: {
+            /** @description The plan that was discarded. */
+            plan_id: string;
+            /** @description Always true: the plan is gone and nothing else changed. */
+            discarded: boolean;
+        };
+        /** @description Where an upload job's files go: a collection of the library and a folder inside it (API-S-037 Per-file progress). */
+        JobDestination: {
+            /** @description The destination collection. */
+            collection_id: string;
+            /** @description The destination folder inside it, a collection logical path; the collection's root when absent. */
+            folder?: string;
+        };
+        /**
+         * @description Where one file of an upload job stands: queued, copying (bytes_done of bytes_total), copied, skipped (the library already holds it) or failed (with its error code).
+         * @enum {string}
+         */
+        JobItemState: "queued" | "copying" | "copied" | "skipped" | "failed";
+        /** @description One file of an upload job, as the job items route shows it; never a path. */
+        JobItem: {
+            /** @description The item: the file ID the host minted for it. */
+            item_id: string;
+            /** @description Its display name: the base name only, never a folder path. */
+            name: string;
+            /** @description The destination folder inside the job's collection it goes to; the collection's root when absent. */
+            folder?: string;
+            state: components["schemas"]["JobItemState"];
+            /** @description Bytes copied so far. */
+            bytes_done: number;
+            /** @description Its size in bytes. */
+            bytes_total: number;
+            /** @description Why it failed, when it did. */
+            error_code?: string;
+        };
+        /** @description One page of an upload job's files (1 to 1,000, default 1,000), in the job's order. */
+        JobItemPage: {
+            /** @description The files of this page. */
+            items: components["schemas"]["JobItem"][];
+            /** @description The cursor of the next page; null after the last. */
+            next_cursor: string | null;
         };
         /** @description Body of POST /api/v1/libraries and POST /api/v1/libraries/openings: the command envelope and the input (Task API-F2.19, API-S-002). The envelope's scope is `location:<location_id>`; create expects revision `0` (the library does not exist yet) and open expects `0`, or the current revision of a library already open at that location, which is then answered again; its operation_id is the idempotency key and expected_revision the revision the caller last read (API-S-019). */
         LibraryLocationCommand: {
@@ -3149,6 +3372,33 @@ export interface components {
                 "application/json": components["schemas"]["FileCommandConflict"];
             };
         };
+        /** @description No open import plan has this ID: it is unknown, expired, discarded or already started (not_found, journal code `plan_not_found`). */
+        PlanNotFound: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ApiError"];
+            };
+        };
+        /** @description No job has this ID, or the job has no file with this item ID (not_found). */
+        JobOrItemNotFound: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ApiError"];
+            };
+        };
+        /** @description The job cannot take a retry now (conflict): it has finished (job_finished), it is being cancelled (cancel_requested), or it is paused and must be resumed first (job_paused); the journaled refusal names the rule. Nothing changed. */
+        JobRetryConflict: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ApiError"];
+            };
+        };
         /** @description A `conflict` outcome of the command's operation_id: the expected revision is stale, a rule about the storage root or the destination refused the command (the journal entry names it), or a command with that operation_id is still running; nothing was written. */
         LibraryCommandConflict: {
             headers: {
@@ -3180,6 +3430,10 @@ export interface components {
         FileId: string;
         /** @description A job ID as a job route or a job-starting route answered it. */
         JobId: string;
+        /** @description An import plan ID as `POST /api/v1/imports` answered it. */
+        PlanId: string;
+        /** @description An item ID of a job, as the job items route lists it (the file ID the host minted when it planned the import). */
+        JobItemId: string;
     };
     requestBodies: never;
     headers: never;
@@ -4499,7 +4753,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description The import job, or that the owner cancelled. */
+            /** @description The plan awaiting the owner's confirmation, the job of a host without the review, or that the owner cancelled. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -4511,7 +4765,7 @@ export interface operations {
             400: components["responses"]["InvalidRequest"];
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
-            /** @description The library is not open on this host (`library_not_found`), or the destination collection is unknown, of another library or not readable (`collection_not_found`). */
+            /** @description The library is not open on this host (`library_not_found`), the destination collection is unknown, of another library or not readable (`collection_not_found`), or the repeated operation ID's plan expired or was discarded (`plan_not_found`). */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -5530,6 +5784,199 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             500: components["responses"]["Internal"];
             503: components["responses"]["LibraryUnavailable"];
+        };
+    };
+    listImportPlanItems: {
+        parameters: {
+            query?: {
+                /** @description Opaque cursor from the previous page. */
+                cursor?: components["parameters"]["Cursor"];
+                /** @description Page size for a query (1-1000). Each operation states its default; the activity journal defaults to 100. */
+                limit?: components["parameters"]["PageSize"];
+            };
+            header?: never;
+            path: {
+                /** @description An import plan ID as `POST /api/v1/imports` answered it. */
+                plan_id: components["parameters"]["PlanId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description One page of the planned files. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlanItemPage"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["PlanNotFound"];
+            500: components["responses"]["Internal"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    startImportPlan: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description An import plan ID as `POST /api/v1/imports` answered it. */
+                plan_id: components["parameters"]["PlanId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The import job. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportAnswer"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["PlanNotFound"];
+            /** @description The picked source changed since the plan was made (conflict, journal code `source_changed`); the plan stays open. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            500: components["responses"]["Internal"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    discardImportPlan: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description An import plan ID as `POST /api/v1/imports` answered it. */
+                plan_id: components["parameters"]["PlanId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The plan was discarded. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlanDiscarded"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["PlanNotFound"];
+            500: components["responses"]["Internal"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    listJobItems: {
+        parameters: {
+            query?: {
+                /** @description Opaque cursor from the previous page. */
+                cursor?: components["parameters"]["Cursor"];
+                /** @description Page size for a query (1-1000). Each operation states its default; the activity journal defaults to 100. */
+                limit?: components["parameters"]["PageSize"];
+            };
+            header?: never;
+            path: {
+                /** @description A job ID as a job route or a job-starting route answered it. */
+                job: components["parameters"]["JobId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description One page of the job's files. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobItemPage"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["JobNotFound"];
+            500: components["responses"]["Internal"];
+            503: components["responses"]["JobsUnavailable"];
+        };
+    };
+    retryJobItem: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description A job ID as a job route or a job-starting route answered it. */
+                job: components["parameters"]["JobId"];
+                /** @description An item ID of a job, as the job items route lists it (the file ID the host minted when it planned the import). */
+                item: components["parameters"]["JobItemId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The job after the retry, and whether it was handed to its runner. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobControlAnswer"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["JobOrItemNotFound"];
+            409: components["responses"]["JobRetryConflict"];
+            500: components["responses"]["Internal"];
+            503: components["responses"]["JobsUnavailable"];
+        };
+    };
+    retryFailedJobItems: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description A job ID as a job route or a job-starting route answered it. */
+                job: components["parameters"]["JobId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The job after the retry, and whether it was handed to its runner. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobControlAnswer"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["JobNotFound"];
+            409: components["responses"]["JobRetryConflict"];
+            500: components["responses"]["Internal"];
+            503: components["responses"]["JobsUnavailable"];
         };
     };
 }

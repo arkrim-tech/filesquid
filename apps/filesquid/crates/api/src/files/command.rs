@@ -337,34 +337,3 @@ fn conflict_answer(operation_id: &OperationId, error: ApiError) -> Response {
     };
     (StatusCode::CONFLICT, Json(answer)).into_response()
 }
-
-/// The success entry of a published version: the caller, the library, the object and the
-/// version as opaque targets, with its `<object-id>@vN` reference when `with_ref` holds and
-/// the journal can keep one (ADR 033 Decision 7).
-pub(super) fn version_entry(
-    operation: &str,
-    principal: &Principal,
-    (library_id, object_id, version): (&str, &str, &str),
-    with_ref: bool,
-) -> JournalEntry {
-    let entry = JournalEntry::new(operation, Outcome::Succeeded)
-        .actor(principal.actor())
-        .target(library_id)
-        .target(object_id)
-        .target(version);
-    let reference = filesquid_core::VersionRef::new(object_id, version)
-        .ok()
-        .map(|reference| reference.object_ref())
-        .filter(|object_ref| crate::journal::is_object_ref(object_ref));
-    match (with_ref, reference) {
-        (true, Some(object_ref)) => entry.object_ref(object_ref),
-        (true, None) => {
-            tracing::warn!(
-                target: "filesquid::files",
-                "a published version was journaled without an object reference"
-            );
-            entry
-        }
-        (false, _) => entry,
-    }
-}
