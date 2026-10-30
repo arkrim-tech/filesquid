@@ -12,8 +12,9 @@ use super::range::{RangePlan, RangeRequest};
 use super::service::{ContentAnswer, ContentRequest};
 use super::versions::Committed;
 use super::view::{
-    ContentQuery, FileQuery, FolderRequest, HistoryQuery, LabelRequest, LibraryQuery,
-    ListingRequest, MoveRequest, ObjectQuery, RemoveRequest, RestoreRequest, UploadQuery,
+    CollectionMoveView, ContentQuery, FileQuery, FolderRequest, HistoryQuery, LabelRequest,
+    LibraryQuery, ListingRequest, MoveInput, ObjectQuery, RemoveRequest, RestoreRequest,
+    UploadQuery,
 };
 use super::{
     DETAILS_OPERATION, DOWNLOAD_OPERATION, FOLDER_OPERATION, HISTORY_OPERATION,
@@ -501,21 +502,81 @@ async fn create_folder(
 async fn move_path(
     State(state): State<ApiState>,
     Extension(principal): Extension<Principal>,
-    request: Result<Json<FileCommand<MoveRequest>>, JsonRejection>,
+    request: Result<Json<FileCommand<MoveInput>>, JsonRejection>,
 ) -> Response {
     let command = json_command(request);
-    let principal = &principal;
+    let (state, principal) = (&state, &principal);
     command::run(
-        &state,
+        state,
         principal,
         MOVE_OPERATION,
         command,
         |files, c, actor| async move {
-            let commit = files.move_path(c.input, actor, c.expected).await?;
-            Ok(published(MOVE_OPERATION, principal, commit))
+            match c.input {
+                MoveInput::InObject(input) => {
+                    let commit = files.move_path(input, actor, c.expected).await?;
+                    Ok(MoveAnswer::InObject(published(
+                        MOVE_OPERATION,
+                        principal,
+                        commit,
+                    )))
+                }
+                MoveInput::Collection(input) => {
+                    let operation_id = c.operation_id.as_str();
+                    let (view, changed) =
+                        homing::move_to_destination(state, principal, input, operation_id).await?;
+                    Ok(MoveAnswer::Collection(collection_moved(
+                        principal, view, changed,
+                    )))
+                }
+            }
+            .map(MoveAnswer::done)
         },
     )
     .await
+}
+
+/// What a move answers: the in-object move's committed version, or where a collection move
+/// put the file.
+enum MoveAnswer {
+    /// The in-object move.
+    InObject(Done<super::CommitView>),
+    /// The collection move.
+    Collection(Done<CollectionMoveView>),
+}
+
+impl MoveAnswer {
+    /// The answer as one command outcome. Pure.
+    fn done(self) -> Done<serde_json::Value> {
+        let (view, entries, changed) = match self {
+            Self::InObject(done) => (serde_json::to_value(done.view), done.entries, done.changed),
+            Self::Collection(done) => (serde_json::to_value(done.view), done.entries, done.changed),
+        };
+        Done {
+            view: view.unwrap_or(serde_json::Value::Null),
+            entries,
+            changed,
+        }
+    }
+}
+
+/// The outcome of a collection move: journaled once as `file.move` with the library and the
+/// file (never a path or a name) when it changed the file's place.
+fn collection_moved(
+    principal: &Principal,
+    view: CollectionMoveView,
+    changed: bool,
+) -> Done<CollectionMoveView> {
+    let entry = JournalEntry::new(MOVE_OPERATION, Outcome::Succeeded)
+        .actor(principal.actor())
+        .target(view.library_id.as_str())
+        .target(view.file_id.as_str())
+        .target(view.collection_id.as_str());
+    Done {
+        view,
+        entries: vec![entry],
+        changed,
+    }
 }
 
 /// `POST /api/v1/files/removals`.

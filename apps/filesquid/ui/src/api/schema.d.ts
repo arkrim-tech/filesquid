@@ -464,7 +464,7 @@ export interface paths {
         put?: never;
         /**
          * Move or rename one file or folder
-         * @description A folder moves every file below it; no bytes are written. Publishes exactly one OCFL version through the filesquid-ocfl change model, or is refused (409) without publishing when nothing would change, another change is staged or the head is incomplete (API-S-008). The version is journaled with opaque IDs only; a refusal is journaled once. A file object's stored original (`original/` of `files/<file-id>`) never moves: such a move is refused (400) with a pointer to `POST /api/v1/files/renames`, since a rename changes only the display name (API-S-027). Command (Task API-F2.13, API-S-002): the body carries a `CommandEnvelope` beside the input (schema version 1; an opaque operation_id of 1 to 128 letters, digits, `.`, `_`, `-` or `:`; scope `library:<library_id>`). The expected revision is the head version of `object_id` that the caller read (`v1`, `v2`, ...). A stale revision is answered 409 with a `conflict` outcome and changes nothing. A 200 answer is a `CommandOutcome` of the same operation_id (`committed`) whose `result` is what the command made. A repeated operation_id of the same command that changed something answers its first answer again, before the revision is checked, with no second change; the same operation_id with another route, library or input is refused (400). A refusal stores no receipt, so its retry is evaluated again. Receipts are kept in memory while the host runs, at most 10,000.
+         * @description A folder moves every file below it; no bytes are written. Publishes exactly one OCFL version through the filesquid-ocfl change model, or is refused (409) without publishing when nothing would change, another change is staged or the head is incomplete (API-S-008). The version is journaled with opaque IDs only; a refusal is journaled once. A file object's stored original (`original/` of `files/<file-id>`) never moves: such a move is refused (400) with a pointer to `POST /api/v1/files/renames`, since a rename changes only the display name (API-S-027). Command (Task API-F2.13, API-S-002): the body carries a `CommandEnvelope` beside the input (schema version 1; an opaque operation_id of 1 to 128 letters, digits, `.`, `_`, `-` or `:`; scope `library:<library_id>`). The expected revision is the head version of `object_id` that the caller read (`v1`, `v2`, ...). A stale revision is answered 409 with a `conflict` outcome and changes nothing. A 200 answer is a `CommandOutcome` of the same operation_id (`committed`) whose `result` is what the command made. A repeated operation_id of the same command that changed something answers its first answer again, before the revision is checked, with no second change; the same operation_id with another route, library or input is refused (400). A refusal stores no receipt, so its retry is evaluated again. Receipts are kept in memory while the host runs, at most 10,000. Collection move (Task API-F2.14, API-S-011): an input with `file_id`, `collection_id` and optionally `folder` gives a file the collection snapshot registers another home collection or folder, keeping its name, numbered beside a path another item takes (a recoverably deleted file's included; `path_suffix_exhausted` after 9,999 numbers), in one snapshot version journaled `library.files.place` under the operation ID, rewriting no bytes. Without `collection_id` it is refused 400 invalid_request (`destination_required`), an unknown or foreign collection 404 not_found (`collection_not_found`), a file no home collection registers 404 not_found. Its expected revision is not compared: the move changes no file object. Journaled once as `file.move` with opaque IDs only, and `navigation.change` announces the folders it left and entered; a move to where the file already is changes nothing.
          */
         post: operations["moveFiles"];
         delete?: never;
@@ -2903,7 +2903,8 @@ export interface components {
         /** @description Body of `POST /api/v1/files/moves`: the command envelope and the input (Task API-F2.13, API-S-002). */
         MoveCommand: {
             envelope: components["schemas"]["CommandEnvelope"];
-            input: components["schemas"]["MoveRequest"];
+            /** @description A move inside one OCFL object (`object_id`, `from`, `to`; API-S-008, API-S-014), or a collection move (`file_id`, `collection_id`, `folder`; API-S-011). */
+            input: components["schemas"]["MoveRequest"] | components["schemas"]["CollectionMoveRequest"];
         };
         /** @description Body of `POST /api/v1/files/removals`: the command envelope and the input (Task API-F2.13, API-S-002). */
         RemoveCommand: {
@@ -3177,6 +3178,38 @@ export interface components {
             message: string;
             /** @description True when repeating the same request unchanged may succeed. */
             retryable: boolean;
+        };
+        /** @description The collection move of `POST /api/v1/files/moves` (Task API-F2.14, API-S-011 Destination): a registered file gets another home collection or folder, keeping its name, in one snapshot version that rewrites no bytes. */
+        CollectionMoveRequest: {
+            /** @description The library. */
+            library_id: string;
+            /** @description The file to move (UUID v4). */
+            file_id: string;
+            /** @description The destination collection, a collection of the library (API-S-011 Destination; owner decision 2026-10-22, "Must choose", ADR 041). Required: a request without it is refused 400 invalid_request with the journal code `destination_required` before any byte is staged, so nothing goes to a library's top level and no default collection is chosen; an unknown collection, one of another library or one the caller may not read is refused 404 not_found (`collection_not_found`). The new file is registered in this collection's snapshot under the request's operation ID. */
+            collection_id?: string;
+            /** @description The destination folder inside the collection: a collection logical path (1 to 1,024 UTF-8 bytes in NFC, `/`-separated segments of 1 to 255 bytes without `\`, NUL or control characters, never `.` or `..`), not inside the reserved `provenance` or `.filesquid` folders; the collection's root when absent. A folder outside the rule is refused 400 invalid_request (`invalid_path`). */
+            folder?: string;
+        };
+        /** @description Where a collection move put the file. */
+        CollectionMove: {
+            /** @description The library. */
+            library_id: string;
+            /** @description The file. */
+            file_id: string;
+            /** @description Its home collection. */
+            collection_id: string;
+            /** @description Its collection logical path: its name in the destination folder, or the numbered path beside a taken one (API-S-011 Same logical path). */
+            path: string;
+        };
+        /** @description The command outcome of a move: the in-object move's committed version, or where a collection move put the file. */
+        FileMoveOutcome: {
+            /** @description The command's operation id. */
+            operation_id: string;
+            kind: components["schemas"]["CommandOutcomeKind"];
+            /** @description Always null for these routes: a refusal is an error answer. */
+            error: components["schemas"]["PortError"] | null;
+            /** @description What the move made. */
+            result: components["schemas"]["FileCommit"] | components["schemas"]["CollectionMove"] | null;
         };
     };
     responses: {
@@ -4315,13 +4348,13 @@ export interface operations {
             };
         };
         responses: {
-            /** @description The version published. */
+            /** @description The version published, or where the collection move put the file. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["FileCommitOutcome"];
+                    "application/json": components["schemas"]["FileMoveOutcome"];
                 };
             };
             400: components["responses"]["InvalidRequest"];

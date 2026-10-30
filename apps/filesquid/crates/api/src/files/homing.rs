@@ -6,6 +6,7 @@
 //! does; the refusals carry the rule's own journal code.
 
 use super::error::FileError;
+use super::view::{CollectionMoveRequest, CollectionMoveView};
 use crate::auth::Principal;
 use crate::canonical::collection_path::{join, safe_segment, ItemKind, PathError};
 use crate::error::ErrorCode;
@@ -318,6 +319,68 @@ async fn read_placement(
         .await
         .map_err(|_| FileError::internal("the home-collection task failed"))?
         .map_err(catalog_error)
+}
+
+/// Move the registered file of `request` to its destination for `principal` under
+/// `operation_id`: check the destination, keep the file's name, give it the first free path
+/// there in one snapshot version, and announce both folders. Reads and writes the catalog.
+///
+/// # Errors
+/// The destination's refusal; `not_found` for a file no home collection registers; the
+/// path's refusal; a store failure.
+pub(super) async fn move_to_destination(
+    state: &ApiState,
+    principal: &Principal,
+    request: CollectionMoveRequest,
+    operation_id: &str,
+) -> Result<(CollectionMoveView, bool), FileError> {
+    let destination = Destination {
+        collection_id: request.collection_id.clone(),
+        folder: request.folder.clone(),
+    };
+    let checked = destination::check(state, principal, &request.library_id, &destination)
+        .await
+        .map_err(|refusal| {
+            let (specific, code, message) = refusal.answer();
+            FileError::coded(code, specific, message)
+        })?;
+    let home = installed(state)?;
+    let library_id = LibraryId::new(&request.library_id).map_err(|_| FileError::not_found())?;
+    let file_id =
+        FileId::new(&request.file_id).map_err(|_| FileError::invalid("A file_id is a UUID v4."))?;
+    let (from, current) = read_placement(home.clone(), &library_id, &file_id)
+        .await?
+        .ok_or_else(FileError::not_found)?;
+    let name = current.rsplit('/').next().unwrap_or(&current).to_string();
+    let path = join(checked.folder.as_deref(), &name);
+    let to = HomeRequest {
+        file_id,
+        collection_id: checked.collection_id.clone(),
+        path,
+    };
+    let operation = operation_id.to_string();
+    let placed = tokio::task::spawn_blocking(move || {
+        home.relocate(&library_id, &to, place_entry(&operation))
+    })
+    .await
+    .map_err(|_| FileError::internal("the home-collection task failed"))?
+    .map_err(catalog_error)?;
+    let (path, changed) = match placed {
+        Placed::Registered { path } => (path, true),
+        Placed::AlreadyRegistered { path } => (path, false),
+        Placed::Refused(code) => return Err(refused(code)),
+    };
+    if changed {
+        publish_change(state, &from, &current);
+        publish_change(state, &checked.collection_id, &path);
+    }
+    let view = CollectionMoveView {
+        library_id: request.library_id,
+        file_id: request.file_id,
+        collection_id: checked.collection_id.as_str().to_string(),
+        path,
+    };
+    Ok((view, changed))
 }
 
 /// The refusal of a path the rule of API-S-011 refuses. Pure.

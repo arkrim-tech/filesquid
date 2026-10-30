@@ -678,6 +678,18 @@ fn command_samples() -> Vec<(&'static str, Vec<Value>)> {
         file_id: FILE.into(),
         display_name: "Été à Nice.jpg".into(),
     };
+    let collection_move = filesquid_api::files::CollectionMoveRequest {
+        library_id: LIBRARY.into(),
+        file_id: FILE.into(),
+        collection_id: Some(crate::drive_catalog::COLLECTION.into()),
+        folder: Some("Summer".into()),
+    };
+    let moved = filesquid_api::files::CollectionMoveView {
+        library_id: LIBRARY.into(),
+        file_id: FILE.into(),
+        collection_id: crate::drive_catalog::COLLECTION.into(),
+        path: "Summer/Été à Nice-1.jpg".into(),
+    };
     let copy_request = CopyRequest {
         library_id: LIBRARY.into(),
         file_id: FILE.into(),
@@ -687,7 +699,7 @@ fn command_samples() -> Vec<(&'static str, Vec<Value>)> {
         reserved_file_id: None,
     };
     vec![
-        ("FileCommitOutcome", vec![answer(commit)]),
+        ("FileCommitOutcome", vec![answer(commit.clone())]),
         ("UploadCommitOutcome", vec![answer(to_value(upload))]),
         ("FileCopyOutcome", vec![answer(to_value(copy))]),
         ("MetadataCommitOutcome", vec![answer(to_value(metadata))]),
@@ -701,7 +713,19 @@ fn command_samples() -> Vec<(&'static str, Vec<Value>)> {
             "CreateFolderCommand",
             vec![wrap(request("CreateFolderRequest"))],
         ),
-        ("MoveCommand", vec![wrap(request("MoveRequest"))]),
+        (
+            "MoveCommand",
+            vec![
+                wrap(request("MoveRequest")),
+                wrap(to_value(&collection_move)),
+            ],
+        ),
+        ("CollectionMoveRequest", vec![to_value(&collection_move)]),
+        ("CollectionMove", vec![to_value(&moved)]),
+        (
+            "FileMoveOutcome",
+            vec![answer(commit.clone()), answer(to_value(&moved))],
+        ),
         ("RemoveCommand", vec![wrap(request("RemoveRequest"))]),
         ("RestoreCommand", vec![wrap(request("RestoreRequest"))]),
         ("LabelCommand", vec![wrap(request("LabelRequest"))]),
@@ -1027,7 +1051,7 @@ fn metadata_samples() -> Vec<(&'static str, Vec<Value>)> {
         object_id: format!("urn:uuid:{FILE}"),
         version: "v2".into(),
         created: "2026-10-18T00:00:00Z".into(),
-        path: None,
+        path: Some("Summer/Harbour.jpg".into()),
     };
     let set = SetStatementRequest {
         library_id: LIBRARY.into(),
