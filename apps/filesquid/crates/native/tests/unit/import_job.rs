@@ -806,9 +806,14 @@ fn worker(rig: &Rig, stop: &Arc<AtomicBool>) -> ImportWorker {
     .expect("worker")
 }
 
-/// Wait (at most 60 s) until `count` files are journaled as imported.
+/// Longest wait for the worker to import every job: the 70 single-file jobs finish in about
+/// 9 s alone, but a loaded full run (every test binary at once) once took longer than 60 s, so
+/// the bound leaves room for that; a run that finishes sooner returns sooner.
+const ALL_JOBS_WAIT: Duration = Duration::from_secs(300);
+
+/// Wait (at most [`ALL_JOBS_WAIT`]) until `count` files are journaled as imported.
 fn wait_for(rig: &Rig, count: usize) {
-    let deadline = std::time::Instant::now() + Duration::from_secs(60);
+    let deadline = std::time::Instant::now() + ALL_JOBS_WAIT;
     while rig.entries(IMPORT_FILE_OPERATION).len() < count && std::time::Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(20));
     }

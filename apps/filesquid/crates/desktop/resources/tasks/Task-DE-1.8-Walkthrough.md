@@ -374,6 +374,8 @@ Feature: Desktop file and folder import
 - The review hashes every picked file once, in the request that answers the plan; a very large pick takes as long as that read.
 - A file's numbering in the review is read from its manifest's logical path, so a picked name that only the path rule rewrites counts as numbered.
 - An import job with a failed file stays pending until its files are retried or it is cancelled.
+- `unit_import_job::the_worker_runs_every_unfinished_job_beyond_one_queue_full` (DE-1.9) imports 70 single-file jobs, more than one queue holds. It finishes in about 9 s alone but once missed its 60 s bound in a loaded full run, so its bounded wait is now 300 s (`ALL_JOBS_WAIT`); it still returns as soon as every job is imported.
+- Merged with `main` after API-F2.14 part 2 (#159, contract 0.35.0): the only conflict was two new tests at the end of `native/tests/unit/folder_libraries.rs`, both kept.
 
 ## Mocked Environment Variables
 
