@@ -350,14 +350,17 @@ export function bindFilesRoute(
   options: FilesRouteOptions,
   win: Window = window,
 ): () => void {
-  const owner = watchOwner(shell);
+  const { canViewLogs: owner, stop: stopWatching } = watchOwner(shell);
   applyFilesRoute(shell, options, win, owner);
   const onChange = () => {
     applyFilesRoute(shell, options, win, owner);
     shell.focusMain?.();
   };
   win.addEventListener("hashchange", onChange);
-  return () => win.removeEventListener("hashchange", onChange);
+  return () => {
+    win.removeEventListener("hashchange", onChange);
+    stopWatching();
+  };
 }
 
 /** Mount the file browser for a files route, move it to the route's folder, or remove it. */

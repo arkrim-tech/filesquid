@@ -52,7 +52,7 @@ import {
   type Attribute,
   type ProvRecord,
 } from "../files/provenance";
-import type { ProvenanceSource } from "../files/provenance-source";
+import { NoFileHistoryError, type ProvenanceSource } from "../files/provenance-source";
 
 /** What the panel needs. */
 export interface ProvenancePanelOptions {
@@ -362,7 +362,7 @@ export class FsProvenancePanel extends HTMLElement {
     } catch (error) {
       if (generation !== this.generation || abort.signal.aborted) return;
       // A reference with no file history (not a file's own original) has no activities.
-      if (error instanceof TypeError)
+      if (error instanceof NoFileHistoryError)
         return this.show({ entries: [], truncated: false, capped: false });
       console.warn("FileSquid could not read the provenance", errorName(error));
       table.error(error);
@@ -617,7 +617,7 @@ export class FsProvenancePanel extends HTMLElement {
       const done = formatLabel(labels.provenanceExported, { name: file.display_name });
       status.textContent = exported.truncated ? `${done} ${labels.provenanceExportPartial}` : done;
     } catch (error) {
-      if (generation !== this.generation) return;
+      if (generation !== this.generation || signal?.aborted) return;
       console.warn("FileSquid could not export the history", errorName(error));
       failed.textContent = labels.provenanceExportFailed;
       failed.hidden = false;

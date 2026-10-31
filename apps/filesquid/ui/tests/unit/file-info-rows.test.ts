@@ -171,7 +171,7 @@ describe("detailRows with the facts projection", () => {
     const note = rows.find((r) => r.key === "imports-more");
     expect(note).toMatchObject({
       display: "note",
-      value: "Rows for 2 more acquisitions are not shown.",
+      value: "More acquisitions without rows: 2.",
     });
   });
 

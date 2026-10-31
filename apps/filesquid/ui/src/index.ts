@@ -98,6 +98,7 @@ export {
 } from "./files/facts-source";
 export {
   ClientProvenanceSource,
+  NoFileHistoryError,
   HISTORY_PAGE_SIZE,
   type ExportedHistory,
   type HistoryPageOptions,

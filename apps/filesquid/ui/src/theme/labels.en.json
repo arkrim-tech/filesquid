@@ -332,7 +332,7 @@
   "filePanelSource": "Source",
   "filePanelSourceValue": "{method} · volume {volume}",
   "filePanelImportPath": "Imported from",
-  "filePanelImportsMore": "Rows for {count} more acquisitions are not shown.",
+  "filePanelImportsMore": "More acquisitions without rows: {count}.",
   "filePanelMethodFilePicker": "Files upload",
   "filePanelMethodFolder": "Folder upload",
   "filePanelMethodDragAndDrop": "Files upload · dragged and dropped",

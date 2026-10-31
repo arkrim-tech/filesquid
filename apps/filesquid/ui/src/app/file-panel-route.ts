@@ -58,14 +58,19 @@ export interface FilePanelRouteOptions {
  * opens is not missed. Side effect: adds an event listener to the shell.
  *
  * @param shell The app shell, whose host badge dispatches the events.
- * @returns A function that tells whether the viewer may open the Logs view now.
+ * @returns `canViewLogs`, which tells whether the viewer may open the Logs view now, and `stop`,
+ *   which removes the listener (the route is unbound).
  */
-export function watchOwner(shell: HTMLElement): () => boolean {
+export function watchOwner(shell: HTMLElement): { canViewLogs: () => boolean; stop: () => void } {
   let hostType: string | undefined;
-  shell.addEventListener(HOST_EVENT, (event) => {
+  const onHost = (event: Event) => {
     hostType = (event as CustomEvent<{ hostType?: string }>).detail?.hostType;
-  });
-  return () => hostType === "desktop";
+  };
+  shell.addEventListener(HOST_EVENT, onHost);
+  return {
+    canViewLogs: () => hostType === "desktop",
+    stop: () => shell.removeEventListener(HOST_EVENT, onHost),
+  };
 }
 
 /** The tag of the file panel the route mounts. */

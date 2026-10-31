@@ -14,6 +14,18 @@ import { fileIdOf, isOriginalPath } from "./ops";
 import type { HistoryPage } from "./provenance";
 import type { SourceOptions } from "./source";
 
+/**
+ * The reference has no file history: it is not a file's own stored original, so the history of
+ * its object would be another thing's. Thrown before any request is sent; a dedicated class, so
+ * a transport failure (`TypeError: Failed to fetch`) is never mistaken for it.
+ */
+export class NoFileHistoryError extends Error {
+  constructor() {
+    super("The reference has no file history");
+    this.name = "NoFileHistoryError";
+  }
+}
+
 /** Entries in one history page (the route takes 1 to 1,000). */
 export const HISTORY_PAGE_SIZE = 200;
 
@@ -49,14 +61,14 @@ export type ProvenanceClient = Pick<FileSquidClient, "request" | "read">;
  *
  * @param file The file.
  * @returns The prefix, with the id percent-encoded.
- * @throws TypeError when the reference is not a file's own stored original in an object named
+ * @throws NoFileHistoryError when the reference is not a file's own stored original in an object named
  *   by a UUID (`original/<id>[.<ext>]` in `urn:uuid:<id>`, API-S-026): another path in such an
  *   object would show that object's history, not the file's. No request is sent.
  */
 function filePrefix(file: FileRef): string {
   const id = fileIdOf(file.object_id);
   if (id === undefined || !isOriginalPath(file.path, id)) {
-    throw new TypeError("The reference has no file history");
+    throw new NoFileHistoryError();
   }
   return `/api/v1/files/${encodeURIComponent(id)}`;
 }
@@ -72,7 +84,7 @@ export class ClientProvenanceSource implements ProvenanceSource {
    * @param file The file (its object names the history; its version is not sent).
    * @param options The cursor of the previous page and an abort signal.
    * @returns The page, oldest first, with the next cursor.
-   * @throws TypeError when the reference has no file history (nothing is sent).
+   * @throws NoFileHistoryError when the reference has no file history (nothing is sent).
    * @throws ApiError when the API refuses (the history routes need `history.read`).
    */
   async history(file: FileRef, options: HistoryPageOptions = {}): Promise<HistoryPage> {
@@ -90,7 +102,7 @@ export class ClientProvenanceSource implements ProvenanceSource {
    * @param version The OCFL version name, for example `v3`.
    * @param options Abort signal.
    * @returns The JSON-LD record, parsed; the caller validates it.
-   * @throws TypeError when the reference has no file history (nothing is sent).
+   * @throws NoFileHistoryError when the reference has no file history (nothing is sent).
    * @throws ApiError when the API refuses (404 for a version with no record).
    */
   async record(file: FileRef, version: string, options: SourceOptions = {}): Promise<unknown> {
@@ -105,7 +117,7 @@ export class ClientProvenanceSource implements ProvenanceSource {
    * @param file The file.
    * @param options Abort signal.
    * @returns The JSON-LD document and whether the export left records out.
-   * @throws TypeError when the reference has no file history (nothing is sent).
+   * @throws NoFileHistoryError when the reference has no file history (nothing is sent).
    * @throws ApiError when the API refuses.
    */
   async exportHistory(file: FileRef, options: SourceOptions = {}): Promise<ExportedHistory> {

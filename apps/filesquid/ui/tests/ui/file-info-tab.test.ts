@@ -134,7 +134,7 @@ describe("<fs-details-panel> as the File info tab with facts", () => {
     facts.answer = provFacts({ imports: Array.from({ length: 11 }, () => entry) as never });
     const panel = await mount(facts, []);
     expect(root(panel).querySelector(".note-row")?.textContent).toBe(
-      "Rows for 1 more acquisitions are not shown.",
+      "More acquisitions without rows: 1.",
     );
     // Uploaded and Source, ten times, are 20 rows of the 29 properties.
     expect(root(panel).querySelector(".count")?.textContent).toBe("29 properties · read only");

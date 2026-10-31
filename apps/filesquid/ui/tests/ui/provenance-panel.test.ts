@@ -8,7 +8,12 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "../../src/api/client";
-import { accessibilityViolations, defineElements, type FsProvenancePanel } from "../../src/index";
+import {
+  NoFileHistoryError,
+  accessibilityViolations,
+  defineElements,
+  type FsProvenancePanel,
+} from "../../src/index";
 import labels from "../../src/theme/labels.en.json";
 import {
   FakeProvenanceSource,
@@ -479,9 +484,31 @@ describe("<fs-provenance-panel>", () => {
 
   it("shows a file with no file history as having no activities, not as a failure", async () => {
     const source = new FakeProvenanceSource();
-    source.historyError = new TypeError("The reference has no file history");
+    source.historyError = new NoFileHistoryError();
     const panel = await mount(source);
     expect(panel.dataset.state).toBe("empty");
+  });
+
+  it("shows a transport failure as an error with Try again, never as an empty history", async () => {
+    const source = new FakeProvenanceSource();
+    source.historyError = new TypeError("Failed to fetch");
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const panel = await mount(source);
+    expect(panel.dataset.state).toBe("error");
+    expect(root(panel).querySelector("button.retry")).not.toBeNull();
+  });
+
+  it("does not report an export cut short by leaving the document as a failure", async () => {
+    const source = new FakeProvenanceSource();
+    const panel = await mount(source);
+    const slow = provGate();
+    source.exportGate = slow;
+    source.exportError = new DOMException("aborted", "AbortError");
+    (root(panel).querySelector(".footer button.export") as HTMLButtonElement).click();
+    panel.remove();
+    slow.open();
+    await settle();
+    expect((root(panel).querySelector(".footer [role=alert]") as HTMLElement).hidden).toBe(true);
   });
 
   it("limits the list to the newest 500 activities and says so", async () => {

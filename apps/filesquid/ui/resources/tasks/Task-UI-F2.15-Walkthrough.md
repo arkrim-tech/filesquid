@@ -49,13 +49,17 @@ PRD: [F-067](../../../../../resources/prd.md#f-067-prov-o-history-of-every-versi
 
 - **Fixed:** a `RawName` volume or path (base64 form) has its row instead of being dropped; a record with more than ten acquisitions says how many have no rows; the shell keeps the Logs row current on `#/logs?file=…` (the query is cut before the comparison); the Logs permission is watched from the moment the files route is bound (a host known before a file opens is not missed) and an open Provenance panel redraws View in Logs when the host changes; the history of a path that is not the file's own original is refused by the source and shown as no activities; a panel that left the document while loading reads again when it returns; the previous file's export announcement and failure alert are cleared on a new load, and an export that finishes after another file opened is ignored; a history longer than 500 activities lists the newest 500 and says so; the in-tab filter folds composed and decomposed forms and case (NFC), and note rows are not counted as properties; ImageSquid's method labels say "Photos upload", its empty-state hint names ImageSquid, and the default hint no longer promises a record for every version; the README has one File info entry and states the paging bound as pages of entries.
 - **Tests added or strengthened:** the privacy test also forbids the account name; the e2e history fake issues opaque cursors, derives its facts from the fixture and can fail the export (the export failure is now exercised); the export test inspects the saved blob; the path filter is exercised; the stale-answer test uses distinct entries per file and an answer that arrives late; every expanded activity's operation link is asserted; the acquisition cap is asserted with distinct times and methods; a shell test covers the filtered Logs address.
-- **Not changed:** the Walkthrough's UI-S-024 row now says what the stylesheet test covers (colour, spacing, type size and radius from tokens) and that a few geometry lengths of the timeline are px in properties it does not read.
+- **Documentation:** the Walkthrough's UI-S-024 row now says what the stylesheet test covers (colour, spacing, type size and radius from tokens) and that a few geometry lengths of the timeline are px in properties it does not read.
+
+## Review fixes (Cubic round 2: 1 P1, 1 P2, 3 P3)
+
+- **Fixed:** the "no file history" refusal is its own class (`NoFileHistoryError`), so a transport failure (`TypeError: Failed to fetch`) shows the error state with Try again and is never taken for an empty history; an export cut short by leaving the document is not reported as a failure; `watchOwner` returns a `stop` that the route's cleanup calls, so rebinding the route does not accumulate listeners; the acquisitions note reads "More acquisitions without rows: {count}." (grammatical for one and many); the review-fix bullet that said "Not changed" is headed "Documentation".
 
 ## How it was tested
 
 1. Red run: the six new test files failed before the implementation (missing modules, `configure is not a function`; 42 of 49 tests failed).
 2. `npx prettier --write .`, `npx eslint .` and `npx tsc --noEmit` in `apps/filesquid/ui` are clean; `apps/imagesquid` passes Prettier with the same configuration.
-3. `npm test` in `apps/filesquid/ui`: 94 files, 2,230 tests passed (1 skipped), the one skip is the same as on `main`.
+3. `npm test` in `apps/filesquid/ui`: 94 files, 2,232 tests passed (1 skipped), the one skip is the same as on `main`.
 4. Playwright, production build (`vite build` plus `vite preview`) at 1440 × 900 in light and dark: the whole preview suite, 188 tests passed; the new `provenance-panel.spec.ts` has 22 of them (6 in each theme, 10 theme-free).
 
 ### Raw output
@@ -85,7 +89,7 @@ Green run (`npx vitest run`):
  ✓ tests/unit/provenance-source.test.ts (8 tests) 66ms
  ✓ tests/unit/logs-hash.test.ts (5 tests) 11ms
  Test Files  94 passed (94)
-      Tests  2230 passed | 1 skipped (2231)
+      Tests  2232 passed | 1 skipped (2233)
    Duration  71.01s (transform 9.49s, setup 4.55s, import 25.00s, tests 89.83s, environment 67.94s)
 ```
 

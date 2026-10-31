@@ -9,6 +9,7 @@ import { ClientFactsSource, hasFileRecord, type FactsClient } from "../../src/fi
 import {
   ClientProvenanceSource,
   HISTORY_PAGE_SIZE,
+  NoFileHistoryError,
   type ProvenanceClient,
 } from "../../src/files/provenance-source";
 import type { FileRef } from "../../src/files/model";
@@ -114,9 +115,9 @@ describe("ClientProvenanceSource", () => {
     const c = client();
     const source = new ClientProvenanceSource(c);
     const odd = { ...FILE, object_id: "ark:/12345/x" };
-    await expect(source.history(odd)).rejects.toThrow(TypeError);
-    await expect(source.record(odd, "v1")).rejects.toThrow(TypeError);
-    await expect(source.exportHistory(odd)).rejects.toThrow(TypeError);
+    await expect(source.history(odd)).rejects.toThrow(NoFileHistoryError);
+    await expect(source.record(odd, "v1")).rejects.toThrow(NoFileHistoryError);
+    await expect(source.exportHistory(odd)).rejects.toThrow(NoFileHistoryError);
     expect(c.request).not.toHaveBeenCalled();
     expect(c.read).not.toHaveBeenCalled();
   });
@@ -125,9 +126,9 @@ describe("ClientProvenanceSource", () => {
     const c = client();
     const source = new ClientProvenanceSource(c);
     const other = { ...FILE, path: "Harbour project/facade-study.jpg" };
-    await expect(source.history(other)).rejects.toThrow(TypeError);
-    await expect(source.record(other, "v1")).rejects.toThrow(TypeError);
-    await expect(source.exportHistory(other)).rejects.toThrow(TypeError);
+    await expect(source.history(other)).rejects.toThrow(NoFileHistoryError);
+    await expect(source.record(other, "v1")).rejects.toThrow(NoFileHistoryError);
+    await expect(source.exportHistory(other)).rejects.toThrow(NoFileHistoryError);
     expect(c.request).not.toHaveBeenCalled();
     expect(c.read).not.toHaveBeenCalled();
   });
