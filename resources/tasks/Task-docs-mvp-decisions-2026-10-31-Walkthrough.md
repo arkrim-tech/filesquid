@@ -46,6 +46,7 @@ No. [UI-F2.7](../../apps/filesquid/ui/resources/plan.md)'s Description lists hid
 
 - API-F2.29 (full-text search) and API-F2.28 (server search) go to Task FS-2.7 (Activity stream, comments and sharing), in the Release 1 section of the checklist. It is the Release 1 task that already holds the search work that needs accounts and shares (API-F2.4, SV-F1.4), so the two search remainders of API-F2.3 stay together. Task FS-3.11 (Ubuntu and Windows desktop releases) is Release 1 too but holds installer work only.
 - DE-F3.4 (per-attempt staging area) goes to Task FS-3.11, the first post-MVP desktop task after gate Task FS-3.9.
+- API-F2.23 goes to Task FS-2.8 as the brief says. Task FS-2.8 was closed on main by DE-0.10 while this PR was open, so merging main reopened it for API-F2.23; it stays after Task FS-2.5 in the checklist.
 
 ## New rows and hours
 
