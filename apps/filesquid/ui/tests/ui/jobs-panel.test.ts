@@ -325,8 +325,42 @@ describe("<fs-jobs-panel> controls (API-S-037)", () => {
     source.list = async () => {
       throw new TypeError("unavailable");
     };
+    const listed = vi.spyOn(source, "list");
+    const { panel } = await mount(source, false);
+    expect(listed).toHaveBeenCalled();
+    expect(rootOf(panel).querySelector<HTMLElement>(".jobs-button")?.hidden).toBe(true);
+  });
+
+  it("shows the jobs again once a later read succeeds, for example after a token was entered", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const source = new MemoryJobSource([jobView({ id: "a" })], { a: [] });
+    const real = source.list.bind(source);
+    source.list = async () => {
+      throw new TypeError("refused");
+    };
     const { panel } = await mount(source, false);
     expect(rootOf(panel).querySelector<HTMLElement>(".jobs-button")?.hidden).toBe(true);
+    source.list = real;
+    await panel.reconnect();
+    expect(rootOf(panel).querySelector<HTMLElement>(".jobs-button")?.hidden).toBe(false);
+  });
+
+  it("words a job that failed as a whole without inventing a file count", async () => {
+    const source = new MemoryJobSource([
+      jobView({ id: "whole", state: "failed", done: 0, total: 9, error_code: "too_many_files" }),
+    ]);
+    const { panel } = await mount(source);
+    expect(block(panel, "whole").querySelector(".detail")?.textContent).toBe(
+      "0 of 9 files · failed: too_many_files",
+    );
+  });
+
+  it("draws a bar with no range for a job whose total is not known", async () => {
+    const source = new MemoryJobSource([jobView({ id: "open", total: undefined, done: 5 })]);
+    const { panel } = await mount(source);
+    const bar = block(panel, "open").querySelector("[role=progressbar]");
+    expect(bar?.hasAttribute("aria-valuenow")).toBe(false);
+    expect(bar?.hasAttribute("aria-valuemax")).toBe(false);
   });
 });
 

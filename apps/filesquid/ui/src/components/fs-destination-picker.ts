@@ -169,6 +169,8 @@ export class FsDestinationPicker extends HTMLElement {
       return false;
     }
     if (generation !== this.generation) return false;
+    // A place the owner chose while the tree was read stays chosen.
+    if (this.chosen && this.chosen.node !== node) return false;
     this.choose(node);
     return this.chosen?.node === node;
   }

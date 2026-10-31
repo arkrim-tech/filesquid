@@ -43,7 +43,11 @@ export class FsJobsPanel extends HTMLElement {
   private opened = false;
   private unavailable = false;
   private readonly alerts = new Map<string, string>();
-  private readonly onChange = () => this.render();
+  private readonly onChange = () => {
+    // Any change means the store can read jobs: a read that failed earlier no longer hides them.
+    this.unavailable = false;
+    this.render();
+  };
   private readonly onKey = (event: KeyboardEvent) => {
     if (event.key === "Escape" && this.opened) this.close();
   };
@@ -78,6 +82,25 @@ export class FsJobsPanel extends HTMLElement {
   disconnectedCallback(): void {
     this.options?.store.removeEventListener("change", this.onChange);
     this.removeEventListener("keydown", this.onKey);
+  }
+
+  /**
+   * Read the jobs again over a new event channel, for example after a token was entered, when the
+   * first read was refused. Network I/O.
+   *
+   * @returns Resolves once the jobs are read or the failure is shown as no button.
+   */
+  async reconnect(): Promise<void> {
+    const store = this.options?.store;
+    if (!store) return;
+    this.unavailable = false;
+    try {
+      await store.reconnect();
+    } catch (error) {
+      console.warn("FileSquid could not read the upload jobs again", error);
+      this.unavailable = true;
+    }
+    this.render();
   }
 
   /** Open the panel. Side effect: moves focus into it. */

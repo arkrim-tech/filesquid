@@ -671,5 +671,7 @@
   "jobsEmpty": "No uploads yet. Choose New, then Upload files…",
   "jobsUnavailable": "This host cannot report upload jobs.",
   "jobsRefused": "The job did not accept that. Nothing was changed.",
-  "jobsFooter": "Uploading · {done} of {total}"
+  "jobsFooter": "Uploading · {done} of {total}",
+  "jobsDetailJobFailed": "{done} of {total} files · failed",
+  "jobsDetailJobFailedCode": "{done} of {total} files · failed: {error_code}"
 }

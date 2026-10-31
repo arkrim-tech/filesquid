@@ -143,7 +143,9 @@ export class ClientJobSource implements JobSource {
     }
     if (event.topic !== "job.update") return;
     try {
-      this.announce({ kind: "job", job: parseJobView(event.data) });
+      const job = parseJobView(event.data);
+      // Other kinds of job (a library rebuild) are not uploads and have no place in this panel.
+      if (job.kind === IMPORT_JOB_KIND) this.announce({ kind: "job", job });
     } catch (error) {
       console.warn("FileSquid job.update payload broke the contract; reading the jobs", error);
       this.announce(RESYNC);

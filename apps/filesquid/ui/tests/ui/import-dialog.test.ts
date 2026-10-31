@@ -247,6 +247,9 @@ describe("<fs-import-dialog> planning and review (mockup 18)", () => {
     expect(frame.querySelector(".staging")?.textContent).toBe("Staging uses at most 10 GB.");
     expect(frame.querySelector(".integrity .title")?.textContent).toBe(labels.importIntegrityTitle);
     expect(frame.querySelector(".foot [data-action=start]")?.textContent).toBe("Upload 196 files");
+    expect(frame.querySelector(".files-note")?.textContent).toBe(
+      "Showing the first 6 of 214 files.",
+    );
     expect(frame.textContent).not.toMatch(/\/Users|[A-Z]:\\|file:\/\//);
   });
 
@@ -438,5 +441,158 @@ describe("<fs-import-dialog> refusals (mockup 48)", () => {
     await settle();
     expect(source.requests).toHaveLength(2);
     expect(source.requests[1]?.operationId).toBe(source.requests[0]?.operationId);
+  });
+});
+
+describe("<fs-import-dialog> races (UI-1.2)", () => {
+  it("sends the folder source when the folder option is chosen", async () => {
+    const { dialog, source } = await mount();
+    await openAndChoose(dialog);
+    shown(dialog)?.querySelector<HTMLInputElement>('input[value="folder"]')?.click();
+    control(dialog, "start").click();
+    await settle();
+    expect(source.requests[0]?.source).toBe("folder");
+  });
+
+  it("sends nothing when the owner cancels while the destination is being named", async () => {
+    const source = new MemoryImportSource({ plan: PLAN, items: PLAN_ITEMS });
+    let release: () => void = () => undefined;
+    const slow = new NamedDestinations(
+      () =>
+        new Promise((resolve) => {
+          release = () => resolve({ libraryId: LIBRARY_ID, collectionId: COLLECTION_ID });
+        }),
+    );
+    const dialog = document.createElement("fs-import-dialog") as FsImportDialog;
+    dialog.configure({
+      labels,
+      source,
+      navigation: new MemoryNavigationSource(tree),
+      directory: slow,
+    });
+    document.body.append(dialog);
+    await openAndChoose(dialog);
+    control(dialog, "start").click();
+    await settle();
+    control(dialog, "cancel").click();
+    release();
+    await settle();
+    expect(source.requests).toEqual([]);
+    expect(shown(dialog)).toBeNull();
+  });
+
+  it("does not send a request for a place the owner left while the destination was being named", async () => {
+    const source = new MemoryImportSource({ plan: PLAN, items: PLAN_ITEMS });
+    const releases: Array<() => void> = [];
+    const slow = new NamedDestinations(
+      () =>
+        new Promise((resolve) => {
+          releases.push(() => resolve({ libraryId: LIBRARY_ID, collectionId: COLLECTION_ID }));
+        }),
+    );
+    const dialog = document.createElement("fs-import-dialog") as FsImportDialog;
+    dialog.configure({
+      labels,
+      source,
+      navigation: new MemoryNavigationSource(tree),
+      directory: slow,
+    });
+    document.body.append(dialog);
+    await openAndChoose(dialog, "c1");
+    control(dialog, "start").click();
+    await settle();
+    row(dialog, "c1").querySelector<HTMLElement>(".chevron")?.click();
+    await settle();
+    row(dialog, "f1").click();
+    await settle();
+    releases.forEach((release) => release());
+    await settle();
+    expect(source.requests).toEqual([]);
+  });
+
+  it("keeps a place the owner chose while the preset one was still being read", async () => {
+    const navigation = new MemoryNavigationSource(tree);
+    const real = navigation.list.bind(navigation);
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    navigation.list = async (parent, cursor, limit) => {
+      if (parent === "f1") await gate;
+      return real(parent, cursor, limit);
+    };
+    const dialog = document.createElement("fs-import-dialog") as FsImportDialog;
+    dialog.configure({
+      labels,
+      source: new MemoryImportSource({ plan: PLAN, items: PLAN_ITEMS }),
+      navigation,
+      directory: new NamedDestinations(async () => ({
+        libraryId: LIBRARY_ID,
+        collectionId: COLLECTION_ID,
+      })),
+    });
+    document.body.append(dialog);
+    dialog.open({ destination: "f1" });
+    await settle();
+    row(dialog, "c1").click();
+    await settle();
+    release();
+    await settle();
+    expect(shown(dialog)?.querySelector<HTMLInputElement>(".destination-field")?.value).toBe(
+      "Harbour project",
+    );
+  });
+
+  it("locks the review while the host starts the job, so Change and Cancel cannot replace it", async () => {
+    const source = new MemoryImportSource({ plan: PLAN, items: PLAN_ITEMS });
+    let release: (id: string) => void = () => undefined;
+    source.start = (planId) =>
+      new Promise((resolve) => {
+        source.calls.push(`start ${planId}`);
+        release = resolve;
+      });
+    const { dialog } = await mount(source);
+    const started = vi.fn();
+    dialog.addEventListener(IMPORT_STARTED_EVENT, (event) =>
+      started((event as CustomEvent).detail),
+    );
+    await openAndChoose(dialog);
+    control(dialog, "start").click();
+    await settle();
+    control(dialog, "start").click();
+    await settle();
+    expect(control(dialog, "cancel").disabled).toBe(true);
+    expect(control(dialog, "change").disabled).toBe(true);
+    shown(dialog)?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    await settle();
+    expect(shown(dialog)).not.toBeNull();
+    release("job-1");
+    await settle();
+    expect(started).toHaveBeenCalledWith({ jobId: "job-1" });
+    expect(shown(dialog)).toBeNull();
+  });
+
+  it("announces a job the host started after the owner cancelled, without closing a newer dialog", async () => {
+    const source = new MemoryImportSource();
+    let release: () => void = () => undefined;
+    source.plan = () =>
+      new Promise((resolve) => {
+        release = () => resolve({ kind: "started", jobId: "job-late" });
+      });
+    const { dialog } = await mount(source);
+    const started = vi.fn();
+    dialog.addEventListener(IMPORT_STARTED_EVENT, (event) =>
+      started((event as CustomEvent).detail),
+    );
+    await openAndChoose(dialog);
+    control(dialog, "start").click();
+    await settle();
+    control(dialog, "cancel").click();
+    await settle();
+    dialog.open();
+    release();
+    await settle();
+    expect(started).toHaveBeenCalledWith({ jobId: "job-late" });
+    expect(dialog.isOpen).toBe(true);
   });
 });

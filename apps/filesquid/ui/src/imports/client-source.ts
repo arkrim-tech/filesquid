@@ -109,9 +109,15 @@ export class ClientImportSource implements ImportSource {
    * @param planId The plan.
    * @returns Resolves once the host has dropped the plan.
    * @throws ApiError as the API answers it (404 when it is already gone).
+   * @throws TypeError when the answer is not the discard of this plan.
    */
   async discard(planId: string): Promise<void> {
     const path = `${IMPORTS}/${encodeURIComponent(planId)}`;
-    await this.client.request<unknown>(path, { method: "DELETE" });
+    const answer = await this.client.request<unknown>(path, { method: "DELETE" });
+    const record =
+      typeof answer === "object" && answer !== null ? (answer as Record<string, unknown>) : {};
+    if (record.plan_id !== planId || record.discarded !== true) {
+      throw new TypeError("FileSquid import discard answer does not satisfy the contract");
+    }
   }
 }

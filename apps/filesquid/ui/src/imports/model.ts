@@ -242,9 +242,13 @@ export function pathSuffixRange(name: string): { first: string; last: string } {
 export function summariseItems(items: readonly JobItem[]): ItemSummary {
   const sum = { queued: 0, copying: 0, copied: 0, skipped: 0, failed: 0 };
   let failureCode: string | undefined;
+  let firstFailure = true;
   for (const item of items) {
     sum[item.state] += 1;
-    if (item.state === "failed" && failureCode === undefined) failureCode = item.error_code;
+    // The code is the first failed file's own: a later file's code is never borrowed for it.
+    if (item.state !== "failed" || !firstFailure) continue;
+    failureCode = item.error_code;
+    firstFailure = false;
   }
   return failureCode === undefined ? sum : { ...sum, failureCode };
 }
@@ -270,7 +274,18 @@ export function jobPhase(job: JobView, files: ItemSummary): JobPhase {
   if (job.control === "pause") return "pausing";
   if (job.state === "running") return "running";
   const idle = files.queued === 0 && files.copying === 0;
-  return files.failed > 0 && idle ? "attention" : "waiting";
+  return (files.failed > 0 || checkpointEnded(job)) && idle ? "attention" : "waiting";
+}
+
+/**
+ * Whether a pending job's checkpoint has reached its end. DE-1.8 leaves a job `pending` only
+ * when files ended and some failed (otherwise it completes), so this holds even when the files
+ * read are a bounded part of a large job and show no failure.
+ */
+function checkpointEnded(job: JobView): boolean {
+  return (
+    job.state === "pending" && job.total !== undefined && job.total > 0 && job.done >= job.total
+  );
 }
 
 /**
@@ -291,7 +306,7 @@ export function allowedControls(job: JobView, files: ItemSummary): JobControls {
   if (job.control === "pause") return { ...none, cancel: true };
   // A pending job whose files all ended has nothing to hold: it waits for a retry or a cancel.
   const waiting = jobPhase(job, files) === "attention";
-  return { pause: !waiting, resume: false, cancel: true, retry: files.failed > 0 };
+  return { pause: !waiting, resume: false, cancel: true, retry: files.failed > 0 || waiting };
 }
 
 /** The rank of a state in the list the panel shows: failures first, then what is moving. */

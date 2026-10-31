@@ -90,9 +90,10 @@ interface Session {
   id: number;
   source: ImportSourceKind;
   choice?: DestinationChoice;
-  resolved?: ResolvedDestination;
   operationId?: string;
   plan?: ImportPlan;
+  /** True while the host starts the job: the review cannot be left until it answers. */
+  starting?: boolean;
   opener: Element | null;
 }
 
@@ -229,28 +230,46 @@ export class FsImportDialog extends HTMLElement {
 
   /** Resolve the destination, then ask the host for the file dialog and the plan. */
   private async plan(step: DestinationStep, session: Session): Promise<void> {
-    const { source, directory } = this.options as ImportDialogOptions;
-    try {
-      if (!session.choice) throw new DestinationRequiredError();
-      session.resolved = await directory.resolve(session.choice);
-      if (!session.resolved) throw new DestinationUnresolvedError();
-    } catch (error) {
-      this.refuse(step.body, error, "plan");
-      return;
-    }
+    const { source } = this.options as ImportDialogOptions;
+    const choice = session.choice;
+    const resolved = await this.resolveChoice(step, session, choice);
+    // The owner may have left, or chosen another place, while the lookup ran.
+    if (!resolved || this.session?.id !== session.id || session.choice !== choice) return;
     this.showPlanning(step);
     session.operationId ??= newOperationId();
     try {
       const answer = await source.plan({
-        libraryId: session.resolved.libraryId,
-        collectionId: session.resolved.collectionId,
-        folder: destinationFolder(session.choice.trail),
+        libraryId: resolved.libraryId,
+        collectionId: resolved.collectionId,
+        folder: destinationFolder((choice as DestinationChoice).trail),
         source: session.source,
         operationId: session.operationId,
       });
       await this.onPlanned(session, answer);
     } catch (error) {
       this.afterFailedPlan(session, error);
+    }
+  }
+
+  /** Name the chosen destination, or show why it cannot be named and return undefined. */
+  private async resolveChoice(
+    step: DestinationStep,
+    session: Session,
+    choice: DestinationChoice | undefined,
+  ): Promise<ResolvedDestination | undefined> {
+    const { directory } = this.options as ImportDialogOptions;
+    step.start.disabled = true;
+    try {
+      if (!choice) throw new DestinationRequiredError();
+      const resolved = await directory.resolve(choice);
+      if (!resolved) throw new DestinationUnresolvedError();
+      return resolved;
+    } catch (error) {
+      if (this.session?.id === session.id) {
+        step.start.disabled = session.choice === undefined;
+        this.refuse(step.body, error, "plan");
+      }
+      return undefined;
     }
   }
 
@@ -272,7 +291,8 @@ export class FsImportDialog extends HTMLElement {
     session.operationId = undefined;
     const live = this.session?.id === session.id;
     if (answer.kind === "started") {
-      if (live) this.announceStarted(answer.jobId);
+      // The host began durable work, so the Jobs panel hears of it even if the owner left.
+      this.announceStarted(answer.jobId, session);
       return;
     }
     if (answer.kind === "planned" && !live) {
@@ -349,14 +369,17 @@ export class FsImportDialog extends HTMLElement {
   private async start(step: ReviewStep, session: Session): Promise<void> {
     const { source } = this.options as ImportDialogOptions;
     const plan = session.plan as ImportPlan;
-    step.start.disabled = true;
+    const locked = [step.start, step.cancel, step.change, step.close];
+    for (const control of locked) control.disabled = true;
+    session.starting = true;
     try {
       const jobId = await source.start(plan.plan_id);
-      this.announceStarted(jobId);
+      this.announceStarted(jobId, session);
     } catch (error) {
       console.warn("FileSquid could not start the upload", error);
+      session.starting = false;
       this.refuse(step.body, error, "start");
-      step.start.disabled = false;
+      for (const control of locked) control.disabled = false;
     }
   }
 
@@ -375,14 +398,15 @@ export class FsImportDialog extends HTMLElement {
    * @returns Resolves once the dialog is closed and the discard answered.
    */
   async cancel(): Promise<void> {
+    if (this.session?.starting) return;
     const planId = this.session?.plan?.plan_id;
     this.finish();
     if (planId !== undefined) await this.discard(planId);
   }
 
-  /** Tell the jobs panel a job started, and close. */
-  private announceStarted(jobId: string): void {
-    this.finish();
+  /** Tell the jobs panel a job started, and close the dialog if it is still this session's. */
+  private announceStarted(jobId: string, session: Session): void {
+    if (this.session?.id === session.id) this.finish();
     this.dispatchEvent(
       new CustomEvent(IMPORT_STARTED_EVENT, { detail: { jobId }, bubbles: true, composed: true }),
     );

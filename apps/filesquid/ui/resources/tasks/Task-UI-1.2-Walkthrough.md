@@ -11,7 +11,7 @@ Branch `feat/ui-1.2-import-progress`. Plan row: [Task UI-1.2](../plan.md), dispa
 | [UI-S-029](../srs.md) Recently deleted, collection deletion, restore, duplicate names, write refusals and their settings (Refusals, mockup 48) | The error card (icon, title, reason, Dismiss) for `collection_not_found`, `destination_required` and `path_suffix_exhausted`, worded from the answer's status and step, a file's own `error_code` and the UI's own pre-send check; no sub-code is invented (API-F2.21 adds them) | `tests/unit/imports-failure.test.ts`, the refusal tests of both UI specs |
 | [UI-S-024](../srs.md) Visual constants of the active mockup suite | Every colour through its token in light and dark (overlay dialog and panel, raised cards and note boxes, outline-strong table and tree borders, control outline on radios and fields, primary, active tint, error), Georgia 22 px 700 dialog title and 20 px 700 panel title, 14 px 600 buttons, 11 px eyebrows, 13 px meta text, radii 7, 6, 8 and 10 px | computed-style assertions of `import.spec.ts` in light and dark |
 | [UI-S-012](../srs.md) UIs reach FileSquid only through `FileSquidClient` | `ClientImportSource` and `ClientJobSource` over `request()` and `subscribe()`; no path, name or storage key leaves the page in a request, and every answer is checked against the contract | `tests/unit/imports-source.test.ts` |
-| [UI-S-005](../srs.md) A distribution's label table MUST define every key of the default table | 86 new keys in `REQUIRED_LABEL_KEYS`, `labels.en.json` and ImageSquid's table (album and photo vocabulary) | `tests/unit/theme.test.ts`, `tests/unit/distribution-tables.test.ts` |
+| [UI-S-005](../srs.md) A distribution's label table MUST define every key of the default table | 88 new keys in `REQUIRED_LABEL_KEYS`, `labels.en.json` and ImageSquid's table (album and photo vocabulary) | `tests/unit/theme.test.ts`, `tests/unit/distribution-tables.test.ts` |
 | [UI-S-013](../srs.md) UI tests against production artifacts with strict DOM assertions | Playwright against `vite build` plus `vite preview`, 1440 × 900, light and dark: custom elements defined, labels from the active table, computed styles, boxes within 2 px, no console errors | Playwright output below |
 | [UI-S-016](../srs.md) Accessibility contracts | Modal upload dialog with Tab kept inside, Escape as Cancel, focus returned to the opener; the panel is a labelled dialog that returns focus to its button; redraws keep focus on the same control; polite status for planning and the footer; error cards are alerts | `accessibilityViolations` checks of both component test files |
 | [API-S-036](../../../crates/api/resources/srs.md) Import route and [API-S-037](../../../crates/api/resources/srs.md) Job routes and job events | The plan, planned-files, start and discard routes, the job list, files and the five controls, and `job.update` events, as the contract states them; a retry of a paused job is never offered | `imports-source.test.ts`, `jobs-store.test.ts` |
@@ -23,14 +23,14 @@ PRD: [F-002](../../../../../resources/prd.md#f-002-safe-file-folder-and-device-i
 - **`src/imports/`**: `model.ts` (contract types, the `ImportSource`, `JobSource` and `DestinationDirectory` ports, and the pure rules: destination of a picker trail, numbered names, a job's phase, the controls it accepts, the files the panel lists, one file's status), `contract.ts` (parsers that keep contract fields only), `client-source.ts`, `jobs-source.ts`, `destination-source.ts`, `directory.ts`, `failure.ts`, `memory-source.ts` and `jobs-store.ts` (bounded: five pages of files per job, one read per second per job).
 - **Elements**: `fs-import-dialog.ts` with `import-steps.ts`, `fs-jobs-panel.ts` with `jobs-view.ts`, `refusal-card.ts`, `import-style.ts`; wired by `src/app/import-route.ts` and `main.ts`.
 - **Shared elements changed**: `<fs-destination-picker>` (import variant, `preselect`), `<fs-new-menu>` (`folders` switch, so the upload items can be on while New folder is off), `<fs-app-shell>` (`jobs` header slot, `uploadStatus` footer), `icons.ts` (upload, pause, play, retry, shield, arrow), `formatLabel` (placeholders may contain `_`, for `{error_code}`).
-- **Labels**: 86 keys (`import*`, `jobs*`, `fileDestinationRequired`, `fileCollectionNotFound`, `fileSuffixExhausted`) in the default and ImageSquid tables.
+- **Labels**: 88 keys (`import*`, `jobs*`, `fileDestinationRequired`, `fileCollectionNotFound`, `fileSuffixExhausted`) in the default and ImageSquid tables.
 - **Test support**: `strict-dom.ts` excuses the browser's network line for the Jobs button's start-up read of `GET /api/v1/jobs` where a host does not serve it yet, as it does for preferences and recent libraries.
 
 ## Decisions and open points for the owner and the platform engineer
 
 - **Nothing here can upload end to end until the API names a collection.** Navigation node handles are opaque (API-S-021) and no route or field gives a node's `library_id` and `collection_id`, which `POST /api/v1/imports` requires. The dialog asks `GET /api/v1/navigation/destination?node=<handle>`, answering `{library_id, collection_id}` for a collection or a folder inside one. That route is **not in the contract** (I could not edit the API crate). On a host without it the dialog refuses before sending (`importDestinationUnresolved`) and the Playwright suite proves nothing is sent. UI-F2.17 hits the same gap ("a producer of `FileLocation.collection_id`").
 - **Free-space reserve.** Mockup 18 says "Staging uses at most 10 GiB and keeps {reserve} free." The plan has no reserve (the host computes max(2 GiB, 5 % of capacity)), so the review says "Staging uses at most {limit}." A `reserve_bytes` field on `ImportPlan` would restore the mockup's wording. Sizes read "10 GB" and "409 GB" because the shared `formatSize` uses base 1024 with GB labels.
-- **Job titles.** `JobDestination` has only `collection_id`, so a job's title names its collection only when the dialog resolved it in this session, and otherwise says "Upload into {Collection} › {folder}".
+- **Job titles.** `JobDestination` has the collection's ID and the folder but not the collection's name, so a job's title names its collection only when the dialog resolved it in this session, and otherwise says "Upload into {Collection} › {folder}".
 - **Retry failed is shown less often than mockup 19.** The mockup draws Retry failed on a failed (finished) job, which API-S-037 refuses. The panel offers it only where the job accepts it: on a job waiting for the owner, or a running job with two or more failed files (one failed file has its own Retry, as the mockup's running job shows).
 - **Needs attention (DE-1.8, owner 2026-10-31 "accept recommendations").** A pending job whose files ended with a failed one shows the chip "needs attention", Retry failed, Retry and Cancel, no bar and no motion. Pause is not offered there (nothing is running).
 - **Mockup 52 and 18 text widths.** Text-sized buttons are asserted by height and position, not width, because this machine's sans font is not the mockup's. Dialogs are centred by the window, so their regions are measured from the dialog's own corner.
@@ -60,10 +60,10 @@ $ npx eslint .          (no output: clean)
 $ npx tsc --noEmit      (no output: clean)
 $ npx vitest run
  Test Files  95 passed (95)
-      Tests  2260 passed | 1 skipped (2261)
+      Tests  2282 passed | 1 skipped (2283)
 ```
 
-New in this task: `tests/unit/imports-model.test.ts` (17), `imports-source.test.ts` (16), `imports-failure.test.ts` (9), `jobs-store.test.ts` (12), `tests/ui/import-dialog.test.ts` (19), `tests/ui/jobs-panel.test.ts` (17) and `tests/ui/import-shell.test.ts` (6). The package has no coverage provider; coverage is shown by the SRS mapping above.
+New in this task: `tests/unit/imports-model.test.ts`, `imports-source.test.ts`, `imports-failure.test.ts`, `jobs-store.test.ts`, `tests/ui/import-dialog.test.ts`, `tests/ui/jobs-panel.test.ts` and `tests/ui/import-shell.test.ts` (these seven files hold 118 tests). The package has no coverage provider; coverage is shown by the SRS mapping above.
 
 ### Playwright, production build (`vite build` plus `vite preview`, 1440 × 900, light and dark)
 
@@ -95,6 +95,19 @@ $ npx playwright test (whole preview suite; the import.spec.ts runs are listed)
 
 189 passed (2.1m) (the whole preview suite, 189 runs, light and dark)
 ```
+
+## Review fixes (Cubic round 1: 4 P1, 32 P2, 10 P3)
+
+43 of 46 findings were valid and fixed; three were answered on their threads.
+
+- **P1, races:** a stale list answer is dropped and a job an event updated meanwhile keeps its newer view (`JobsStore.refresh`); the Jobs source can be read again over a new channel (`reconnect`, called when a token is entered); Cancel, or another destination chosen, while the collection is being named sends no request.
+- **P2, dialog:** the review is locked while the host starts the job (Change, Cancel, Escape), a job the host started after Cancel is still announced without closing a newer dialog, and a place the owner chose is not overwritten by the preset one.
+- **P2, contract:** an explicit `null` or malformed optional field is refused, the import outcome must match what the answer says (`pending` for planned and started, `committed` for cancelled), a discard answer must be the discard of that plan, and `job.update` events of other kinds of job are ignored.
+- **P2, panel:** a job whose checkpoint ended while `pending` shows as needing attention even when the bounded files read show no failure; a failed job states no invented file count; a bar with no known total states no range; one failed file code is never borrowed from another; the Jobs button returns once a later read works; forced rereads and finished jobs no longer leave timers behind.
+- **P2, style and docs:** margins, paddings and gaps that equal a spacing token use it, the review reflows below 40 rem, the numbering note shows when the plan numbers a name beyond the files read, and the README, UI-S-028 build rules and plan row state the contract precisely (the job view has the destination's folder; the three refusal codes are journal codes today).
+- **P2 and P3, tests:** the fakes validate before they mutate, take the plan ID from the URL, the plan's counts, the node's library and the nodes option; every denial reason, the folder source, the truncation notice, the unavailable host, stale rows, API order, stopped timers and an incomplete destination answer are tested; the preview spec builds its strings from the label table.
+- **Not changed:** the two Gherkin suggestions (retry limits and quarantined entries are host rules, covered by the DE-1.8 tests), and the rest of the stylesheet's mockup-measured dimensions, which are layout constants like the other dialogs' and are not on the 8 px scale.
+- **Pre-commit:** `Test scope: npm:apps/filesquid/ui`; Playwright, the whole preview suite again: 189 passed.
 
 ## Pre-commit
 

@@ -50,6 +50,7 @@ import {
   sharedNavigationStore,
   type Distribution,
   type FsAppShell,
+  type MountedImports,
   type FsNavTree,
   type FsNewMenu,
   type FsSearchBar,
@@ -71,8 +72,10 @@ theme.start();
 defineElements();
 const shell = document.querySelector<FsAppShell>("fs-app-shell");
 const tree = document.createElement("fs-nav-tree") as FsNavTree;
+let imports: MountedImports | undefined;
 const tokens = memoryTokenStore(() => {
   void shell?.refreshHealth();
+  void imports?.panel.reconnect(); // the Jobs panel's first read may have been refused
   navigation.reconnect();
   void tree.reload();
   void preferences.start(); // reads again when the first read was refused before the token
@@ -118,7 +121,7 @@ if (shell) bindStorage(shell, client);
 // dialog says it cannot name the collection, sending nothing, until a host answers it.
 if (shell) {
   const lookup = clientDestinationLookup(client);
-  mountImports(shell, { labels, client, navigation, newMenu, lookup });
+  imports = mountImports(shell, { labels, client, navigation, newMenu, lookup });
 }
 if (shell) {
   const settings = { labels, client, theme, distribution: filesquid };

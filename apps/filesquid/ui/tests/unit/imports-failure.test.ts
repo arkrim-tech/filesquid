@@ -61,10 +61,17 @@ describe("a refused step (API-S-036, API-S-037)", () => {
     expect(importFailure(refusal(500, "internal"), "plan", labels, true)).toBe(labels.importFailed);
   });
 
-  it("words an authorisation denial by its reason", () => {
-    const denied = refusal(403, "forbidden");
-    Object.assign(denied, { reason: "not_permitted" });
-    expect(importFailure(denied, "plan", labels, true)).toBe(labels.authNotPermitted);
+  it("words each authorisation denial by its reason", () => {
+    const words = {
+      missing_credentials: labels.authMissingCredentials,
+      invalid_credentials: labels.authInvalidCredentials,
+      not_permitted: labels.authNotPermitted,
+    } as const;
+    for (const [reason, text] of Object.entries(words)) {
+      const denied = refusal(403, "forbidden");
+      Object.assign(denied, { reason });
+      expect(importFailure(denied, "plan", labels, true)).toBe(text);
+    }
   });
 
   it("words a failure with no answer as offline or as a failure, never with its message", () => {

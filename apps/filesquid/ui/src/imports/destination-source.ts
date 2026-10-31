@@ -50,7 +50,10 @@ export function clientDestinationLookup(client: DestinationClient): DestinationL
   return async (node) => {
     const path = `${DESTINATION_ROUTE}?node=${encodeURIComponent(node)}`;
     try {
-      return parseResolvedDestination(await client.request<unknown>(path));
+      const found = parseResolvedDestination(await client.request<unknown>(path));
+      if (found === undefined)
+        console.warn("FileSquid destination answer lacks a library or collection ID");
+      return found;
     } catch (error) {
       console.warn("FileSquid could not name the destination collection on this host", error);
       return undefined;

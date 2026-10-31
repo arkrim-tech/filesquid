@@ -10,6 +10,7 @@ import {
   parseImportAnswer,
   parseJobControlAnswer,
   parseJobItemPage,
+  parseJobView,
   parseJobPage,
   parsePlanItemPage,
 } from "../../src/imports/contract";
@@ -311,6 +312,71 @@ describe("clientDestinationLookup (API-S-021, API-S-036)", () => {
     expect(warn).toHaveBeenCalledTimes(1);
     expect(parseResolvedDestination({ library_id: LIBRARY_ID })).toBeUndefined();
     expect(parseResolvedDestination(null)).toBeUndefined();
+    warn.mockRestore();
+  });
+});
+
+describe("stricter contract checks (API-S-036, API-S-037)", () => {
+  it("rejects an import answer whose outcome does not match what it says", () => {
+    expect(() =>
+      parseImportAnswer({ outcome: outcome("committed"), import: "started", job_id: "job-1" }),
+    ).toThrow(TypeError);
+    expect(() => parseImportAnswer({ outcome: outcome("pending"), import: "cancelled" })).toThrow(
+      TypeError,
+    );
+    expect(() =>
+      parseImportAnswer({
+        outcome: { kind: "pending", error: null },
+        import: "started",
+        job_id: "j",
+      }),
+    ).toThrow(TypeError);
+  });
+
+  it("rejects an explicit null or a malformed value where a field may only be absent", () => {
+    expect(() =>
+      parseImportAnswer({
+        outcome: outcome("pending"),
+        import: "planned",
+        plan_id: "plan-1",
+        plan: { ...PLAN, source_volume: null },
+      }),
+    ).toThrow(TypeError);
+    expect(() => parseJobView({ ...jobView(), error_code: null })).toThrow(TypeError);
+    expect(() => parseJobView({ ...jobView(), control: "stop" })).toThrow(TypeError);
+    expect(() => parseJobView({ ...jobView(), total: -1 })).toThrow(TypeError);
+    expect(() => parseJobView({ ...jobView(), destination: { folder: "x" } })).toThrow(TypeError);
+  });
+
+  it("rejects a discard answer that is not the discard of that plan", async () => {
+    const wrong = new FakeClient({
+      "DELETE /api/v1/imports/plan-1": { plan_id: "other", discarded: true },
+    });
+    await expect(new ClientImportSource(wrong).discard("plan-1")).rejects.toThrow(TypeError);
+    const no = new FakeClient({
+      "DELETE /api/v1/imports/plan-1": { plan_id: "plan-1", discarded: false },
+    });
+    await expect(new ClientImportSource(no).discard("plan-1")).rejects.toThrow(TypeError);
+  });
+
+  it("ignores a job.update of another kind of job", () => {
+    const client = new FakeClient({});
+    const source = new ClientJobSource(client);
+    const heard: unknown[] = [];
+    source.subscribe((change) => heard.push(change));
+    client.emit({ topic: "job.update", data: jobView({ kind: "library.rebuild" }) });
+    expect(heard).toEqual([]);
+    client.emit({ topic: "job.update", data: jobView() });
+    expect(heard).toHaveLength(1);
+  });
+
+  it("logs a successful destination answer that lacks an ID", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const client = new FakeClient({
+      "GET /api/v1/navigation/destination?node=c1": { library_id: LIBRARY_ID },
+    });
+    expect(await clientDestinationLookup(client)("c1")).toBeUndefined();
+    expect(warn).toHaveBeenCalledTimes(1);
     warn.mockRestore();
   });
 });

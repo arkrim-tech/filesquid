@@ -98,7 +98,26 @@ describe("a job's files added up (API-S-037)", () => {
   });
 });
 
+describe("a failure code belongs to the first failed file", () => {
+  it("leaves the code absent when the first failed file has none, not a later file's", () => {
+    const sum = summariseItems([
+      item("a", "failed"),
+      item("b", "failed", { error_code: "source_missing" }),
+    ]);
+    expect(sum.failed).toBe(2);
+    expect(sum.failureCode).toBeUndefined();
+  });
+});
+
 describe("a job's phase (API-S-037, DE-1.8)", () => {
+  it("shows a pending job whose checkpoint ended as needing attention even when the files read show no failure", () => {
+    const quiet = summariseItems([item("a", "copied")]);
+    const ended = job({ state: "pending", done: 500, total: 500 });
+    expect(jobPhase(ended, quiet)).toBe("attention");
+    expect(allowedControls(ended, quiet)).toMatchObject({ retry: true, pause: false });
+    expect(jobPhase(job({ state: "pending", done: 0, total: 0 }), quiet)).toBe("waiting");
+  });
+
   const none = summariseItems([]);
 
   it("tells running, paused, finished and requested states apart", () => {

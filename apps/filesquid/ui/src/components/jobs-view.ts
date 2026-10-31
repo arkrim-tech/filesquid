@@ -106,8 +106,13 @@ function failedText(
   ctx: JobViewContext,
 ): string {
   const { labels } = ctx;
-  const n = String(entry.summary.failed || 1);
   const code = entry.summary.failureCode ?? entry.job.error_code;
+  // A job that failed as a whole, or whose failed files were not read, states no file count.
+  if (entry.summary.failed === 0) {
+    if (code === undefined) return formatLabel(labels.jobsDetailJobFailed, counts);
+    return formatLabel(labels.jobsDetailJobFailedCode, { ...counts, error_code: code });
+  }
+  const n = String(entry.summary.failed);
   if (code === undefined) return formatLabel(labels.jobsDetailFailedPlain, { ...counts, n });
   return formatLabel(labels.jobsDetailFailed, { ...counts, n, error_code: code });
 }
@@ -157,9 +162,12 @@ function progressBar(entry: JobEntry, labels: LabelTable): HTMLElement {
   const bar = node("div", "bar");
   bar.setAttribute("role", "progressbar");
   bar.setAttribute("aria-label", labels.jobsTitle);
-  bar.setAttribute("aria-valuemin", "0");
-  bar.setAttribute("aria-valuemax", String(total));
-  bar.setAttribute("aria-valuenow", String(job.done));
+  // Without a known total the bar is indeterminate: it states no range and no value.
+  if (total > 0) {
+    bar.setAttribute("aria-valuemin", "0");
+    bar.setAttribute("aria-valuemax", String(total));
+    bar.setAttribute("aria-valuenow", String(job.done));
+  }
   const fill = node("div", "fill");
   fill.style.inlineSize = `${percent.toFixed(2)}%`;
   bar.append(fill);

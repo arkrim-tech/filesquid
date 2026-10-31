@@ -74,6 +74,8 @@ const COLLECTION_OF: Readonly<Record<string, string>> = {
 
 /** What the fake saw and how to steer it. */
 export interface ImportApi {
+  /** The plan the fake answers a request with. */
+  readonly plan: ImportPlan;
   /** The import source behind the routes; its `requests` and `calls` record what was sent. */
   readonly imports: MemoryImportSource;
   /** The job source behind the routes; its `calls` record each control. */
@@ -115,7 +117,14 @@ const DESKTOP = {
 };
 
 /** An `ApiError` body as the API writes it. */
-const errorBody = (code: string) => ({ code, message: "refused", retryable: false });
+const RETRYABLE = new Set(["unavailable", "rate_limited"]);
+const errorBody = (code: string) => ({ code, message: "refused", retryable: RETRYABLE.has(code) });
+
+/** The plan ID a route names: the segment after `/imports/`, decoded. */
+function planIdOf(url: string): string {
+  const match = /\/imports\/([^/?]+)/.exec(url);
+  return decodeURIComponent(match?.[1] ?? "");
+}
 
 /** Answer a route from a function, turning an `ApiError` into its status and body. */
 async function answer(
@@ -173,12 +182,12 @@ async function serveImportRoutes(page: Page, api: ImportApi): Promise<void> {
     });
   });
   await page.route(/\/api\/v1\/imports\/[^/]+\/items/, (route) =>
-    answer(route, () => api.imports.planItems("plan-1")),
+    answer(route, () => api.imports.planItems(planIdOf(route.request().url()))),
   );
   await page.route(/\/api\/v1\/imports\/[^/]+\/start$/, (route) =>
     answer(route, async () => {
-      const jobId = await api.imports.start("plan-1");
-      const job = jobView({ id: jobId, state: "running", done: 0, total: PLAN.files_new });
+      const jobId = await api.imports.start(planIdOf(route.request().url()));
+      const job = jobView({ id: jobId, state: "running", done: 0, total: api.plan.files_new });
       api.emit(job);
       return {
         outcome: { operation_id: "op-1", kind: "pending", error: null },
@@ -190,8 +199,9 @@ async function serveImportRoutes(page: Page, api: ImportApi): Promise<void> {
   await page.route(/\/api\/v1\/imports\/[^/?]+$/, (route) =>
     route.request().method() === "DELETE"
       ? answer(route, async () => {
-          await api.imports.discard("plan-1");
-          return { plan_id: "plan-1", discarded: true };
+          const planId = planIdOf(route.request().url());
+          await api.imports.discard(planId);
+          return { plan_id: planId, discarded: true };
         })
       : route.fallback(),
   );
@@ -249,6 +259,7 @@ export async function serveImports(
   const jobs = new MemoryJobSource([...(options.jobs ?? [])], { ...(options.items ?? {}) });
   const imports = new MemoryImportSource({ plan: PLAN, items: ALL_PLAN_ITEMS, ...options.imports });
   const api: ImportApi = {
+    plan: options.imports?.plan ?? PLAN,
     imports,
     jobs,
     planBodies: [],
@@ -274,7 +285,12 @@ export async function serveImports(
   await page.route(/\/api\/v1\/host$/, (route) => route.fulfill({ json: DESKTOP }));
   await page.routeWebSocket(/\/api\/v1\/events$/, (socket) => void sockets.push(socket));
   await serveNavigation(page, TREE);
-  await serveDrive(page, ROWS, undefined, ["l1", "c1", "c2", "c3", "f1", "f2", "f3", "v1"]);
+  await serveDrive(
+    page,
+    ROWS,
+    undefined,
+    options.nodes ?? ["l1", "c1", "c2", "c3", "f1", "f2", "f3", "v1"],
+  );
   await page.route(/\/api\/v1\/navigation\/destination\?/, (route) => {
     const node = new URL(route.request().url()).searchParams.get("node") ?? "";
     api.lookups.push(node);
@@ -282,7 +298,8 @@ export async function serveImports(
     if (collection === undefined) {
       return route.fulfill({ status: 404, json: errorBody("not_found") });
     }
-    return route.fulfill({ json: { library_id: LIBRARY, collection_id: collection } });
+    const library = node === "c9" ? "lib-2" : LIBRARY;
+    return route.fulfill({ json: { library_id: library, collection_id: collection } });
   });
   await serveImportRoutes(page, api);
   await serveJobRoutes(page, api);

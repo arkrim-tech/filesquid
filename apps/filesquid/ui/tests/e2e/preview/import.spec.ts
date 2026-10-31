@@ -19,6 +19,7 @@ import {
   type Scheme,
 } from "../support/strict-dom";
 import { COLOURS, look } from "../support/fidelity";
+import { formatLabel } from "../../../src/theme/labels";
 import {
   MOCKUP_ITEMS,
   PLAN,
@@ -203,7 +204,7 @@ for (const scheme of SCHEMES) {
         label(labels, "importChooseDestinationFirst"),
       );
       await expect(box).not.toContainText(/\bImport\b/);
-      start.click({ force: true }).catch(() => undefined);
+      await start.click({ force: true });
       expect(api.imports.requests).toEqual([]);
       expect(api.planBodies).toEqual([]);
       expect(errors).toEqual([]);
@@ -267,8 +268,12 @@ for (const scheme of SCHEMES) {
       const box = dialog(page);
       await expect(box).toHaveClass(/review/);
       await expectBox(box, { x: 290, width: 860, height: 720 });
-      await expect(box.locator("h2")).toHaveText("Upload 214 files");
-      await expect(box.locator(".volume")).toHaveText("From the volume EOS_DIGITAL");
+      await expect(box.locator("h2")).toHaveText(
+        formatLabel(label(labels, "importReviewTitle"), { count: "214" }),
+      );
+      await expect(box.locator(".volume")).toHaveText(
+        formatLabel(label(labels, "importReviewVolume"), { volume: "EOS_DIGITAL" }),
+      );
       const cards = box.locator(".card");
       await expect(cards).toHaveCount(4);
       const xs = [28, 232, 436, 640];
@@ -310,21 +315,26 @@ for (const scheme of SCHEMES) {
         colour: rgbOf(c.primary),
       });
       await expect(box.locator(".note")).toHaveText(
-        "Names taken in Site photos get the first free number, for example IMG_4102-1.JPG.",
+        formatLabel(label(labels, "importNumberedNote"), {
+          folder: "Site photos",
+          example: "IMG_4102-1.JPG",
+        }),
       );
       await expectWithin(box, box.locator(".space"), { x: 520 });
       await expect(box.locator(".space .field-label")).toHaveText(label(labels, "importSpace"));
       await expect(box.locator(".space .free")).toHaveText(
-        "After upload: 409 GB free on this computer",
+        formatLabel(label(labels, "importAfterUpload"), { free: "409 GB" }),
       );
-      await expect(box.locator(".space .staging")).toHaveText("Staging uses at most 10 GB.");
+      await expect(box.locator(".space .staging")).toHaveText(
+        formatLabel(label(labels, "importStagingLimit"), { limit: "10 GB" }),
+      );
       const integrity = box.locator(".integrity");
       await expectWithin(box, integrity, { x: 28, y: 576, width: 804, height: 64 });
       expect(await look(integrity)).toMatchObject({ background: rgbOf(c.raised), radius: "8px" });
       await expect(integrity.locator(".title")).toHaveText(label(labels, "importIntegrityTitle"));
       await expectWithin(box, box.locator('button[data-action="cancel"]'), { y: 672, height: 36 });
       const upload = box.locator('button[data-action="start"]');
-      await expect(upload).toHaveText("Upload 196 files");
+      await expect(upload).toHaveText(formatLabel(label(labels, "importStart"), { count: "196" }));
       await expectWithin(box, upload, { y: 672, height: 36 });
       expect(await look(upload)).toMatchObject({
         background: rgbOf(c.primary),
@@ -472,7 +482,12 @@ for (const scheme of SCHEMES) {
       });
       expect((await look(title)).family).toMatch(/^Georgia/);
       const run = box.locator('section[data-job-id="run"]');
-      await expect(run.locator(".job-title")).toHaveText("Upload into Collection › Site photos");
+      await expect(run.locator(".job-title")).toHaveText(
+        formatLabel(label(labels, "jobsUploadInto"), {
+          collection: label(labels, "collection"),
+          folder: "Site photos",
+        }),
+      );
       expect(await look(run.locator(".job-title"))).toMatchObject({ size: "14px", weight: "600" });
       const chip = run.locator(".chip");
       await expect(chip).toHaveText("running");
@@ -484,7 +499,9 @@ for (const scheme of SCHEMES) {
         weight: "500",
         radius: "999px",
       });
-      await expect(run.locator(".detail")).toHaveText("82 of 196 files · started 11:02");
+      await expect(run.locator(".detail")).toHaveText(
+        formatLabel(label(labels, "jobsDetail"), { done: "82", total: "196", time: "11:02" }),
+      );
       const bar = run.locator(":scope > .bar");
       await expectBox(bar, { width: 400, height: 4 });
       expect(await look(bar)).toMatchObject({ background: rgbOf(c.outline), radius: "2px" });
@@ -496,7 +513,9 @@ for (const scheme of SCHEMES) {
         label(labels, "jobsCancel"),
       );
       const eyebrow = run.locator(".eyebrow");
-      await expect(eyebrow).toHaveText("FILES · 4 OF 196 SHOWN");
+      await expect(eyebrow).toHaveText(
+        formatLabel(label(labels, "jobsFilesShown"), { shown: "4", total: "196" }),
+      );
       expect(await look(eyebrow)).toMatchObject({
         size: "11px",
         transform: "uppercase",
@@ -545,7 +564,9 @@ for (const scheme of SCHEMES) {
         "120 of 300 files · 3 failed: source_changed",
       );
       const cancelled = box.locator('section[data-job-id="cancel"]');
-      await expect(cancelled.locator(".detail")).toHaveText("3 of 12 files · committed files stay");
+      await expect(cancelled.locator(".detail")).toHaveText(
+        formatLabel(label(labels, "jobsDetailCancelled"), { done: "3", total: "12" }),
+      );
       const note = box.locator(".panel-note");
       await expect(note).toHaveText(label(labels, "jobsNote"));
       await expectBox(note, { width: 400 });
@@ -632,7 +653,9 @@ for (const scheme of SCHEMES) {
       await dialog(page).locator('button[data-action="cancel"]').click();
       await page.locator("fs-jobs-panel .jobs-button").click();
       const jobCard = panel(page).locator('section[data-job-id="wait"] .refusal');
-      await expect(jobCard.locator(".title")).toHaveText("Not uploaded: photo.jpg");
+      await expect(jobCard.locator(".title")).toHaveText(
+        formatLabel(label(labels, "fileUploadFailed"), { name: "photo.jpg" }),
+      );
       await expect(jobCard.locator(".reason")).toHaveText(
         "Every name from photo-1.jpg to photo-9999.jpg is taken in this folder. Nothing was changed. Rename or remove one, then try again.",
       );
@@ -675,7 +698,9 @@ test("the plan of a smaller upload shows its own counts and disables Upload when
   });
   await openFromNewMenu(page);
   await dialog(page).locator('button[data-action="start"]').click();
-  await expect(dialog(page).locator("h2")).toHaveText("Upload 3 files");
+  await expect(dialog(page).locator("h2")).toHaveText(
+    formatLabel(label(labels, "importReviewTitle"), { count: "3" }),
+  );
   await expect(dialog(page).locator('button[data-action="start"]')).toBeDisabled();
   await expect(dialog(page).locator(".foot .reason")).toHaveText(label(labels, "importNothingNew"));
   expect(PLAN.files_found).toBe(214);

@@ -61,6 +61,11 @@ function wantsItems(job: JobView): boolean {
   return job.state !== "completed" && job.state !== "cancelled";
 }
 
+/** True when `a` was updated after `b`. */
+function isNewer(a: JobView, b: JobView): boolean {
+  return Date.parse(a.updated) > Date.parse(b.updated);
+}
+
 /** The state of the upload jobs. */
 export class JobsStore extends EventTarget {
   private readonly byId = new Map<string, JobEntry>();
@@ -71,6 +76,8 @@ export class JobsStore extends EventTarget {
   private unfollow?: () => void;
   private generation = 0;
   private sorted: readonly JobEntry[] = [];
+  private newestRead = 0;
+  private readonly forced = new Set<string>();
 
   /** @param options The source and the read interval. */
   constructor(private readonly options: JobsStoreOptions) {
@@ -117,23 +124,43 @@ export class JobsStore extends EventTarget {
     this.timers.clear();
     this.reading.clear();
     this.again.clear();
+    this.forced.clear();
   }
 
   /**
-   * Read the list of jobs again. Network I/O.
+   * Read the list of jobs again. Network I/O. A list read that a later read overtook is
+   * dropped, and a job that an event or control updated after the list was cut keeps its newer
+   * view, so a slow answer never rolls the panel back.
    *
    * @returns Resolves once the entries are replaced.
    * @throws ApiError or a network error when the list cannot be read.
    */
   async refresh(): Promise<void> {
     const generation = this.generation;
+    const ticket = (this.newestRead += 1);
     const page = await this.options.source.list();
-    if (generation !== this.generation) return;
+    if (generation !== this.generation || ticket !== this.newestRead) return;
     const kept = new Map(this.byId);
     this.byId.clear();
-    for (const job of page.jobs) this.byId.set(job.id, this.entryFor(job, kept.get(job.id)));
+    for (const job of page.jobs) {
+      const known = kept.get(job.id);
+      const newer = known !== undefined && isNewer(known.job, job);
+      this.byId.set(job.id, this.entryFor(newer ? known.job : job, known));
+    }
     this.announce();
     for (const { job } of this.byId.values()) if (wantsItems(job)) this.scheduleItems(job.id);
+  }
+
+  /**
+   * Follow the events again with a new channel and read the jobs: for example after a token was
+   * entered, when the first read was refused. Network I/O.
+   *
+   * @returns Resolves once the list is read.
+   * @throws ApiError or a network error when the list cannot be read.
+   */
+  async reconnect(): Promise<void> {
+    this.stop();
+    await this.start();
   }
 
   /**
@@ -197,9 +224,22 @@ export class JobsStore extends EventTarget {
 
   /** Replace or add one job, announce, and read its files when they can change. */
   private apply(job: JobView): void {
-    this.byId.set(job.id, this.entryFor(job, this.byId.get(job.id)));
+    const known = this.byId.get(job.id);
+    // An older view of a job (a delayed event) never replaces a newer one.
+    const current = known !== undefined && isNewer(known.job, job) ? known.job : job;
+    this.byId.set(job.id, this.entryFor(current, known));
     this.announce();
-    if (wantsItems(job)) this.scheduleItems(job.id);
+    if (wantsItems(current)) this.scheduleItems(job.id);
+    else this.forgetSchedule(job.id);
+  }
+
+  /** Drop a job's pending timer and queued rereads: its files can no longer change. */
+  private forgetSchedule(id: string): void {
+    const timer = this.timers.get(id);
+    if (timer !== undefined) clearTimeout(timer);
+    this.timers.delete(id);
+    this.again.delete(id);
+    this.forced.delete(id);
   }
 
   /** Recompute the sorted list and tell the followers. */
@@ -212,6 +252,12 @@ export class JobsStore extends EventTarget {
 
   /** Read a job's files now, or after the interval since the last read, once. */
   private scheduleItems(id: string, force = false): void {
+    if (force) {
+      this.forced.add(id);
+      const waiting = this.timers.get(id);
+      if (waiting !== undefined) clearTimeout(waiting);
+      this.timers.delete(id);
+    }
     if (this.reading.has(id)) {
       this.again.add(id);
       return;
@@ -219,7 +265,8 @@ export class JobsStore extends EventTarget {
     if (this.timers.has(id)) return;
     const interval = this.options.itemRefreshMs ?? ITEM_REFRESH_MS;
     const last = this.lastRead.get(id);
-    const wait = force || last === undefined ? 0 : Math.max(0, interval - (Date.now() - last));
+    const now = this.forced.delete(id) || last === undefined;
+    const wait = now ? 0 : Math.max(0, interval - (Date.now() - (last ?? 0)));
     if (wait === 0) {
       void this.readItems(id);
       return;
@@ -268,6 +315,6 @@ export class JobsStore extends EventTarget {
     this.reading.delete(id);
     if (!this.again.delete(id)) return;
     const entry = this.byId.get(id);
-    if (entry && wantsItems(entry.job)) this.scheduleItems(id);
+    if (entry && wantsItems(entry.job)) this.scheduleItems(id, this.forced.has(id));
   }
 }

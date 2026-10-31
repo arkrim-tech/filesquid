@@ -138,12 +138,17 @@ export class MemoryJobSource implements JobSource {
 
   /** Put one failed file back to queued. */
   async retryItem(job: string, item: string): Promise<JobView> {
+    this.guardRetry(job);
+    if (!(this.itemsByJob[job] ?? []).some((file) => file.item_id === item)) {
+      throw new ApiError(404, `/api/v1/jobs/${job}/items/${item}`, { code: "not_found" });
+    }
     this.requeue(job, (file) => file.item_id === item);
     return this.change(`retry`, job, (view) => view, item);
   }
 
   /** Put every failed file back to queued. */
   async retryFailed(job: string): Promise<JobView> {
+    this.guardRetry(job);
     this.requeue(job, () => true);
     return this.change("retry-failed", job, (view) => view);
   }
@@ -196,10 +201,16 @@ export class MemoryJobSource implements JobSource {
     return next;
   }
 
-  /** Put the failed files of a job that match back to queued; a paused job refuses (409). */
-  private requeue(job: string, pick: (file: JobItem) => boolean): void {
+  /** Refuse a retry as the API does, before anything changes: 404, a finished or paused job 409. */
+  private guardRetry(job: string): void {
     const current = this.find(job);
-    if (current.paused) throw new ApiError(409, `/api/v1/jobs/${job}`, { code: "conflict" });
+    if (ended(current) || current.paused) {
+      throw new ApiError(409, `/api/v1/jobs/${job}`, { code: "conflict" });
+    }
+  }
+
+  /** Put the failed files of a job that match back to queued. */
+  private requeue(job: string, pick: (file: JobItem) => boolean): void {
     const files = this.itemsByJob[job] ?? [];
     this.itemsByJob[job] = files.map((file) => {
       if (file.state !== "failed" || !pick(file)) return file;

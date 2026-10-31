@@ -678,6 +678,8 @@ export const REQUIRED_LABEL_KEYS = [
   "jobsUnavailable",
   "jobsRefused",
   "jobsFooter",
+  "jobsDetailJobFailed",
+  "jobsDetailJobFailedCode",
 ] as const;
 
 /** One required label key. */

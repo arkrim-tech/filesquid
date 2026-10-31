@@ -96,8 +96,9 @@ export type Answer = unknown | ((seen: SeenRequest) => unknown);
 /** A fake API client: records requests, answers from `routes`, and lets a test push events. */
 export class FakeClient {
   readonly seen: SeenRequest[] = [];
-  private listeners = new Set<(event: ApiEvent) => void>();
-  private openers = new Set<() => void>();
+  /** One entry per `subscribe` call, as the real client keeps them: the same callback twice is two. */
+  private readonly entries: Array<{ listener: (event: ApiEvent) => void; onOpen?: () => void }> =
+    [];
   subscriptions = 0;
 
   /** @param routes Answers by `METHOD path` (the query string included). */
@@ -119,29 +120,29 @@ export class FakeClient {
     return answer as T;
   };
 
-  /** Subscribe like `FileSquidClient.subscribe`. */
+  /** Subscribe like `FileSquidClient.subscribe`; each call is its own subscription. */
   subscribe = (listener: (event: ApiEvent) => void, onOpen?: () => void): (() => void) => {
     this.subscriptions += 1;
-    this.listeners.add(listener);
-    if (onOpen) this.openers.add(onOpen);
+    const entry = { listener, onOpen };
+    this.entries.push(entry);
     return () => {
-      this.listeners.delete(listener);
-      if (onOpen) this.openers.delete(onOpen);
+      const index = this.entries.indexOf(entry);
+      if (index >= 0) this.entries.splice(index, 1);
     };
   };
 
-  /** Push an event to every subscriber. */
+  /** Push an event to every subscription. */
   emit(event: ApiEvent): void {
-    for (const listener of [...this.listeners]) listener(event);
+    for (const entry of [...this.entries]) entry.listener(event);
   }
 
-  /** Tell every subscriber the channel opened. */
+  /** Tell every subscription the channel opened. */
   open(): void {
-    for (const opener of [...this.openers]) opener();
+    for (const entry of [...this.entries]) entry.onOpen?.();
   }
 
-  /** How many listeners are subscribed now. */
+  /** How many subscriptions are open now. */
   get listening(): number {
-    return this.listeners.size;
+    return this.entries.length;
   }
 }

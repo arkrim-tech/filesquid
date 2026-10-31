@@ -61,14 +61,18 @@ const ITEM_STATES = [
   "failed",
 ] as const satisfies readonly JobItemState[];
 
-/** The optional text field of a record: its value, or undefined when absent or null. */
+/**
+ * The optional text field of a record: its value, or undefined when it is absent. The API leaves
+ * an absent optional field out (never `null`), so an explicit `null` or another type breaks the
+ * contract.
+ */
 function optionalText(
   record: Record<string, unknown>,
   key: string,
   what: string,
 ): string | undefined {
   const value = record[key];
-  if (value === undefined || value === null) return undefined;
+  if (value === undefined) return undefined;
   if (typeof value !== "string") throw breaks(what);
   return value;
 }
@@ -118,6 +122,12 @@ function parsePlan(value: unknown): ImportPlan {
  */
 export function parseImportAnswer(value: unknown): PlanAnswer {
   if (!isRecord(value) || !isRecord(value.outcome)) throw breaks("import");
+  const kind = value.outcome.kind;
+  const named = isText(value.outcome.operation_id) && value.outcome.error === null;
+  // A planned or started import is durable and not complete (`pending`); a closed dialog
+  // changed nothing (`committed`).
+  const expected = value.import === "cancelled" ? "committed" : "pending";
+  if (!named || kind !== expected) throw breaks("import");
   if (value.import === "cancelled") return { kind: "cancelled" };
   if (value.import === "started" && isText(value.job_id)) {
     return { kind: "started", jobId: value.job_id };
@@ -197,20 +207,28 @@ export function parseJobItemPage(value: unknown): JobItemPage {
   };
 }
 
-/** The job's optional fields that are present and well formed. */
+/** The job's optional fields, each absent or well formed: a malformed one breaks the contract. */
 function jobOptionals(value: Record<string, unknown>): Partial<JobView> {
   const out: { -readonly [K in keyof JobView]?: JobView[K] } = {};
-  if (isRecord(value.destination) && isText(value.destination.collection_id)) {
-    const folder = optionalText(value.destination, "folder", "job");
+  if (value.destination !== undefined) {
+    const destination = value.destination;
+    if (!isRecord(destination) || !isText(destination.collection_id)) throw breaks("job");
+    const folder = optionalText(destination, "folder", "job");
     out.destination = {
-      collection_id: value.destination.collection_id,
-      ...(folder ? { folder } : {}),
+      collection_id: destination.collection_id,
+      ...(folder === undefined ? {} : { folder }),
     };
   }
-  if (value.control === "pause" || value.control === "cancel") out.control = value.control;
-  if (isCount(value.total)) out.total = value.total;
+  if (value.control !== undefined) {
+    if (value.control !== "pause" && value.control !== "cancel") throw breaks("job");
+    out.control = value.control;
+  }
+  if (value.total !== undefined) {
+    if (!isCount(value.total)) throw breaks("job");
+    out.total = value.total;
+  }
   const code = optionalText(value, "error_code", "job");
-  if (code) out.error_code = code;
+  if (code !== undefined) out.error_code = code;
   return out;
 }
 

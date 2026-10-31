@@ -362,7 +362,10 @@ export function fillPlanItems(
   const { labels, plan, locale } = ctx;
   step.list.replaceChildren(...items.map((item) => planRow(item, labels, locale)));
   step.list.removeAttribute("aria-busy");
-  const example = exampleName(items);
+  // The plan counts numbered names across every file; the note needs one name to show, from the
+  // files read, and is still shown when the numbered file was beyond the pages read.
+  const fallback = plan.names_numbered > 0 && items[0] ? numberedName(items[0].name, 1) : undefined;
+  const example = exampleName(items) ?? fallback;
   const folder = ctx.trail.at(-1) ?? "";
   step.note.hidden = example === undefined;
   if (example !== undefined) {
