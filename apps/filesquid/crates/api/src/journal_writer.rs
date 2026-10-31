@@ -192,7 +192,9 @@ fn drain_remaining(
     });
 }
 
-/// Store a batch with bounded retries; publish and count written entries.
+/// Store a batch with bounded retries; publish and count the entries stored now. An entry
+/// replayed under an ID the store already holds (DE-S-011) is neither announced nor counted
+/// again.
 fn write_batch(
     store: &dyn JournalStore,
     batch: &mut Vec<JournalEntry>,
@@ -204,16 +206,16 @@ fn write_batch(
         return;
     }
     let n = batch.len() as u64;
-    let mut result = store.append(batch);
+    let mut result = store.append_new(batch);
     for attempt in 1..MAX_ATTEMPTS {
         if result.is_ok() {
             break;
         }
         std::thread::sleep(Duration::from_millis(50 * u64::from(attempt)));
-        result = store.append(batch);
+        result = store.append_new(batch);
     }
     match result {
-        Ok(ids) => announce(batch, &ids, store.host(), events, metrics),
+        Ok(stored) => announce_new(batch, &stored, store.host(), events, metrics),
         Err(err) => {
             metrics.journal_write_failed(n);
             report_rejected(&mut std::io::stdout().lock(), &err.to_string(), batch);
@@ -250,6 +252,23 @@ fn announce(
             events.publish(ApiEvent::new(topic::JOURNAL_ENTRY, data));
         }
     }
+}
+
+/// Announce the entries of `entries` that `stored` reports stored now (see [`announce`]).
+fn announce_new(
+    entries: &mut [JournalEntry],
+    stored: &[(i64, bool)],
+    host: &str,
+    events: &EventBus,
+    metrics: &Metrics,
+) {
+    let (mut fresh, ids): (Vec<JournalEntry>, Vec<i64>) = entries
+        .iter()
+        .zip(stored)
+        .filter(|(_, (_, new))| *new)
+        .map(|(entry, (id, _))| (entry.clone(), *id))
+        .unzip();
+    announce(&mut fresh, &ids, host, events, metrics);
 }
 
 /// A [`JournalStore`] that announces what it stores: entries appended to
@@ -387,5 +406,44 @@ mod tests {
             assert_eq!(line["journal_write_failed"], true);
             assert_eq!(line["operation"], entry.operation.as_str());
         }
+    }
+
+    /// DE-S-011: an entry replayed under an ID the store already holds (a commit's
+    /// `ocfl.commit` journaled again after a crash) is stored once, and announced and counted
+    /// once, not once per replay.
+    #[test]
+    fn a_replayed_entry_the_store_already_holds_is_announced_once() {
+        let store = Arc::new(crate::journal::MemoryJournal::new("desktop"));
+        let events = EventBus::new();
+        let mut received = events.subscribe();
+        let metrics = Arc::new(Metrics::default());
+        let writer = JournalWriter::start(
+            store.clone(),
+            WriterConfig { capacity: 8 },
+            events,
+            metrics.clone(),
+        );
+        let id = store.allocate_ids(1).expect("an id")[0];
+        let mut entry = JournalEntry::new("ocfl.commit", Outcome::Succeeded);
+        entry.id = Some(id);
+        for _ in 0..3 {
+            writer.sender().send(entry.clone());
+            writer.sender().flush();
+        }
+        writer.shutdown();
+        let held = store
+            .query(&crate::journal::JournalQuery::default())
+            .expect("query");
+        assert_eq!(held.entries.len(), 1, "{:?}", held.entries);
+        assert_eq!(
+            metrics.snapshot()["filesquid_journal_entries_total"],
+            1,
+            "counted once"
+        );
+        let mut announced = 0;
+        while let Ok(event) = received.try_recv() {
+            announced += usize::from(event.topic == crate::events::topic::JOURNAL_ENTRY);
+        }
+        assert_eq!(announced, 1, "announced once");
     }
 }
