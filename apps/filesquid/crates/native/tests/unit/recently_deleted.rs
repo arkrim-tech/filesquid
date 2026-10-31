@@ -175,3 +175,226 @@ fn a_restore_whose_home_is_gone_creates_an_untitled_collection_in_one_version() 
         .folder_exists(&made.collection_id, "2026")
         .expect("read"));
 }
+
+// ---- Expiry and the tombstone (ADR 041 Decision 11) ----
+
+use filesquid_api::canonical::tombstone::{
+    is_tombstone, TombstoneRecord, FORMER_PROVENANCE, TOMBSTONE_RECORD,
+};
+use filesquid_api::library::{
+    ExpiryMode, InstallationSettings, MemorySettings, ObjectPurger, RetentionSettings,
+    EXPIRY_OPERATION,
+};
+use filesquid_native::catalog::PurgeStep;
+use filesquid_ocfl::change::{ChangeModel, StagingArea, VersionMeta};
+use filesquid_ocfl::read::StorageRoot;
+
+/// Drive a future that never waits.
+fn ready<F: std::future::Future>(future: F) -> F::Output {
+    complete_immediately(future).expect("ready")
+}
+
+/// Write the file object of `file` in `library`'s folder: two versions of an original, a
+/// metadata record and a PROV-O record, as an import would leave it.
+fn write_file_object(fx: &Fixture, library: &LibraryId, file: &FileId) {
+    let location = fx.locations.register(&fx.folder_of(library)).expect("register");
+    let root = fx.locations.root_of(&location).expect("root");
+    let staging = FsBackend::new(fx.root.join("obj-staging"), fx.root.join("obj-parts"))
+        .expect("staging");
+    let area = StagingArea::new(&staging, "object").expect("area");
+    let object_root = format!("files/{}", file.as_str());
+    let model = ChangeModel::new(
+        root.backend.as_ref(),
+        root.reservations.as_ref(),
+        "fixture",
+        object_root.as_str(),
+        format!("urn:uuid:{}", file.as_str()),
+        area,
+    );
+    let original = format!("original/{}.txt", file.as_str());
+    for (n, text) in [(1, "first draft"), (2, "second draft")] {
+        ready(model.stage_bytes(&original, text.as_bytes())).expect("stage");
+        ready(model.stage_bytes(
+            &format!("original/{}.metadata.md", file.as_str()),
+            format!("record {n}").as_bytes(),
+        ))
+        .expect("stage");
+        ready(model.stage_bytes(&format!("provenance/v{n}.jsonld"), b"{\"@context\":{}}"))
+            .expect("stage");
+        let meta = VersionMeta::new(format!("2026-10-0{n}T00:00:00Z")).with_message("import");
+        ready(model.commit(meta)).expect("commit");
+    }
+}
+
+/// A library with one registered file that has an object, deleted at the fixture's time.
+fn deleted_file(name: &str) -> (Fixture, LibraryId, FileId) {
+    let fx = Fixture::new(name);
+    let lib = fx.create_library("Family archive");
+    let docs = fx.create_collection(&lib, "Documents");
+    let file = new_file();
+    write_file_object(&fx, &lib, &file);
+    register(&fx, &lib, &docs, &file, "notes.txt");
+    fx.run(
+        &fx.revision(&lib),
+        LibraryCommand::DeleteFiles {
+            library_id: lib.clone(),
+            file_ids: vec![file.clone()],
+        },
+    );
+    (fx, lib, file)
+}
+
+/// The service of `fx` 31 days from now under `expiry`.
+fn later_service(fx: &Fixture, expiry: ExpiryMode) -> filesquid_api::library::LibraryService {
+    let settings = Arc::new(MemorySettings::new());
+    let stored = InstallationSettings {
+        default_retention_days: 30,
+        expiry,
+    };
+    settings
+        .store(
+            &stored,
+            filesquid_api::journal::JournalEntry::new("x", filesquid_api::journal::Outcome::Succeeded),
+        )
+        .expect("store");
+    let later = filesquid_api::journal::now_ms() + 31 * DAY_MS;
+    fx.service
+        .clone()
+        .with_clock(Arc::new(move || later))
+        .with_settings(settings)
+}
+
+/// The folder's backend.
+fn folder_backend(fx: &Fixture, lib: &LibraryId) -> FsBackend {
+    FsBackend::new(fx.folder_of(lib), fx.root.join("check-parts")).expect("fs")
+}
+
+/// The logical paths of the tombstone object of `file` at its head.
+fn tombstone_paths(fx: &Fixture, lib: &LibraryId, file: &FileId) -> Vec<String> {
+    let backend = folder_backend(fx, lib);
+    let root = ready(StorageRoot::open(&backend)).expect("root");
+    let object = ready(root.open_object(&format!("files/{}", file.as_str()))).expect("object");
+    assert_eq!(object.head().to_string(), "v1", "its own first version is the tombstone");
+    let state = object.state(object.head()).expect("state");
+    state.paths().map(str::to_string).collect()
+}
+
+/// Assert `file`'s object is a complete tombstone keeping both former versions.
+fn assert_tombstone(fx: &Fixture, lib: &LibraryId, file: &FileId) {
+    let backend = folder_backend(fx, lib);
+    let object_root = format!("files/{}", file.as_str());
+    assert!(complete_immediately(is_tombstone(&backend, &object_root)).expect("ready"));
+    let paths = tombstone_paths(fx, lib, file);
+    assert!(paths.iter().all(|p| !p.starts_with("original/")), "no bytes or record: {paths:?}");
+    assert!(paths.contains(&TOMBSTONE_RECORD.to_string()));
+    assert!(paths.contains(&format!("{FORMER_PROVENANCE}/v2.jsonld")));
+    let record_path = fx
+        .folder_of(lib)
+        .join(&object_root)
+        .join("v1/content")
+        .join(TOMBSTONE_RECORD);
+    let record: TombstoneRecord =
+        serde_json::from_slice(&std::fs::read(record_path).expect("record")).expect("json");
+    assert_eq!(record.versions.len(), 2, "every former version's facts");
+    let original = record.versions[1]
+        .files
+        .iter()
+        .find(|f| f.path.ends_with(".txt"))
+        .expect("the original's facts");
+    assert_eq!(original.size, Some(12), "its size, without its bytes");
+    let kinds: Vec<&str> = record.events.iter().map(|e| e.kind.as_str()).collect();
+    assert_eq!(kinds, ["purge", "tombstone"]);
+    assert!(record.events.iter().all(|e| e.operation_id == record.purge.operation_id));
+    assert!(record.events[0].activity.starts_with("urn:filesquid:activity:"));
+    assert!(!record.events[0].activity.ends_with(":unknown"), "the purge's snapshot version");
+    let bytes = std::fs::read_dir(fx.folder_of(lib).join(&object_root).join("v1/content/tombstone"))
+        .expect("content")
+        .count();
+    assert!(bytes > 0);
+}
+
+#[test]
+fn keep_version_history_rewrites_the_object_as_a_tombstone_and_journals_the_purge() {
+    let (fx, lib, file) = deleted_file("f215-tombstone");
+    let report = later_service(&fx, ExpiryMode::KeepVersionHistory)
+        .expire_library("system", &lib, fx.catalog.as_ref())
+        .expect("expire");
+    assert_eq!((report.expired, report.objects_done, report.objects_failed), (1, 1, 0));
+    assert!(fx.catalog.file(&file).expect("read").is_none(), "gone from the index");
+    assert!(snapshot_of(&fx, &lib).files.iter().all(|f| f.file.id() != &file));
+    assert_tombstone(&fx, &lib, &file);
+    assert!(fx.catalog.pending_purges(&lib, 10).expect("read").is_empty());
+    let entries = catalog_fixture::all_entries(fx.journal.as_ref());
+    let purge = entries
+        .iter()
+        .find(|e| e.operation == EXPIRY_OPERATION)
+        .expect("the purge is journaled");
+    let tombstone = entries
+        .iter()
+        .find(|e| e.operation == "file.tombstone")
+        .expect("the tombstone is journaled");
+    assert_eq!(purge.operation_id, tombstone.operation_id, "one purge operation ID");
+    for entry in &entries {
+        let text = serde_json::to_string(entry).expect("json");
+        assert!(!text.contains("notes.txt") && !text.contains("Documents"), "{text}");
+    }
+    let fx = rebuilt(fx, &lib);
+    assert!(fx.catalog.file(&file).expect("read").is_none(), "recovered as history, not a file");
+}
+
+#[test]
+fn delete_all_version_history_deletes_the_object() {
+    let (fx, lib, file) = deleted_file("f215-delete-all");
+    later_service(&fx, ExpiryMode::DeleteAllVersionHistory)
+        .expire_library("system", &lib, fx.catalog.as_ref())
+        .expect("expire");
+    let object = fx.folder_of(&lib).join("files").join(file.as_str());
+    assert!(!object.exists(), "the object is deleted for good");
+    assert!(fx.catalog.file(&file).expect("read").is_none());
+}
+
+#[test]
+fn a_crash_at_each_step_of_the_tombstone_write_is_completed_by_the_next_run() {
+    for (n, step) in [
+        PurgeStep::PayloadSaved,
+        PurgeStep::OriginalDeleted,
+        PurgeStep::TombstoneCreated,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let (fx, lib, file) = deleted_file(&format!("f215-crash-{n}"));
+        let service = later_service(&fx, ExpiryMode::KeepVersionHistory);
+        fx.catalog.fail_purges_at(Some(step));
+        let first = service
+            .expire_library("system", &lib, fx.catalog.as_ref())
+            .expect("expire");
+        assert_eq!(first.objects_failed, 1, "{step:?}");
+        assert_eq!(fx.catalog.pending_purges(&lib, 10).expect("read").len(), 1, "kept: {step:?}");
+        fx.catalog.fail_purges_at(None);
+        let second = service
+            .expire_library("system", &lib, fx.catalog.as_ref())
+            .expect("expire");
+        assert_eq!(second.objects_done, 1, "{step:?}");
+        assert_tombstone(&fx, &lib, &file);
+        assert!(fx.catalog.pending_purges(&lib, 10).expect("read").is_empty());
+    }
+}
+
+#[test]
+fn a_deletion_stopped_part_way_is_finished_by_the_next_run() {
+    let (fx, lib, file) = deleted_file("f215-partial");
+    let service = later_service(&fx, ExpiryMode::KeepVersionHistory);
+    fx.catalog.fail_purges_at(Some(PurgeStep::PayloadSaved));
+    service
+        .expire_library("system", &lib, fx.catalog.as_ref())
+        .expect("expire");
+    let v2 = fx.folder_of(&lib).join("files").join(file.as_str()).join("v2");
+    std::fs::remove_dir_all(&v2).expect("half-delete the original");
+    fx.catalog.fail_purges_at(None);
+    let done = service
+        .expire_library("system", &lib, fx.catalog.as_ref())
+        .expect("expire");
+    assert_eq!(done.objects_done, 1);
+    assert_tombstone(&fx, &lib, &file);
+}

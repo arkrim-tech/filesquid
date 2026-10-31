@@ -58,7 +58,9 @@ pub(crate) fn purged_memberships(
         .prepare("SELECT virtual_collection_id FROM virtual_members WHERE file_id = ?1")
         .map_err(sql)?;
     for change in changes {
-        let CatalogChange::PurgeFile(file_id) = change else {
+        let (CatalogChange::PurgeFile(file_id) | CatalogChange::ExpireFile { file_id, .. }) =
+            change
+        else {
             continue;
         };
         let rows = stmt

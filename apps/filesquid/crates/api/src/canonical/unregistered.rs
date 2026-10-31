@@ -5,7 +5,8 @@
 //! An earlier build committed uploaded and imported files as objects `files/<file-id>`
 //! without registering them in a home collection. A rebuild of a library's index counts such
 //! objects in its journal entry and leaves them unregistered, never placing them in a
-//! collection the owner did not choose. A file entity of the earlier form, which names no
+//! collection the owner did not choose. A tombstone of an expired file (Task API-F2.15) is
+//! purged history, not a file, so it is not counted. A file entity of the earlier form, which names no
 //! path or object, does not register its object either.
 
 use super::store::LibrarySnapshot;
@@ -40,11 +41,20 @@ pub async fn unregistered_file_objects<B: StorageBackend>(
         })
         .unwrap_or_default();
     let prefix = format!("{FILES_ROOT}/");
-    let count = root
+    let candidates: Vec<&String> = root
         .objects()
         .iter()
-        .filter_map(|object| object.strip_prefix(&prefix))
-        .filter(|id| !registered.contains(id))
-        .count();
-    Ok(u64::try_from(count).unwrap_or(u64::MAX))
+        .filter(|object| {
+            object
+                .strip_prefix(&prefix)
+                .is_some_and(|id| !registered.contains(id))
+        })
+        .collect();
+    let mut count: u64 = 0;
+    for object in candidates {
+        if !super::tombstone::is_tombstone(backend, object).await {
+            count += 1;
+        }
+    }
+    Ok(count)
 }

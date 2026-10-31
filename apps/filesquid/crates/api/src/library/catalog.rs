@@ -164,6 +164,16 @@ pub enum CatalogChange {
     /// Set or clear the library's own retention period, in days (ADR 041 Decision 10); a
     /// host keeps it in the library's collection snapshot.
     SetRetention(Option<u32>),
+    /// Expire a deleted file whose `purge_after` passed (ADR 041 Decision 11): remove it and
+    /// its memberships from the catalog and its entity from the snapshot, and record, in the
+    /// same transaction, its object work under `mode` and the commit's operation ID for the
+    /// host's [`super::ObjectPurger`].
+    ExpireFile {
+        /// The expired file.
+        file_id: FileId,
+        /// What its object becomes.
+        mode: super::policy::ExpiryMode,
+    },
     /// Store a virtual collection, replacing one with the same identifier.
     PutVirtualCollection(VirtualCollection),
     /// Remove a virtual collection and its memberships; the files stay.

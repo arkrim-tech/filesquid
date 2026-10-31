@@ -34,7 +34,8 @@ pub(crate) fn navigation_parents(
             CatalogChange::SetFileState { .. }
             | CatalogChange::PurgeFile(_)
             | CatalogChange::DeleteCollectionFiles { .. }
-            | CatalogChange::RehomeFile { .. } => {
+            | CatalogChange::RehomeFile { .. }
+            | CatalogChange::ExpireFile { .. } => {
                 return Some(NavigationParents::Everything);
             }
             CatalogChange::AddVirtualMember(_)

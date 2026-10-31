@@ -74,6 +74,7 @@ pub mod navigation;
 pub mod ocfl_validation;
 pub mod operation;
 pub mod preferences;
+pub mod recently_deleted;
 pub mod registry;
 pub mod replica;
 mod routes;
@@ -156,6 +157,9 @@ pub struct ApiState {
     /// The host's home collections, installed once at startup (uploads and copies answer 503
     /// until then; API-S-011, API-S-026).
     home_collections: Arc<OnceLock<Arc<dyn home::HomeCollections>>>,
+    /// The library domain commands and the Recently deleted settings the trash and settings
+    /// routes run (Task API-F2.15), when the host installed them.
+    library_service: Arc<OnceLock<Arc<library::LibraryService>>>,
 }
 
 /// The installed job runners, by job kind.
@@ -245,6 +249,7 @@ impl ApiState {
             import_starter: Arc::new(OnceLock::new()),
             import_flights: Arc::new(imports::InFlight::new()),
             home_collections: Arc::new(OnceLock::new()),
+            library_service: Arc::new(OnceLock::new()),
         }
     }
 
@@ -431,6 +436,17 @@ impl ApiState {
     /// keeping the first, if one was already installed.
     pub fn install_home_collections(&self, home: Arc<dyn home::HomeCollections>) -> bool {
         self.home_collections.set(home).is_ok()
+    }
+
+    /// Install the library service the Recently deleted and settings routes run (Task
+    /// API-F2.15). Answers false when one is already installed.
+    pub fn install_library_service(&self, service: Arc<library::LibraryService>) -> bool {
+        self.library_service.set(service).is_ok()
+    }
+
+    /// The installed library service, if any.
+    pub fn library_service(&self) -> Option<Arc<library::LibraryService>> {
+        self.library_service.get().cloned()
     }
 
     /// The installed home collections, if any.

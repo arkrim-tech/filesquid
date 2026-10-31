@@ -224,6 +224,26 @@ impl LibraryService {
 
     /// Publish the navigation change of a committed command, if a publisher is set and the
     /// command changed what navigation shows.
+    /// The injected catalog.
+    pub(super) fn catalog(&self) -> &dyn LibraryCatalog {
+        self.catalog.as_ref()
+    }
+
+    /// Now, from the service's clock, in Unix milliseconds.
+    pub(super) fn now_ms(&self) -> i64 {
+        (self.clock)()
+    }
+
+    /// Hand `entry` to the bounded failure journal queue.
+    pub(super) fn send_failure(&self, entry: JournalEntry) {
+        self.failures.send(entry);
+    }
+
+    /// Announce that files may have left any view, so clients reread their trees.
+    pub(super) fn announce_everything(&self) {
+        self.announce(Some(super::NavigationParents::Everything));
+    }
+
     fn announce(&self, change: Option<super::NavigationParents>) {
         let (Some(publisher), Some(change)) = (&self.navigation, change) else {
             return;

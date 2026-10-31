@@ -148,6 +148,7 @@ pub fn touched(change: &CatalogChange) -> Vec<SnapshotKey> {
         } => SnapshotKey::VirtualCollection(virtual_collection_id.clone()),
         CatalogChange::SetFileState { file_id, .. } => SnapshotKey::File(file_id.clone()),
         CatalogChange::PurgeFile(id) => SnapshotKey::File(id.clone()),
+        CatalogChange::ExpireFile { file_id, .. } => SnapshotKey::File(file_id.clone()),
     };
     vec![SnapshotKey::Library, key]
 }

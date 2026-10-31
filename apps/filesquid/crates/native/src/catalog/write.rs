@@ -15,7 +15,8 @@ use super::{failed, intent, outbox, project, reconcile, CommitProbe};
 use filesquid_api::canonical::{operation_kind, OperationRecord, SnapshotDelta, SnapshotKey};
 use filesquid_api::journal::JournalEntry;
 use filesquid_api::library::{
-    CatalogChange, CatalogCommit, CatalogError, CommitReceipt, Deletion, FileState, LibraryRecord,
+    CatalogChange, CatalogCommit, CatalogError, CommitReceipt, Deletion, ExpiryMode, FileState,
+    LibraryRecord,
     COLLECTION_HOLDS_FILES,
 };
 use filesquid_core::{
@@ -195,6 +196,10 @@ fn apply_changes(
     let mut purged = project::purged_memberships(tx, &commit.changes)?;
     purged.extend(project::collection_deletions(tx, &commit.changes)?);
     for change in &commit.changes {
+        if let CatalogChange::ExpireFile { file_id, mode } = change {
+            expire_file(tx, file_id, commit, *mode)?;
+            continue;
+        }
         apply_change(tx, &commit.library_id, change, commit.journal.time_ms)?;
     }
     tx.execute("UPDATE library SET revision = ?1", params![revision])
@@ -389,7 +394,34 @@ fn apply_change(
             set_file_state(tx, file_id.as_str(), state)
         }
         CatalogChange::PurgeFile(id) => exec(tx, "DELETE FROM files WHERE id = ?1", id.as_str()),
+        CatalogChange::ExpireFile { .. } => Err(failed("an expiry is applied with its commit")),
     }
+}
+
+/// Remove the expired `file_id` and its memberships, and record its object work under
+/// `mode` and `commit`'s operation ID in the same transaction (ADR 041 Decision 11), so the
+/// purge's journal entry and its object work are stored together. Database I/O.
+fn expire_file(
+    tx: &Transaction<'_>,
+    file_id: &FileId,
+    commit: &CatalogCommit,
+    mode: ExpiryMode,
+) -> Result<(), CatalogError> {
+    exec(tx, "DELETE FROM files WHERE id = ?1", file_id.as_str())?;
+    tx.execute(
+        "INSERT INTO pending_purges (file_id, operation_id, mode, recorded_at_ms)
+         VALUES (?1, ?2, ?3, ?4)
+         ON CONFLICT(file_id) DO UPDATE SET operation_id = excluded.operation_id,
+             mode = excluded.mode",
+        params![
+            file_id.as_str(),
+            commit.operation_id.as_str(),
+            mode.as_str(),
+            commit.journal.time_ms
+        ],
+    )
+    .map(drop)
+    .map_err(sql)
 }
 
 /// Delete every file of `collection_id` that is not deleted yet with `deletion`, and keep

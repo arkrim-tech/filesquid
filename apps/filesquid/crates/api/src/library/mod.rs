@@ -40,6 +40,7 @@ mod announce;
 mod catalog;
 mod command;
 mod error;
+mod expiry;
 mod ids;
 mod memory;
 mod plan;
@@ -59,6 +60,10 @@ pub use command::{
     UNTITLED_COLLECTION_TITLE,
 };
 pub use error::LibraryError;
+pub use expiry::{
+    ExpiryReport, ObjectPurger, PendingPurge, EXPIRY_JOB_KIND, EXPIRY_OBJECT_OPERATION,
+    EXPIRY_OPERATION, MAX_EXPIRY_FILES, MAX_EXPIRY_SCAN, MAX_PENDING_PURGES,
+};
 pub use ids::{is_uuid_v4, mint_uuid_v4};
 pub use memory::MemoryCatalog;
 pub use policy::{

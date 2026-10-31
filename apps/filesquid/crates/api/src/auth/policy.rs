@@ -93,6 +93,10 @@ pub enum Action {
     /// Pause, resume and cancel durable jobs (`POST /api/v1/jobs/{job}/pause`, `/resume`,
     /// `/cancel`; API-S-037).
     ManageJobs,
+    /// Change the installation's Recently deleted settings, the default retention and the
+    /// expiry setting (`PUT /api/v1/settings/recently-deleted`; API-S-019, ADR 041 Decisions
+    /// 10 and 11): only the admin, on the desktop the owner.
+    ConfigureRecentlyDeleted,
     /// Deliberately public, unauthenticated: only the liveness probe
     /// (`GET /api/v1/health/live`), which says that the process is up and nothing else. The
     /// router leaves the route-table entry with this action unguarded; the guard itself
@@ -103,7 +107,7 @@ pub enum Action {
 
 impl Action {
     /// Every action, in declaration order.
-    pub const ALL: [Action; 21] = [
+    pub const ALL: [Action; 22] = [
         Action::ReadHealth,
         Action::ReadContract,
         Action::SubscribeEvents,
@@ -124,6 +128,7 @@ impl Action {
         Action::RecordClientEvents,
         Action::ReadJobs,
         Action::ManageJobs,
+        Action::ConfigureRecentlyDeleted,
         Action::Public,
     ];
 
@@ -150,6 +155,7 @@ impl Action {
             Action::RecordClientEvents => "client_events.write",
             Action::ReadJobs => "jobs.read",
             Action::ManageJobs => "jobs.manage",
+            Action::ConfigureRecentlyDeleted => "settings.recently_deleted.configure",
             Action::Public => "public",
         }
     }

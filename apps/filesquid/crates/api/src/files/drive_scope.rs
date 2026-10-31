@@ -78,6 +78,9 @@ pub struct ViewScope {
     pub folders: Vec<FolderRow>,
     /// False when the node held more files or folders than the bounds.
     pub complete: bool,
+    /// True for the Recently deleted node, whose files come from many libraries: a library
+    /// the file service does not serve makes the view incomplete instead of failing it.
+    pub across_libraries: bool,
 }
 
 /// The files and folder rows `view` of `node` covers for `principal`. `home`, when the host
@@ -128,6 +131,7 @@ pub fn view_scope(
         libraries: vec![library],
         folders,
         complete: files_complete && folders_complete,
+        across_libraries: false,
     })
 }
 
@@ -170,6 +174,7 @@ fn recently_deleted_scope(
         libraries,
         folders: Vec::new(),
         complete,
+        across_libraries: true,
     })
 }
 

@@ -132,8 +132,16 @@ async fn view_page(
         .into_iter()
         .map(|folder| folder_candidate(folder, request.sort))
         .collect();
+    let across = inputs.scope.across_libraries;
     for mut library in inputs.scope.libraries {
-        let facts = files.file_facts(library.library_id, library.files).await?;
+        let facts = match files.file_facts(library.library_id, library.files).await {
+            Ok(facts) => facts,
+            Err(err) if across && err.code() == crate::ErrorCode::NotFound => {
+                complete = false;
+                continue;
+            }
+            Err(err) => return Err(err),
+        };
         complete &= facts.complete;
         candidates.extend(facts.facts.into_iter().map(|file| {
             let mine = inputs

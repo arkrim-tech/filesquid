@@ -9,7 +9,8 @@ use super::catalog::{
     CatalogChange, CatalogCommit, CatalogError, CommitReceipt, FileEntry, FileListing, FileScope,
     Keyed, LibraryCatalog, LibraryRecord, LibraryState, PageKey, COLLECTION_HOLDS_FILES,
 };
-use super::policy::{Deletion, MAX_RETENTION_DAYS};
+use super::expiry::{ObjectPurger, PendingPurge};
+use super::policy::{Deletion, ExpiryMode, MAX_RETENTION_DAYS};
 use crate::journal::JournalEntry;
 use crate::operation::OperationId;
 use filesquid_core::{
@@ -44,6 +45,12 @@ struct State {
     files: BTreeMap<String, StoredFile>,
     folders: BTreeMap<String, Folder>,
     receipts: BTreeMap<String, CommitReceipt>,
+    /// Recorded object works of expired files, by file ID: (operation ID, mode, library).
+    pending: BTreeMap<String, (String, ExpiryMode, String)>,
+    /// Object works done, in order.
+    purged: Vec<(FileId, ExpiryMode)>,
+    /// Object works still to refuse (failure injection).
+    failing: u32,
     journal: Vec<JournalEntry>,
     /// Commits that changed something (one OCFL version each on a real host).
     commits: u64,
@@ -130,6 +137,16 @@ impl MemoryCatalog {
 
     /// Number of operations recorded with a receipt; an operation that changed nothing has
     /// none (read like [`Self::journal_entries`]).
+    /// The object works of expired files done so far, in order.
+    pub fn purged_objects(&self) -> Vec<(FileId, ExpiryMode)> {
+        self.read().purged.clone()
+    }
+
+    /// Refuse the next `count` object works (failure injection for tests).
+    pub fn fail_next_purges(&self, count: u32) {
+        self.read().failing = count;
+    }
+
     pub fn operation_count(&self) -> u64 {
         u64::try_from(self.read().receipts.len()).unwrap_or(u64::MAX)
     }
@@ -219,7 +236,7 @@ impl State {
     }
 
     /// Apply one change.
-    fn apply(&mut self, commit_library: &LibraryId, change: CatalogChange) {
+    fn apply(&mut self, commit_library: &LibraryId, operation: &str, change: CatalogChange) {
         match change {
             CatalogChange::CreateLibrary(record) => self.create_library(record),
             CatalogChange::PutCollection(c) => {
@@ -265,6 +282,14 @@ impl State {
                 }
             }
             CatalogChange::PurgeFile(id) => self.purge(&id),
+            CatalogChange::ExpireFile { file_id, mode } => {
+                self.purge(&file_id);
+                let library = commit_library.as_str().to_string();
+                self.pending.insert(
+                    file_id.as_str().to_string(),
+                    (operation.to_string(), mode, library),
+                );
+            }
         }
     }
 
@@ -380,10 +405,11 @@ impl State {
     /// map write, so the commit lands whole.
     fn apply_checked(&mut self, commit: CatalogCommit, revision: u64) -> CommitReceipt {
         let library_id = commit.library_id.clone();
+        let operation = commit.operation_id.as_str().to_string();
         commit
             .changes
             .into_iter()
-            .for_each(|c| self.apply(&library_id, c));
+            .for_each(|c| self.apply(&library_id, &operation, c));
         if let Some(library) = self.libraries.get_mut(commit.library_id.as_str()) {
             library.revision = revision;
         }
@@ -559,5 +585,47 @@ impl LibraryCatalog for MemoryCatalog {
             return Ok(unstored_receipt(commit, revision));
         }
         Ok(state.apply_checked(commit, revision))
+    }
+}
+
+impl ObjectPurger for MemoryCatalog {
+    fn pending_purges(
+        &self,
+        library_id: &LibraryId,
+        limit: usize,
+    ) -> Result<Vec<PendingPurge>, CatalogError> {
+        let state = self.lock()?;
+        state
+            .pending
+            .iter()
+            .filter(|(_, (_, _, library))| library == library_id.as_str())
+            .take(limit)
+            .map(|(file, (operation_id, mode, _))| {
+                FileId::new(file.clone())
+                    .map(|file_id| PendingPurge {
+                        file_id,
+                        operation_id: operation_id.clone(),
+                        mode: *mode,
+                    })
+                    .map_err(|_| CatalogError::Failed("empty file ID".into()))
+            })
+            .collect()
+    }
+
+    fn purge_object(
+        &self,
+        _library_id: &LibraryId,
+        purge: &PendingPurge,
+        _actor: &str,
+    ) -> Result<(), CatalogError> {
+        let mut state = self.lock()?;
+        if state.failing > 0 {
+            state.failing -= 1;
+            return Err(CatalogError::Unavailable("injected object failure".into()));
+        }
+        if state.pending.remove(purge.file_id.as_str()).is_some() {
+            state.purged.push((purge.file_id.clone(), purge.mode));
+        }
+        Ok(())
     }
 }

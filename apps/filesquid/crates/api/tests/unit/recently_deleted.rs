@@ -271,3 +271,116 @@ fn a_restore_is_refused_when_every_untitled_title_is_taken() {
     assert_eq!(refusal.outcome, Outcome::Failed);
     assert_eq!(refusal.error_code.as_deref(), Some("restore_name_exhausted"));
 }
+
+// ---- Expiry (ADR 041 Decision 11) ----
+
+use filesquid_api::library::{ExpiryReport, EXPIRY_OBJECT_OPERATION, EXPIRY_OPERATION};
+
+/// A service of `fx` at `now_ms` reading `settings`.
+fn service_at(fx: &Fixture, now_ms: i64, settings: Arc<MemorySettings>) -> filesquid_api::library::LibraryService {
+    fx.service
+        .clone()
+        .with_clock(Arc::new(move || now_ms))
+        .with_settings(settings)
+}
+
+/// Settings with `expiry`.
+fn settings_with(expiry: ExpiryMode) -> Arc<MemorySettings> {
+    let settings = Arc::new(MemorySettings::new());
+    let stored = InstallationSettings {
+        default_retention_days: RECOVERABLE_DAYS,
+        expiry,
+    };
+    settings
+        .store(&stored, filesquid_api::journal::JournalEntry::new("x", Outcome::Succeeded))
+        .expect("store");
+    settings
+}
+
+/// Expire the fixture's library 31 days from now under `expiry`.
+fn expire(fx: &Fixture, expiry: ExpiryMode) -> ExpiryReport {
+    let later = service_at(fx, NOW_MS + 31 * DAY_MS, settings_with(expiry));
+    later
+        .expire_library("system", &fx.library(), fx.catalog.as_ref())
+        .expect("expire")
+}
+
+#[test]
+fn expiry_removes_due_files_from_every_view_and_records_their_object_work() {
+    let fx = Fixture::with_library();
+    let docs = fx.create_collection("Documents");
+    let due = fx.add_file_in("f1", &docs);
+    let kept = fx.add_file_in("f2", &docs);
+    delete(&fx, &[&due]);
+    fx.run_at(NOW_MS + 20 * DAY_MS, LibraryCommand::DeleteFiles {
+        library_id: fx.library(),
+        file_ids: vec![kept.clone()],
+    });
+    let report = expire(&fx, ExpiryMode::KeepVersionHistory);
+    assert_eq!(report.expired, 1);
+    assert_eq!(report.objects_done, 1);
+    assert!(fx.catalog.file(&due).expect("read").is_none(), "never listed again");
+    assert!(fx.catalog.file(&kept).expect("read").is_some(), "not due yet");
+    let done = fx.catalog.purged_objects();
+    assert_eq!(done, vec![(due.clone(), ExpiryMode::KeepVersionHistory)]);
+    let journal = fx.catalog.journal_entries();
+    let purge = journal
+        .iter()
+        .find(|e| e.operation == EXPIRY_OPERATION)
+        .expect("journaled with the deletion");
+    assert_eq!(purge.outcome, Outcome::Succeeded);
+    assert_eq!(purge.actor, "system");
+    assert_eq!(
+        purge.target_ids,
+        vec![fx.library().as_str().to_string(), due.as_str().to_string()],
+        "opaque IDs only"
+    );
+    assert_eq!(report.operation_id.as_deref(), purge.operation_id.as_deref());
+}
+
+#[test]
+fn delete_all_version_history_asks_for_the_object_s_deletion() {
+    let fx = Fixture::with_library();
+    let docs = fx.create_collection("Documents");
+    let due = fx.add_file_in("f1", &docs);
+    delete(&fx, &[&due]);
+    expire(&fx, ExpiryMode::DeleteAllVersionHistory);
+    assert_eq!(
+        fx.catalog.purged_objects(),
+        vec![(due, ExpiryMode::DeleteAllVersionHistory)]
+    );
+}
+
+#[test]
+fn a_failed_object_purge_is_journaled_as_failed_and_retried_at_the_next_run() {
+    let fx = Fixture::with_library();
+    let docs = fx.create_collection("Documents");
+    let due = fx.add_file_in("f1", &docs);
+    delete(&fx, &[&due]);
+    fx.catalog.fail_next_purges(1);
+    let first = expire(&fx, ExpiryMode::KeepVersionHistory);
+    assert_eq!((first.expired, first.objects_failed), (1, 1));
+    assert!(fx.catalog.file(&due).expect("read").is_none());
+    let failed = fx.failure_journal();
+    let entry = failed
+        .iter()
+        .find(|e| e.operation == EXPIRY_OBJECT_OPERATION)
+        .expect("journaled");
+    assert_eq!(entry.outcome, Outcome::Failed);
+    assert_eq!(entry.target_ids, vec![fx.library().as_str().to_string(), due.as_str().to_string()]);
+    let second = expire(&fx, ExpiryMode::KeepVersionHistory);
+    assert_eq!((second.expired, second.objects_done), (0, 1), "the pending work is retried");
+    assert_eq!(fx.catalog.purged_objects().len(), 1);
+}
+
+#[test]
+fn a_run_with_nothing_due_changes_and_journals_nothing() {
+    let fx = Fixture::with_library();
+    let docs = fx.create_collection("Documents");
+    fx.add_file_in("f1", &docs);
+    let commits = fx.catalog.commit_count();
+    let report = expire(&fx, ExpiryMode::KeepVersionHistory);
+    assert_eq!(report.expired, 0);
+    assert!(report.operation_id.is_none());
+    assert_eq!(fx.catalog.commit_count(), commits);
+}
