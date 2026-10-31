@@ -80,12 +80,19 @@ describe("redirectToFirstUse", () => {
       code: "unavailable",
       retryable: true,
     });
-    for (const failure of [unavailable, new TypeError("bad answer")]) {
-      const { win, replaced } = fakeWindow("");
-      const recent = vi.fn().mockRejectedValue(failure);
-      await expect(redirectToFirstUse(win, { recent })).resolves.toBe(false);
-      expect(replaced).toEqual([]);
-    }
+    const quiet = fakeWindow("");
+    await expect(
+      redirectToFirstUse(quiet.win, { recent: vi.fn().mockRejectedValue(unavailable) }),
+    ).resolves.toBe(false);
+    expect(quiet.replaced).toEqual([]);
+    expect(warn).not.toHaveBeenCalled();
+    const broken = new TypeError("bad answer");
+    const loud = fakeWindow("");
+    await expect(
+      redirectToFirstUse(loud.win, { recent: vi.fn().mockRejectedValue(broken) }),
+    ).resolves.toBe(false);
+    expect(loud.replaced).toEqual([]);
     expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("recent libraries"), broken);
   });
 });

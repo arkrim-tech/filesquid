@@ -32,8 +32,9 @@ const labels = activeLabels();
 const text = (key: string) => label(labels, key);
 const SCHEMES: readonly Scheme[] = ["light", "dark"];
 
-/** Console line of the collection command the tests refuse on purpose. */
-const REFUSED = /status of 500/;
+/** The browser's line for the collection command the tests refuse on purpose, and no other. */
+const REFUSED = (text: string, url: string) =>
+  /status of 500/.test(text) && /\/api\/v1\/libraries\/collections$/.test(url);
 
 /** A path-like string: a drive letter, or a rooted folder of a user or volume. */
 const PATH = /[A-Za-z]:\\|\/Users\/|\/home\/|\/Volumes\//;

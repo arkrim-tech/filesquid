@@ -373,6 +373,7 @@ export {
 export {
   parseCollection,
   parseJobControl,
+  parseJobSummary,
   parseJobView,
   parseLibraryFacts,
   parseLibraryView,

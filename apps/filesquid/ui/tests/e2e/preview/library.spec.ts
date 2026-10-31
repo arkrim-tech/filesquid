@@ -159,6 +159,8 @@ test("(1) recover opens the copy, starts its rebuild job expecting the opened re
     command(`library:${LIB}`, "1", { library_id: LIB }),
   ]);
   expect(api.to("/api/v1/libraries/repairs")).toEqual([]);
+  // The page follows the job the rebuild command answered.
+  expect(api.to(`/api/v1/jobs/${JOB}`).length).toBeGreaterThan(0);
   expect(errors).toEqual([]);
 });
 

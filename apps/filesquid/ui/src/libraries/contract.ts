@@ -113,6 +113,8 @@ function freeSpace(
   const { free_bytes: bytes, free_bytes_reason: reason } = value;
   if (bytes !== null && !isCount(bytes)) return undefined;
   if (reason !== null && !isOneOf<FreeBytesReason>(reason, FREE_BYTES_REASONS)) return undefined;
+  // The reason is null exactly when the bytes are known (API-S-038): never both, never neither.
+  if ((bytes === null) === (reason === null)) return undefined;
   return { free_bytes: bytes, free_bytes_reason: reason };
 }
 
@@ -251,6 +253,22 @@ function jobView(value: unknown): RebuildJobAnswer["job"] | undefined {
 export function parseJobView(value: unknown): JobView {
   const job = jobView(value);
   if (job === undefined) throw breaks("job");
+  // Only a library.rebuild job has a result (its report); any other kind's result is null.
+  if (job.result !== null && job.kind !== "library.rebuild") throw breaks("job");
+  return job;
+}
+
+/**
+ * Check a job as the job listing and the `job.update` event show it: the same view with its
+ * `result` always null, because neither carries a report (API-S-037).
+ *
+ * @param value The parsed JSON job view.
+ * @returns The job view.
+ * @throws TypeError when the view breaks the contract or carries a result.
+ */
+export function parseJobSummary(value: unknown): JobView {
+  const job = parseJobView(value);
+  if (job.result !== null) throw breaks("job summary");
   return job;
 }
 

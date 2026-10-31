@@ -357,6 +357,8 @@ export class FsFirstUse extends HTMLElement {
       this.lockFields();
       this.progress.collection ??= await this.createCollection(this.progress.library);
       if (generation !== this.generation) return;
+      // Creating the collection may have advanced the library's revision.
+      options.registry.invalidateRevision(this.progress.library.library_id);
       this.finish(this.progress.library, this.progress.collection);
     } catch (error) {
       if (generation === this.generation) this.fail(error);

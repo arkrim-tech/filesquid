@@ -178,13 +178,19 @@ export function jobChip(job: JobView, labels: LabelTable): Chip {
  *
  * @param report The job's result.
  * @param labels The active label table.
+ * @param locale BCP 47 tag; the page's language by default.
  * @returns The sentence.
  */
-export function rebuildSummary(report: RebuildReport, labels: LabelTable): string {
+export function rebuildSummary(
+  report: RebuildReport,
+  labels: LabelTable,
+  locale: string = pageLocale(),
+): string {
+  const number = new Intl.NumberFormat(locale);
   const invalid = report.objects.filter((object) => object.error_codes.length > 0).length;
   return formatLabel(labels.libraryRebuilt, {
-    objects: String(report.objects.length),
-    unreadable: String(report.unreadable.length),
-    invalid: String(invalid),
+    objects: number.format(report.objects.length),
+    unreadable: number.format(report.unreadable.length),
+    invalid: number.format(invalid),
   });
 }

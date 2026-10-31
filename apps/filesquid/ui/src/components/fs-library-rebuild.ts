@@ -119,6 +119,8 @@ export class FsLibraryRebuild extends HTMLElement {
   private renderQueued = false;
   /** True once a completed job was read again for its report, so that is done once. */
   private reportRead = false;
+  /** The newest read started, so an older answer that arrives late is dropped. */
+  private readSeq = 0;
   private stopWatching?: () => void;
   private timer?: ReturnType<typeof setTimeout>;
   private feedback?: Feedback;
@@ -217,6 +219,7 @@ export class FsLibraryRebuild extends HTMLElement {
     this.busy = false;
     this.refreshes = 0;
     this.reportRead = false;
+    this.readSeq = 0;
     this.view = undefined;
     const { labels } = options;
     const recover = this.modeValue === "recover";
@@ -285,8 +288,9 @@ export class FsLibraryRebuild extends HTMLElement {
     }
     feedback.loading();
     try {
+      const seq = ++this.readSeq;
       const view = await step("rebuild", () => jobs.job(this.job as string));
-      if (generation !== this.generation) return;
+      if (generation !== this.generation || seq !== this.readSeq) return;
       feedback.clear();
       this.follow(view);
     } catch (error) {
@@ -317,10 +321,14 @@ export class FsLibraryRebuild extends HTMLElement {
     const jobs = this.options?.jobs;
     if (!jobs || this.job === undefined) return;
     try {
+      const seq = ++this.readSeq;
       const view = await step("rebuild", () => jobs.job(this.job as string));
-      if (generation === this.generation) this.apply(view);
+      if (generation === this.generation && seq === this.readSeq) this.apply(view);
     } catch (error) {
-      if (generation === this.generation) this.fail(error);
+      if (generation !== this.generation) return;
+      this.fail(error);
+      // A failed read must not end the safety re-reads of an active job.
+      if (this.view) this.scheduleRefresh(this.view);
     }
   }
 
@@ -340,13 +348,18 @@ export class FsLibraryRebuild extends HTMLElement {
 
   /** Re-read an active job after `refreshMs`, at most {@link MAX_REFRESHES} times. */
   private scheduleRefresh(view: JobView): void {
-    clearTimeout(this.timer);
-    this.timer = undefined;
     const interval = this.options?.refreshMs ?? REBUILD_REFRESH_MS;
     const active = view.state === "pending" || view.state === "running";
-    if (!active || interval <= 0 || this.refreshes >= MAX_REFRESHES) return;
+    if (!active || interval <= 0 || this.refreshes >= MAX_REFRESHES) {
+      clearTimeout(this.timer);
+      this.timer = undefined;
+      return;
+    }
+    // A timer already waiting stays: frequent updates must not postpone the re-read for ever.
+    if (this.timer !== undefined) return;
     const generation = this.generation;
     this.timer = setTimeout(() => {
+      this.timer = undefined;
       this.refreshes += 1;
       void this.reread(generation);
     }, interval);

@@ -235,11 +235,11 @@ describe("ClientJobSource.watch", () => {
 
   it("delivers a checked job.update and ignores other topics", () => {
     const { client, emit } = channel();
-    const seen: string[] = [];
-    new ClientJobSource(client).watch((event) => seen.push(event.kind));
+    const seen: unknown[] = [];
+    new ClientJobSource(client).watch((event) => seen.push(event));
     emit({ topic: "health.change", data: {} });
     emit({ topic: "job.update", data: REBUILD_JOB.job });
-    expect(seen).toEqual(["update"]);
+    expect(seen).toEqual([{ kind: "update", job: REBUILD_JOB.job }]);
   });
 
   it("asks for a reread on events.resync and when the channel opens", () => {
@@ -257,6 +257,18 @@ describe("ClientJobSource.watch", () => {
     const seen: string[] = [];
     new ClientJobSource(client).watch((event) => seen.push(event.kind));
     emit({ topic: "job.update", data: { id: "job-1" } });
+    expect(seen).toEqual([]);
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it("drops an update that carries a report, which an event never does", () => {
+    const { client, emit } = channel();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const seen: string[] = [];
+    new ClientJobSource(client).watch((event) => seen.push(event.kind));
+    const result = { objects: [], unreadable: [] };
+    emit({ topic: "job.update", data: { ...REBUILD_JOB.job, state: "completed", result } });
     expect(seen).toEqual([]);
     expect(warn).toHaveBeenCalled();
     warn.mockRestore();

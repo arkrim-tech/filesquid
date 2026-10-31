@@ -133,7 +133,7 @@ describe("bindLibraryRoute", () => {
 
   it("mounts the rebuild page inside the shell for a library's own rebuild, and follows another job", async () => {
     window.location.hash = "#/library/lib-1/rebuild/job-1";
-    const { shell } = setup();
+    const { shell, jobs } = setup();
     await settle();
     expect(shell.hasAttribute("frameless")).toBe(false);
     const page = shell.firstElementChild as FsLibraryRebuild;
@@ -143,6 +143,8 @@ describe("bindLibraryRoute", () => {
     await settle();
     expect(shell.firstElementChild).toBe(page);
     expect(page.jobId).toBe("job-2");
+    // The page reads the new job, not only carries its address.
+    expect(jobs.calls).toEqual(["job:job-1", "job:job-2"]);
   });
 
   it("swaps the rebuild page for the library page on hashchange", async () => {

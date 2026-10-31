@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
 import {
   parseCollection,
   parseJobControl,
+  parseJobSummary,
   parseJobView,
   parseLibraryFacts,
   parseRecentLibraries,
@@ -53,6 +54,8 @@ describe("parseLibraryFacts", () => {
     ["a fractional free space", { ...FACTS, free_bytes: 1.5 }],
     ["an unknown reason", { ...FACTS, free_bytes: null, free_bytes_reason: "gone" }],
     ["a revision that is not text", { ...FACTS, revision: 1 }],
+    ["unknown free space with no reason", { ...FACTS, free_bytes: null, free_bytes_reason: null }],
+    ["known free space with a reason", { ...FACTS, free_bytes: 1, free_bytes_reason: "not_local" }],
   ])("refuses %s", (_what, value) => {
     expect(() => parseLibraryFacts(value)).toThrow(TypeError);
   });
@@ -88,6 +91,11 @@ describe("parseRecentLibraries", () => {
     ["a date that is not RFC 3339", { libraries: [{ ...RECENT, last_opened: "yesterday" }] }],
     ["an open flag that is not a boolean", { libraries: [{ ...RECENT, open: "yes" }] }],
     ["a blank library id", { libraries: [{ ...RECENT, library_id: "" }] }],
+    [
+      "free space with a reason",
+      { libraries: [{ ...RECENT, free_bytes: 5, free_bytes_reason: "not_local" }] },
+    ],
+    ["unknown free space with no reason", { libraries: [{ ...RECENT, free_bytes: null }] }],
   ])("refuses %s", (_what, value) => {
     expect(() => parseRecentLibraries(value)).toThrow(TypeError);
   });
@@ -142,6 +150,21 @@ describe("parseJobView and parseJobControl", () => {
     ["a report that breaks the contract", { ...job, state: "completed", result: { objects: 3 } }],
   ])("refuses a job view with %s", (_what, value) => {
     expect(() => parseJobView(value)).toThrow(TypeError);
+  });
+
+  it("accepts a report only for a rebuild job", () => {
+    const report = { objects: [], unreadable: [] };
+    expect(() =>
+      parseJobView({ ...job, kind: "import", state: "completed", result: report }),
+    ).toThrow(TypeError);
+  });
+
+  it("reads a job summary of the listing or an event: its result is always null", () => {
+    expect(parseJobSummary({ ...job, state: "running" })).toMatchObject({ result: null });
+    const report = { objects: [], unreadable: [] };
+    expect(() => parseJobSummary({ ...job, state: "completed", result: report })).toThrow(
+      TypeError,
+    );
   });
 
   it("reads a control answer: the job and whether it was handed to its worker", () => {

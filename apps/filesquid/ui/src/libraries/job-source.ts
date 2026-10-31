@@ -8,7 +8,7 @@
  * changes nothing and needs no operation ID.
  */
 import type { ApiEvent, RequestOptions } from "../api/client";
-import { parseJobControl, parseJobView } from "./contract";
+import { parseJobControl, parseJobSummary, parseJobView } from "./contract";
 import type { JobView } from "./model";
 
 /** What a watcher is told. */
@@ -138,7 +138,7 @@ function deliver(event: ApiEvent, listener: (event: JobWatchEvent) => void): voi
   if (event.topic !== "job.update") return;
   let job: JobView;
   try {
-    job = parseJobView(event.data);
+    job = parseJobSummary(event.data);
   } catch (error) {
     console.warn("FileSquid dropped a job update that breaks the contract", error);
     return;

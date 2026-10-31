@@ -607,7 +607,7 @@
   "libraryOpenRecent": "Open",
   "libraryFactFreeTerm": "Free space",
   "libraryFactFree": "{free} on the disk that holds this library",
-  "libraryFactFreeUnknown": "Not known: the disk cannot be read",
+  "libraryFactFreeUnknown": "Not known",
   "libraryRebuildProgress": "{done} of {total} objects read · started {time} · resumes from its checkpoint after you quit",
   "libraryRebuildProgressNoTotal": "{done} objects read · started {time} · resumes from its checkpoint after you quit",
   "libraryRebuildErrorsTitle": "Validation errors so far",

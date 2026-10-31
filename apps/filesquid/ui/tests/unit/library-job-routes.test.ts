@@ -40,6 +40,7 @@ describe("rebuild job routes", () => {
     "#/library/lib-1/other/job-1",
     "#/library//rebuild/job-1",
     `#/library/lib-1/rebuild/${"j".repeat(129)}`,
+    `#/library/lib-1/rebuild/${"é".repeat(65)}`,
     "#/library/lib-1/rebuild/%E0%A4%A",
   ])("does not read %s as a job page", (hash) => {
     expect(parseLibraryHash(hash)).toBeUndefined();

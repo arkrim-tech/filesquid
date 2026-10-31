@@ -35,7 +35,7 @@ async function mount(source = new FakeLibrarySource()) {
   });
   const done: CustomEvent[] = [];
   const cancelled: Event[] = [];
-  document.addEventListener("fs-first-use-done", (event) => done.push(event as CustomEvent));
+  dialog.addEventListener("fs-first-use-done", (event) => done.push(event as CustomEvent));
   dialog.addEventListener("fs-first-use-cancel", (event) => cancelled.push(event));
   document.body.replaceChildren(dialog);
   await settle();
@@ -129,6 +129,8 @@ describe("<fs-first-use>", () => {
     ]);
     expect(source.revisions).toEqual([LIBRARY.revision]);
     expect(registry.get("lib-1")).toEqual(LIBRARY);
+    // The first collection may have advanced the revision: later commands read it afresh.
+    expect(registry.revisionOf("lib-1")).toBeUndefined();
     expect(navigated).toEqual(["#/library/lib-1"]);
     expect(done).toHaveLength(1);
     expect(done[0]?.detail).toEqual({

@@ -85,6 +85,8 @@ export interface JobState {
   /** The report of a completed job. */
   result: unknown;
   errorCode?: string;
+  /** The operation id of the rebuild command that submitted it; set when one is sent. */
+  operationId?: string;
 }
 
 /** The job ID the fake serves. */
@@ -119,7 +121,7 @@ function jobView(job: JobState, withResult = true) {
   return {
     id: JOB,
     kind: "library.rebuild",
-    operation_id: "op-e2e-rebuild",
+    operation_id: job.operationId ?? "op-e2e-rebuild",
     state: job.state,
     paused: job.paused,
     ...(job.control === undefined ? {} : { control: job.control }),
@@ -133,12 +135,18 @@ function jobView(job: JobState, withResult = true) {
   };
 }
 
-/** The pending rebuild job a rebuild command answers (API-S-025). */
-function rebuildJob(job: JobState) {
+/**
+ * The pending rebuild job a rebuild command answers (API-S-025): a fresh submission with no
+ * progress and no attempt yet, carrying the command's operation id. The job the routes serve
+ * afterwards is the one the test steers in `api.job`.
+ */
+function rebuildJob(api: LibraryApi, operationId: string) {
+  api.job.operationId = operationId;
+  const fresh = { ...api.job, state: "pending", paused: false, control: undefined, done: 0 };
   return {
     outcome: "pending",
     job_id: JOB,
-    job: jobView({ ...job, state: "pending", paused: false, control: undefined }, false),
+    job: { ...jobView({ ...fresh, total: undefined } as JobState, false), attempts: 0 },
     scheduled: true,
   };
 }
@@ -260,6 +268,12 @@ async function serveJobs(page: Page, api: LibraryApi): Promise<void> {
     const url = new URL(request.url());
     api.seen.push({ path: url.pathname, method: request.method(), body: request.postData() });
     const control = /\/(pause|resume|cancel)$/.exec(url.pathname)?.[1];
+    const id = decodeURIComponent(url.pathname.split("/")[4] ?? "");
+    if (id !== JOB) return route.fulfill({ status: 404, json: error("not_found") });
+    const method = control === undefined ? "GET" : "POST";
+    if (request.method() !== method) {
+      return route.fulfill({ status: 405, json: error("method_not_allowed") });
+    }
     if (control === undefined) {
       return route.fulfill({ status: 200, json: jobView(api.job) });
     }
@@ -411,13 +425,16 @@ function answerFor(
   if (path.endsWith("/repair-candidates")) return ok(candidates(api.needing));
   if (path.endsWith("/repairs")) return repairAnswer(api, record);
   if (path.endsWith("/recent")) {
-    const libraries = [...api.libraries].map(([id, revision]) => recentEntry(api, id, revision));
-    return ok({ libraries });
+    // Newest first and at most 20, as the route lists them (API-S-038).
+    const newest = [...api.libraries]
+      .sort(([a], [b]) => metaOf(api, b).lastOpened.localeCompare(metaOf(api, a).lastOpened))
+      .slice(0, 20);
+    return ok({ libraries: newest.map(([id, revision]) => recentEntry(api, id, revision)) });
   }
   const operation = envelopeOf(body)?.operation_id ?? "";
   const input = (record.input ?? {}) as Record<string, unknown>;
   if (path.endsWith("/collections")) return collectionAnswer(api, operation, input);
-  if (path.endsWith("/rebuilds")) return outcome(operation, "pending", rebuildJob(api.job));
+  if (path.endsWith("/rebuilds")) return outcome(operation, "pending", rebuildJob(api, operation));
   if (path.endsWith("/snapshot-copies")) {
     return outcome(operation, "committed", {
       objects: 2,

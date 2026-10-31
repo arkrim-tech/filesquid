@@ -42,7 +42,7 @@
 | Recover title 34 px; card 1040 x 112 px, raised, 8 px radius; chip 22 px tall, 11 px 500, 4 px radius; bar 760 x 4 px, 2 px radius, `--fs-outline` track and `--fs-primary` fill; Pause and Cancel 92 x 36 px | `REBUILD_STYLE` | preview "the rebuild job (04...)" |
 | Error lines 1040 x 52 px, 1 px error border, 8 px radius, mono 13 px | `.errors li` | preview "the rebuild job finishes over the event channel..." |
 | Pause, Resume and Cancel over the job routes with no body; one control at a time | `ClientJobSource`, `FsLibraryRebuild.control` | `library-rebuild.test.ts`, `library-facts-client.test.ts`, preview |
-| No path, folder name, volume, job ID or library ID shown | all pages | `PATH` checks in `first-use.spec.ts`; `*.test.ts` |
+| No path, folder name, volume or job ID shown anywhere; a library ID only in the library page's facts row (UI-S-027), never on the start, first-use or rebuild pages | all pages | `PATH` checks in `first-use.spec.ts`; `*.test.ts` |
 | Loops bounded | `MAX_REFRESHES`, recent list at most 20 | "re-reads on its own while the job is active, bounded..." |
 
 ## Holistic UI decisions
@@ -54,7 +54,7 @@
 
 ## Proposed strings (not in the owner's approved list; for the owner to confirm)
 
-`libraryFolderNone` "No folder chosen yet"; `libraryFolderChosen` "Folder chosen"; `libraryFirstUseCollectionFailed` "The library was created and is kept. Its first collection could not be created."; `libraryFirstUseCancel` "Cancel"; `libraryRecentMetaNoFree` "Opened {when} · free space unknown"; `libraryRecentToday` "today"; `libraryFactFreeTerm` "Free space"; `libraryFactFreeUnknown` "Not known: the disk cannot be read"; `libraryRebuildProgressNoTotal` "{done} objects read · started {time} · resumes from its checkpoint after you quit"; `libraryRebuildCancelled` "The rebuild was cancelled. Nothing in the library's files was changed."; `jobPause`, `jobResume`, `jobCancel`; `jobStatePending`, `jobStateRunning`, `jobStatePausing`, `jobStatePaused`, `jobStateCancelling`, `jobStateCompleted` ("finished"), `jobStateFailed`, `jobStateCancelled`. The strings of the Agent Prompt are exactly as approved; ImageSquid words the collection as an album ("First album: untitled album").
+`libraryFolderNone` "No folder chosen yet"; `libraryFolderChosen` "Folder chosen"; `libraryFirstUseCollectionFailed` "The library was created and is kept. Its first collection could not be created."; `libraryFirstUseCancel` "Cancel"; `libraryRecentMetaNoFree` "Opened {when} · free space unknown"; `libraryRecentToday` "today"; `libraryFactFreeTerm` "Free space"; `libraryFactFreeUnknown` "Not known"; `libraryRebuildProgressNoTotal` "{done} objects read · started {time} · resumes from its checkpoint after you quit"; `libraryRebuildCancelled` "The rebuild was cancelled. Nothing in the library's files was changed."; `jobPause`, `jobResume`, `jobCancel`; `jobStatePending`, `jobStateRunning`, `jobStatePausing`, `jobStatePaused`, `jobStateCancelling`, `jobStateCompleted` ("finished"), `jobStateFailed`, `jobStateCancelled`. The strings of the Agent Prompt are exactly as approved; ImageSquid words the collection as an album ("First album: untitled album").
 
 ## Conflicts and what the platform engineer still has to deliver
 

@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   accessibilityViolations,
   defineElements,
+  MAX_REFRESHES,
   type FsLibraryRebuild,
   type FsStates,
 } from "../../src/index";
@@ -283,6 +284,31 @@ describe("<fs-library-rebuild> live updates and the finished report", () => {
     const settled = jobs.calls.length;
     await new Promise((resolve) => setTimeout(resolve, 30));
     expect(jobs.calls.length).toBe(settled);
+  });
+});
+
+describe("<fs-library-rebuild> safety re-read bound", () => {
+  it("re-reads an active job at most MAX_REFRESHES times, then leaves it to the events", async () => {
+    const jobs = new FakeJobSource();
+    await mount(jobs, "recover", 1);
+    await vi.waitFor(() => expect(jobs.calls.length).toBeGreaterThan(MAX_REFRESHES), {
+      timeout: 30_000,
+      interval: 50,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    // The first read plus the capped re-reads, and not one more.
+    expect(jobs.calls.length).toBe(1 + MAX_REFRESHES);
+  }, 40_000);
+
+  it("keeps the waiting re-read when updates arrive, so busy events cannot postpone it", async () => {
+    const jobs = new FakeJobSource();
+    const { page } = await mount(jobs, "recover", 40);
+    for (let i = 0; i < 8; i += 1) {
+      jobs.listener?.({ kind: "update", job: jobView({ done: 1300 + i }) });
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    expect(jobs.calls.length).toBeGreaterThan(1);
+    expect(text(page, ".progress-text")).toContain("objects read");
   });
 });
 

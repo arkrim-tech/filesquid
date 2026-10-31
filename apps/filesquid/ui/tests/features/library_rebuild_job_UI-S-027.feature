@@ -19,7 +19,7 @@ Feature: The rebuild from files runs as a durable job the owner can follow
   Scenario Outline: Recover shows the running job without the shell
     Given the <theme> theme is shown
     When I recover a library from a copy
-    Then the page "Recover from a copy" should be shown without the sidebar, header and footer
+    Then the page "Recover from a copy" should be shown without the shell's sidebar, header and footer bar
     And a raised card of 1040 x 112 px should show "Rebuild catalog from files" with the chip "running"
     And the card should read "1,204 of 2,418 objects read · started 10:41 · resumes from its checkpoint after you quit"
     And the progress bar should be 4 px tall and about 50% full
@@ -81,11 +81,18 @@ Feature: The rebuild from files runs as a durable job the owner can follow
     Then the page should say "The action did not finish. Nothing was reported as changed."
     And "Pause" and "Cancel" should still be available
 
-  Scenario: A job that cannot be read offers Try again, and an unknown job is not found
+  Scenario: A job that cannot be read offers Try again
     Given the host cannot answer the job read
+    When I open the rebuild page
     Then the page should offer "Try again" that reads the job again
-    And a job the host does not know should be reported as no longer available
+
+  Scenario: An unknown job, or a job of another kind, is reported as no longer available
+    Given the host answers "not found" for the job, or the job is not a library rebuild
+    When I open the rebuild page
+    Then the page should say "That folder choice or library is no longer available on this host. Choose the folder again."
+    And no job card should be shown
 
   Scenario: Nothing private is shown
     When the rebuild page is shown in any state
-    Then it should show no filesystem path, no job ID and no library ID
+    Then it should show no filesystem path and no job ID
+    And it should show a library ID nowhere, as only the library page's facts name it
