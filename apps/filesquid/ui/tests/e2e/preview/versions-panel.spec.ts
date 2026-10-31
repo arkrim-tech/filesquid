@@ -375,7 +375,7 @@ for (const scheme of SCHEMES) {
         colour: rgbOf(c.body),
       });
       await expect(details.locator(".count")).toHaveText(
-        fill("filePanelInfoCount", { count: "9" }),
+        fill("filePanelInfoCount", { count: "11" }),
       );
       expect(errors).toEqual([]);
     });

@@ -106,6 +106,23 @@ Feature: Composable filesquid user interface
     And it should share the file info tab's property table, filter and states
     And neither panel should hold a reference to the other
 
+  # Task UI-F2.15: the Provenance tab (UI-S-020, UI-S-022, UI-S-031 mockups 36 and 25)
+  Scenario: The Provenance tab is the third tab, in its own slot, and reads only its own routes
+    Given a file panel with the tabs "details", "description" and "provenance"
+    When I select the Provenance tab
+    Then the provenance panel should be created in its Provenance slot and receive the file reference
+    And it should read only the history routes
+    And the description panel should not be created
+    And it should share the other tabs' property table, filter and states
+
+  Scenario: The file panel offers exactly three tabs and no audit log
+    Given a file panel with every tab registered
+    Then its tabs should be "File info", "Description" and "Provenance"
+
+  Scenario: The preview's media frame uses the 8 px radius token
+    When an image is opened beside the file panel
+    Then the media frame should have a corner radius of 8 px on the raised surface
+
   # Source
   # - resources/prd.md F-055
   # - resources/srs.md SRS-F-055

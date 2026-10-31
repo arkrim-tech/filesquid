@@ -1,7 +1,9 @@
 /**
- * The file panel of the files route (UI-F2.3, UI-F2.4, UI-S-031): composes `<fs-file-panel>`
- * with the Details panel as its File info tab, the Metadata panel as its Description tab (when
- * a metadata source is given) and the Versions view behind its history button, puts it in the
+ * The file panel of the files route (UI-F2.3, UI-F2.4, UI-F2.15, UI-S-031): composes
+ * `<fs-file-panel>` with the Details panel as its File info tab (with the facts and technical
+ * rows when their sources are given), the Metadata panel as its Description tab (when a metadata
+ * source is given), the Provenance panel as its Provenance tab (when a provenance source is
+ * given) and the Versions view behind its history button, puts it in the
  * shell's `panel` slot while a file is open in the browser, and reloads the browser's listing
  * after a panel commits a version (a restore, or a metadata edit). The panels read and write
  * only through the file source, the history source, the download source and the metadata
@@ -9,7 +11,9 @@
  */
 import type { FsDetailsPanel } from "../components/fs-details-panel";
 import type { FsMetadataPanel } from "../components/fs-metadata-panel";
+import type { FsProvenancePanel } from "../components/fs-provenance-panel";
 import type { FsFileBrowser } from "../components/fs-file-browser";
+import { HOST_EVENT } from "../components/fs-host-indicator";
 import { FILE_PANEL_CLOSE_EVENT, type FsFilePanel } from "../components/fs-file-panel";
 import type { FsVersionsPanel, VersionsSource } from "../components/fs-versions-panel";
 import type { FileRef } from "../files/model";
@@ -17,6 +21,8 @@ import type { FileSource } from "../files/source";
 import type { HistorySource } from "../files/history-source";
 import type { DownloadSource } from "../files/download-source";
 import type { MetadataSource } from "../files/metadata-source";
+import type { FactsSource } from "../files/facts-source";
+import type { ProvenanceSource } from "../files/provenance-source";
 import type { LabelTable } from "../theme/labels";
 
 /**
@@ -32,8 +38,39 @@ export interface FilePanelRouteOptions {
   readonly history: HistorySource;
   /** Reads the whole file of one version for saving (Download this version). */
   readonly download: DownloadSource;
-  /** Reads and writes statements; without it the panel has no Description tab. */
+  /**
+   * Reads and writes statements; without it the panel has no Description tab, and the File info
+   * tab has no technical rows.
+   */
   readonly metadata?: MetadataSource;
+  /** Reads the facts projection of the file's record; without it File info has no import rows. */
+  readonly facts?: FactsSource;
+  /** Reads the history, its records and its export; without it the panel has no Provenance tab. */
+  readonly provenance?: ProvenanceSource;
+  /** Whether the viewer may open the Logs view (View in Logs); never when absent. */
+  readonly canViewLogs?: () => boolean;
+}
+
+/**
+ * Follow which host the shell shows, from its host badge's `fs-host` events, from now on: the
+ * owner is the person on the desktop host, the only host with a Logs view (UI-S-021). Call it
+ * when the route is bound, before the panel exists, so a host that is known by the time a file
+ * opens is not missed. Side effect: adds an event listener to the shell.
+ *
+ * @param shell The app shell, whose host badge dispatches the events.
+ * @returns `canViewLogs`, which tells whether the viewer may open the Logs view now, and `stop`,
+ *   which removes the listener (the route is unbound).
+ */
+export function watchOwner(shell: HTMLElement): { canViewLogs: () => boolean; stop: () => void } {
+  let hostType: string | undefined;
+  const onHost = (event: Event) => {
+    hostType = (event as CustomEvent<{ hostType?: string }>).detail?.hostType;
+  };
+  shell.addEventListener(HOST_EVENT, onHost);
+  return {
+    canViewLogs: () => hostType === "desktop",
+    stop: () => shell.removeEventListener(HOST_EVENT, onHost),
+  };
 }
 
 /** The tag of the file panel the route mounts. */
@@ -65,8 +102,11 @@ export function panelSource(
   };
 }
 
-/** Build the file panel with its File info and Description tabs and Versions view. */
-function createPanel(options: FilePanelRouteOptions): FsFilePanel {
+/**
+ * Build the file panel with its File info, Description and Provenance tabs and Versions view.
+ * The tabs are exactly those three: the journal is browsed only in the Logs view (UI-S-022).
+ */
+function createPanel(options: FilePanelRouteOptions, canViewLogs: () => boolean): FsFilePanel {
   const { labels } = options;
   const source = panelSource(options.source, options.history, options.download);
   const panel = document.createElement(PANEL_TAG) as FsFilePanel;
@@ -74,7 +114,7 @@ function createPanel(options: FilePanelRouteOptions): FsFilePanel {
   panel.configure({ labels });
   panel.registerTab("details", labels.filePanelInfo, () => {
     const details = document.createElement("fs-details-panel") as FsDetailsPanel;
-    details.configure({ labels, source });
+    details.configure({ labels, source, facts: options.facts, statements: options.metadata });
     return details;
   });
   const metadata = options.metadata;
@@ -83,6 +123,14 @@ function createPanel(options: FilePanelRouteOptions): FsFilePanel {
       const description = document.createElement("fs-metadata-panel") as FsMetadataPanel;
       description.configure({ labels, source: metadata });
       return description;
+    });
+  }
+  const provenance = options.provenance;
+  if (provenance) {
+    panel.registerTab("provenance", labels.filePanelProvenance, () => {
+      const element = document.createElement("fs-provenance-panel") as FsProvenancePanel;
+      element.configure({ labels, source: provenance, canViewLogs });
+      return element;
     });
   }
   panel.setVersions(() => {
@@ -109,7 +157,7 @@ export function bindFilePanel(
   browser: FsFileBrowser,
   options: FilePanelRouteOptions,
 ): void {
-  const panel = createPanel(options);
+  const panel = createPanel(options, options.canViewLogs ?? (() => false));
   browser.addEventListener("fs-file-open", (event) => {
     const { file } = (event as CustomEvent<{ file: FileRef | null }>).detail;
     panel.fileRef = file;
