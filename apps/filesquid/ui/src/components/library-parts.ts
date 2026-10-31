@@ -4,6 +4,7 @@
  * with `textContent` from the label table; every colour, size and duration comes from a token.
  */
 import type { Failure, LibraryAction } from "../libraries/errors";
+import type { JobSource } from "../libraries/job-source";
 import type { LibrarySource } from "../libraries/model";
 import type { LibraryRegistry } from "../libraries/registry";
 import type { LabelTable } from "../theme/labels";
@@ -33,7 +34,19 @@ export interface LibraryPageOptions {
   host?: HostClient;
   /** Start page only: the release version for the footer line `appFooter`; left out if absent. */
   version?: string;
+  /** The job routes the rebuild page follows (UI-1.3); without them that page says unavailable. */
+  jobs?: JobSource;
+  /** The clock the recent libraries' "Opened {when}" reads; `new Date()` by default. */
+  now?: () => Date;
+  /**
+   * Rebuild page only: milliseconds between its safety re-reads while the job is active, 0 to
+   * turn them off; {@link REBUILD_REFRESH_MS} by default.
+   */
+  refreshMs?: number;
 }
+
+/** Milliseconds between the rebuild page's safety re-reads of an active job. */
+export const REBUILD_REFRESH_MS = 5000;
 
 /** A step of a flow that failed, with the step it was and what it rejected with. */
 export class StepFailure extends Error {
@@ -102,6 +115,7 @@ export const LIBRARY_STYLE = `
   .app-footer { color: var(--fs-on-surface-variant); font-size: var(--fs-font-size-small); }
   .crumb { justify-self: start; color: var(--fs-on-surface-variant); font-size: var(--fs-font-size-small); text-decoration: none; }
   .crumb:hover { color: var(--fs-on-surface); text-decoration: underline; }
+  .crumb.current, .crumb.current:hover { color: var(--fs-on-surface); font-weight: 500; text-decoration: none; }
   dl { display: grid; grid-template-columns: 10rem minmax(0, 1fr); margin: 0; font-size: var(--fs-font-size-small); }
   dt, dd { margin: 0; padding: var(--fs-space-2) 0; border-block-end: 1px solid var(--fs-outline); overflow-wrap: anywhere; }
   dt { color: var(--fs-on-surface-muted); }
@@ -120,10 +134,16 @@ export const LIBRARY_STYLE = `
   .consent { font-size: var(--fs-font-size-ui); }
 `;
 
-/** The stylesheet of a page: the shared accessibility and control rules first, then its own. */
-export function pageStyle(): HTMLStyleElement {
+/**
+ * The stylesheet of a page: the shared accessibility and control rules first, then the library
+ * pages' own, then the rules `extra` adds for one page or dialog.
+ *
+ * @param extra CSS of one component, after the shared rules.
+ * @returns The `<style>` element.
+ */
+export function pageStyle(extra = ""): HTMLStyleElement {
   const style = document.createElement("style");
-  style.textContent = A11Y_STYLE + CONTROL_STYLE + LIBRARY_STYLE;
+  style.textContent = A11Y_STYLE + CONTROL_STYLE + LIBRARY_STYLE + extra;
   return style;
 }
 
@@ -178,6 +198,11 @@ export function link(className: string, text: string, href: string): HTMLAnchorE
   const anchor = node("a", className, text);
   anchor.href = href;
   return anchor;
+}
+
+/** Go to a hash address in the current window. Side effect: changes the location. */
+export function goTo(hash: string): void {
+  window.location.hash = hash;
 }
 
 /** Whether the browser reports a network connection. */

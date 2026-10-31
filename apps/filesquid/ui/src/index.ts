@@ -16,6 +16,8 @@ import { FsFilePanel } from "./components/fs-file-panel";
 import { FsVersionsPanel } from "./components/fs-versions-panel";
 import { FsHostIndicator } from "./components/fs-host-indicator";
 import { FsLibraryDetail } from "./components/fs-library-detail";
+import { FsFirstUse } from "./components/fs-first-use";
+import { FsLibraryRebuild } from "./components/fs-library-rebuild";
 import { FsLibraryRepair } from "./components/fs-library-repair";
 import { FsLibraryStart } from "./components/fs-library-start";
 import { FsMonitor } from "./components/fs-monitor";
@@ -331,8 +333,20 @@ export { FsSettings, type SettingsClient, type SettingsOptions } from "./compone
 export { FsLibraryStart } from "./components/fs-library-start";
 export { FsLibraryDetail } from "./components/fs-library-detail";
 export { FsLibraryRepair, type RepairPageOptions } from "./components/fs-library-repair";
-export type { LibraryPageOptions } from "./components/library-parts";
+export {
+  FsLibraryRebuild,
+  MAX_REFRESHES,
+  type RebuildPageOptions,
+} from "./components/fs-library-rebuild";
+export {
+  FIRST_USE_CANCEL_EVENT,
+  FIRST_USE_DONE_EVENT,
+  FsFirstUse,
+  type FirstUseDone,
+} from "./components/fs-first-use";
+export { REBUILD_REFRESH_MS, type LibraryPageOptions } from "./components/library-parts";
 export { bindLibraryRoute } from "./app/library-route";
+export { redirectToFirstUse } from "./app/first-use-route";
 export * from "./libraries/model";
 export {
   ClientLibrarySource,
@@ -340,10 +354,32 @@ export {
   type LibraryClient,
 } from "./libraries/client-source";
 export {
+  ClientJobSource,
+  type JobClient,
+  type JobSource,
+  type JobWatchEvent,
+} from "./libraries/job-source";
+export {
+  jobChip,
+  openedWhen,
+  progressFraction,
+  rebuildProgressText,
+  rebuildSummary,
+  recentMeta,
+  freeSpaceText,
+  type Chip,
+  type ChipTone,
+} from "./libraries/format";
+export {
+  parseCollection,
+  parseJobControl,
+  parseJobView,
+  parseLibraryFacts,
   parseLibraryView,
   parseRebuildJob,
   parseLocationChoice,
   parseRebuildReport,
+  parseRecentLibraries,
   parseRepairAnswer,
   parseRepairCandidates,
   parseSnapshotCopyReport,
@@ -466,6 +502,10 @@ export function defineElements(): void {
   if (!customElements.get("fs-library-repair")) {
     customElements.define("fs-library-repair", FsLibraryRepair);
   }
+  if (!customElements.get("fs-library-rebuild")) {
+    customElements.define("fs-library-rebuild", FsLibraryRebuild);
+  }
+  if (!customElements.get("fs-first-use")) customElements.define("fs-first-use", FsFirstUse);
   if (!customElements.get("fs-app-shell")) customElements.define("fs-app-shell", FsAppShell);
   if (!customElements.get("fs-ocfl-findings")) {
     customElements.define("fs-ocfl-findings", FsOcflFindings);
