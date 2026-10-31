@@ -65,11 +65,14 @@ test journal_writer::tests::a_rejected_write_is_one_json_line_per_record_on_stdo
 test journal_writer::tests::a_replayed_entry_the_store_already_holds_is_announced_once ... ok
 test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 76 filtered out; finished in 0.00s
 $ cargo test -p filesquid-native --features desktop --locked --lib installation
+running 6 tests
 test installation::tests::a_file_with_a_creation_time_that_is_not_utc_is_malformed ... ok
-test installation::tests::a_restored_or_foreign_store_copy_is_kept ... ok
-test installation::tests::a_store_table_of_an_earlier_build_gains_the_creation_time ... ok
 test installation::tests::a_created_store_copy_is_forgotten_so_the_next_launch_creates_again ... ok
-test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test installation::tests::copies_with_two_creation_times_settle_on_the_files ... ok
+test installation::tests::a_restored_or_foreign_store_copy_is_kept ... ok
+test installation::tests::mixed_file_shapes_are_malformed ... ok
+test installation::tests::a_store_table_of_an_earlier_build_gains_the_creation_time ... ok
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
 $ cargo test -p filesquid-native --features desktop --locked --test unit_installation --test unit_import_file --test unit_import_job --test unit_journal
      Running tests/unit/import_file.rs
 test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
@@ -192,60 +195,75 @@ None.
 
 ## Raw test output
 
-Current suite, after review rounds 1 and 2:
+The suites the earlier branches recorded, re-run on this branch after Cubic round 2:
 
 ```text
-$ cargo test -p filesquid-native --features desktop --test unit_installation
-running 8 tests
+$ cargo test -p filesquid-native --features desktop --locked --test unit_installation
+running 12 tests
+test a_file_of_another_schema_is_refused_without_naming_a_path ... ok
 test a_malformed_copy_is_refused_without_naming_a_path ... ok
+test a_file_from_an_earlier_build_is_still_read ... ok
 test a_lost_file_is_restored_from_the_operational_store ... ok
 test a_lost_operational_store_is_restored_from_the_file ... ok
-test copies_that_disagree_are_refused ... ok
+test a_restored_copy_keeps_the_creation_time ... ok
+test the_file_holds_schema_1_the_uuid_and_its_creation_time ... ok
 test the_file_is_owner_only ... ok
-test the_first_start_creates_one_uuid_v4_and_later_starts_read_it ... ok
+test copies_that_disagree_are_refused ... ok
 test two_installations_get_different_uuids ... ok
 test concurrent_launches_agree_on_one_installation ... ok
-test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
-$ cargo test -p filesquid-native --features desktop --test unit_journal
-running 15 tests
+test the_first_start_creates_one_uuid_v4_and_later_starts_read_it ... ok
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+$ cargo test -p filesquid-native --features desktop --locked --test unit_journal
+running 21 tests
+test a_preset_id_repeating_a_held_client_event_id_answers_the_holder ... ok
+test a_client_event_id_that_is_not_opaque_is_dropped_and_its_entry_kept ... ok
+test an_older_journal_gains_the_client_event_id_column_on_open ... ok
 test append_then_query_returns_entries_in_order_with_ids ... ok
-test both_stores_assign_ids_before_the_entries_are_written ... ok
-test an_older_journal_gains_the_linkage_columns_on_open ... ok
 test both_stores_keep_the_operation_id_and_object_reference ... ok
+test both_stores_assign_ids_before_the_entries_are_written ... ok
+test both_stores_filter_by_library_object_and_operation_id ... ok
+test an_older_journal_gains_the_linkage_columns_on_open ... ok
+test both_stores_store_each_client_event_id_once ... ok
 test entries_serialize_rfc3339_utc_time_and_lowercase_enums ... ok
-test filters_and_cursor_paging ... ok
+test descending_queries_page_newest_first ... ok
+test client_event_de_duplication_survives_a_restart ... ok
 test log_file_names_match_the_original_suffix_rule ... ok
 test opaque_identifiers_are_kept ... ok
-test identifiers_that_are_not_opaque_are_redacted_by_both_stores ... ok
-test descending_queries_page_newest_first ... ok
 test domain_operations_are_journaled_in_the_callers_transaction ... ok
+test identifiers_that_are_not_opaque_are_redacted_by_both_stores ... ok
 test opening_creates_the_database_and_writes_no_log_files ... ok
+test filters_and_cursor_paging ... ok
 test retention_keeps_everything_by_default_and_journals_its_own_deletions ... ok
 test the_sqlite_journal_and_its_wal_are_owner_only ... ok
 test sqlite_journal_is_append_only ... ok
-test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
-$ cargo test -p filesquid-native --features desktop --test unit_canonical_commit
-running 13 tests
+test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+$ cargo test -p filesquid-native --features desktop --locked --test unit_canonical_commit
+running 18 tests
 test a_commit_without_journal_ids_publishes_and_warns_without_identifying_data ... ok
-test a_command_publishes_one_snapshot_version_before_the_catalog_answers ... ok
 test a_crash_after_the_snapshot_loses_no_acknowledged_state ... ok
 test a_crash_after_the_snapshot_replays_the_commits_journal_entries_once ... ok
-test a_head_without_its_version_inventory_is_refused_and_not_repaired ... ok
+test a_command_publishes_one_snapshot_version_before_the_catalog_answers ... ok
 test a_crash_before_the_snapshot_leaves_the_work_pending_and_a_retry_completes_once ... ok
 test a_library_directory_that_is_a_symbolic_link_is_refused ... ok
-test a_deleted_catalog_is_rebuilt_from_the_snapshot_with_its_receipts ... ok
+test a_head_without_its_version_inventory_is_refused_and_not_repaired ... ok
+test a_failed_index_refresh_is_journaled_as_failed ... ok
 test a_missing_snapshot_is_published_again_in_full_by_the_next_commit ... ok
+test a_refresh_of_an_unknown_library_is_journaled_as_failed ... ok
+test a_deleted_catalog_is_rebuilt_from_the_snapshot_with_its_receipts ... ok
+test a_recorded_no_op_commits_no_version_and_journals_nothing ... ok
+test a_recorded_index_refresh_that_changes_nothing_journals_nothing ... ok
 test an_unpublished_version_left_by_a_crash_is_ignored_and_replaced ... ok
 test a_snapshot_of_another_library_is_never_loaded ... ok
-test every_library_keeps_its_ocfl_root_beside_its_catalog_file ... ok
 test an_unrecorded_catalog_still_links_its_commits ... ok
-test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s
-$ cargo test -p filesquid-desktop --test integration_library_catalog
+test every_library_keeps_its_ocfl_root_in_its_own_folder_and_only_its_index_here ... ok
+test an_index_refresh_that_changes_nothing_journals_nothing ... ok
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.17s
+$ cargo test -p filesquid-desktop --locked --test integration_library_catalog
 running 5 tests
 test a_catalog_directory_that_cannot_be_opened_is_journaled_without_its_path ... ok
 test the_installation_uuid_is_created_once_and_journaled ... ok
 test the_host_keeps_one_catalog_file_per_library_and_journals_its_commits ... ok
-test catalog_commits_raise_journal_entry_events ... ok
 test a_catalog_commit_carries_its_history_in_the_same_version ... ok
+test catalog_commits_raise_journal_entry_events ... ok
 test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
 ```
