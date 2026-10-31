@@ -236,17 +236,25 @@ export function errorState(
   return state;
 }
 
-/** True when a row's label, value or copy text (or its `searchText`) contains `word`, ignoring case. */
-function matches(row: PropertyRow, word: string): boolean {
-  const needle = word.toLocaleLowerCase();
-  const texts =
-    row.searchText === undefined ? [row.label, row.value, row.copy ?? ""] : [row.searchText];
-  return texts.some((text) => text.toLocaleLowerCase().includes(needle));
+/** Text folded for matching: canonically equivalent forms (composed and decomposed) and case agree. */
+function fold(text: string): string {
+  return text.normalize("NFC").toLocaleLowerCase().normalize("NFC");
 }
 
-/** How many rows are properties: the grouped rows (technical rows, notes) are not counted. */
+/**
+ * True when a row's label, value or copy text (or its `searchText`) contains `word`, ignoring
+ * case and the difference between composed and decomposed characters.
+ */
+function matches(row: PropertyRow, word: string): boolean {
+  const needle = fold(word);
+  const texts =
+    row.searchText === undefined ? [row.label, row.value, row.copy ?? ""] : [row.searchText];
+  return texts.some((text) => fold(text).includes(needle));
+}
+
+/** How many rows are properties: grouped rows (technical rows) and note rows are not counted. */
 function propertyCount(rows: readonly PropertyRow[]): number {
-  return rows.filter((row) => row.group === undefined).length;
+  return rows.filter((row) => row.group === undefined && row.display !== "note").length;
 }
 
 /** The rows in runs of one group each, in order. */

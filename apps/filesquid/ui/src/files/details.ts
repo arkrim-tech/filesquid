@@ -242,18 +242,29 @@ function importRows(
     utc: utcClock(entry.imported_at, locale),
   });
   const method = labels[METHOD_KEYS[entry.method]];
-  const volume = typeof entry.volume_name === "string" ? entry.volume_name : undefined;
-  const source = volume ? formatLabel(labels.filePanelSourceValue, { method, volume }) : method;
-  const path = typeof entry.relative_path === "string" ? entry.relative_path : undefined;
+  // The volume and the path are names as the source reported them: text, or base64 bytes.
+  const volume = entry.volume_name === null ? undefined : rawNameText(entry.volume_name, labels);
+  const source = volume
+    ? formatLabel(labels.filePanelSourceValue, { method, volume: volume.text })
+    : method;
+  const path = entry.relative_path === null ? undefined : rawNameText(entry.relative_path, labels);
   const rows: PropertyRow[] = [
     { key: numberedKey("uploaded", index), label: labels.filePanelUploaded, value: uploaded },
     { key: numberedKey("source", index), label: labels.filePanelSource, value: source },
   ];
   if (path) {
     const key = numberedKey("import-path", index);
-    rows.push({ key, label: labels.filePanelImportPath, value: path, mono: true });
+    rows.push({ key, label: labels.filePanelImportPath, value: path.text, mono: true });
   }
   return rows;
+}
+
+/** The note that says how many acquisitions have no rows, or none when all are shown. */
+function moreImportsRow(total: number, labels: LabelTable, locale?: string): PropertyRow[] {
+  if (total <= MAX_IMPORT_ROWS) return [];
+  const count = new Intl.NumberFormat(locale).format(total - MAX_IMPORT_ROWS);
+  const value = formatLabel(labels.filePanelImportsMore, { count });
+  return [{ key: "imports-more", label: value, value, display: "note" }];
 }
 
 /** A term name as words: `PixelXDimension` is `Pixel X Dimension`, `GPSLatitude` is `GPS Latitude`. */
@@ -340,7 +351,8 @@ export function detailRows(
   extras: DetailExtras = {},
 ): PropertyRow[] {
   const { facts, technical } = extras;
-  const imports = (facts?.imports ?? []).slice(0, MAX_IMPORT_ROWS);
+  const all = facts?.imports ?? [];
+  const imports = all.slice(0, MAX_IMPORT_ROWS);
   return [
     ...identityRows(details, labels, facts),
     sizeRow(details, labels, locale),
@@ -355,6 +367,7 @@ export function detailRows(
       mono: true,
     },
     versionRow(details, versions, labels, locale),
+    ...moreImportsRow(all.length, labels, locale),
     ...(technical ? technicalRows(technical, labels) : []),
   ];
 }

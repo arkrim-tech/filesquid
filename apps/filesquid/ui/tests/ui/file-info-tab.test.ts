@@ -115,6 +115,31 @@ describe("<fs-details-panel> as the File info tab with facts", () => {
     expect(panel.dataset.state).toBe("no-match");
   });
 
+  it("matches composed and decomposed forms of the same text, and any case", async () => {
+    const panel = await mount(new FakeFactsSource(), [exif("Artist", "Café Noir")]);
+    const input = root(panel).querySelector<HTMLInputElement>("input.filter") as HTMLInputElement;
+    for (const word of ["Café", "CAFÉ", "café noir"]) {
+      input.value = word;
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      expect(labelsShown(panel)).toEqual(["Artist"]);
+    }
+    input.value = "Cafè";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(panel.dataset.state).toBe("no-match");
+  });
+
+  it("says when the record has more acquisitions than it draws rows for, outside the count", async () => {
+    const facts = new FakeFactsSource();
+    const entry = provFacts().imports[0] as object;
+    facts.answer = provFacts({ imports: Array.from({ length: 11 }, () => entry) as never });
+    const panel = await mount(facts, []);
+    expect(root(panel).querySelector(".note-row")?.textContent).toBe(
+      "Rows for 1 more acquisitions are not shown.",
+    );
+    // Uploaded and Source, ten times, are 20 rows of the 29 properties.
+    expect(root(panel).querySelector(".count")?.textContent).toBe("29 properties · read only");
+  });
+
   it("leaves the import rows out and keeps the tab when the facts cannot be read", async () => {
     const facts = new FakeFactsSource();
     facts.error = new ApiError(404, "/x", { code: "not_found" });
@@ -156,7 +181,9 @@ describe("<fs-details-panel> as the File info tab with facts", () => {
     facts.answer = hostile as never;
     const panel = await mount(facts);
     const text = root(panel).textContent ?? "";
-    for (const secret of ["/Users/jane", "jane-macbook"]) expect(text).not.toContain(secret);
+    for (const secret of ["/Users/jane", "jane-macbook", "jane"]) {
+      expect(text).not.toContain(secret);
+    }
   });
 
   it("is still the one File info tab for the audit: no violations", async () => {

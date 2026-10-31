@@ -53,6 +53,16 @@ const activities = (panel: HTMLElement) => [
   ...root(panel).querySelectorAll<HTMLElement>("li.activity"),
 ];
 
+/** The text of a blob (jsdom's Blob has no `text()`). */
+function readBlob(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error);
+    reader.readAsText(blob);
+  });
+}
+
 /** Type into the filter field. */
 function filter(panel: HTMLElement, word: string): void {
   const input = root(panel).querySelector<HTMLInputElement>("input.filter") as HTMLInputElement;
@@ -210,6 +220,13 @@ describe("<fs-provenance-panel>", () => {
     expect(activities(panel).map((r) => r.getAttribute("data-key"))).toEqual(["v2:op-2"]);
     filter(panel, "");
     expect(activities(panel)).toHaveLength(4);
+    // The latest activity's record is read, so its entity path matches; the others are not read.
+    filter(panel, "facade-study.jpg");
+    expect(activities(panel).map((r) => r.getAttribute("data-key"))).toEqual(["v4:op-4"]);
+    filter(panel, "sha256 9b1f4e");
+    expect(activities(panel)).toHaveLength(0);
+    filter(panel, "9b1f4e");
+    expect(activities(panel).map((r) => r.getAttribute("data-key"))).toEqual(["v4:op-4"]);
   });
 
   it("copies the whole value of an attribute and announces it", async () => {
@@ -280,6 +297,41 @@ describe("<fs-provenance-panel>", () => {
     expect(own?.getAttribute("aria-label")).toBe("View metadata edit v4 in Logs");
   });
 
+  it("links every activity to the Logs view for its own operation once it is expanded", async () => {
+    const panel = await mount(new FakeProvenanceSource(), { canViewLogs: true });
+    for (const index of [1, 2, 3]) {
+      (activities(panel)[index]?.querySelector("button.toggle") as HTMLButtonElement).click();
+      await settle();
+    }
+    const links = activities(panel).map((row) => ({
+      key: row.dataset.key,
+      href: row.querySelector("a.logs")?.getAttribute("href"),
+    }));
+    expect(links).toEqual([
+      { key: "v4:op-4", href: "#/logs?operation_id=op-4" },
+      { key: "v3:op-3", href: "#/logs?operation_id=op-3" },
+      { key: "v2:op-2", href: "#/logs?operation_id=op-2" },
+      { key: "v1:op-1", href: "#/logs?operation_id=op-1" },
+    ]);
+  });
+
+  it("draws or removes View in Logs when the host becomes known or changes", async () => {
+    let owner = false;
+    const source = new FakeProvenanceSource();
+    const panel = document.createElement("fs-provenance-panel") as FsProvenancePanel;
+    panel.configure({ labels, source, canViewLogs: () => owner });
+    document.body.replaceChildren(panel);
+    panel.fileRef = PROV_FILE;
+    await settle();
+    expect(root(panel).querySelector("a.logs")).toBeNull();
+    owner = true;
+    document.dispatchEvent(new CustomEvent("fs-host", { detail: { hostType: "desktop" } }));
+    expect(root(panel).querySelector(".footer a.logs")).not.toBeNull();
+    owner = false;
+    document.dispatchEvent(new CustomEvent("fs-host", { detail: { hostType: "server" } }));
+    expect(root(panel).querySelector("a.logs")).toBeNull();
+  });
+
   it("offers no View in Logs to anyone who is not the owner or an administrator", async () => {
     const panel = await mount(new FakeProvenanceSource(), { canViewLogs: false });
     expect(root(panel).querySelector("a.logs")).toBeNull();
@@ -306,9 +358,48 @@ describe("<fs-provenance-panel>", () => {
     expect(source.exports).toBe(1);
     expect(saved).toHaveLength(1);
     expect(saved[0]?.name).toBe("facade-study.jpg.history.jsonld");
+    const blob = saved[0]?.blob as Blob;
+    expect(blob.type).toBe("application/ld+json");
+    expect(await readBlob(blob)).toBe('[{"@id":"x"}]');
     expect(root(panel).querySelector(".footer [role=status]")?.textContent).toBe(
       "Exported the history of facade-study.jpg.",
     );
+  });
+
+  it("does not carry an export's announcement or failure over to the next file", async () => {
+    const source = new FakeProvenanceSource();
+    const panel = await mount(source);
+    const exportButton = () =>
+      root(panel).querySelector<HTMLButtonElement>(".footer button.export") as HTMLButtonElement;
+    exportButton().click();
+    await settle();
+    expect(root(panel).querySelector(".footer [role=status]")?.textContent).not.toBe("");
+    panel.fileRef = { ...PROV_FILE, object_id: "urn:uuid:11111111-2222-4333-8444-555555555555" };
+    await settle();
+    expect(root(panel).querySelector(".footer [role=status]")?.textContent).toBe("");
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    source.exportError = new ApiError(500, "/x", { code: "internal" });
+    exportButton().click();
+    await settle();
+    expect((root(panel).querySelector(".footer [role=alert]") as HTMLElement).hidden).toBe(false);
+    panel.fileRef = PROV_FILE;
+    await settle();
+    expect((root(panel).querySelector(".footer [role=alert]") as HTMLElement).hidden).toBe(true);
+  });
+
+  it("ignores an export that finishes after another file opened", async () => {
+    const saved: string[] = [];
+    const source = new FakeProvenanceSource();
+    const panel = await mount(source, { save: (_blob, name) => saved.push(name) });
+    const slow = provGate();
+    source.exportGate = slow;
+    (root(panel).querySelector(".footer button.export") as HTMLButtonElement).click();
+    panel.fileRef = { ...PROV_FILE, object_id: "urn:uuid:11111111-2222-4333-8444-555555555555" };
+    await settle();
+    slow.open();
+    await settle();
+    expect(saved).toEqual([]);
+    expect(root(panel).querySelector(".footer [role=status]")?.textContent).toBe("");
   });
 
   it("says when the export left records out, and when it failed, and changes nothing", async () => {
@@ -360,22 +451,71 @@ describe("<fs-provenance-panel>", () => {
     const source = new FakeProvenanceSource();
     source.pageSize = 2;
     const panel = await mount(source);
-    expect(source.historyCalls).toEqual([undefined, "2"]);
+    expect(source.historyCalls).toEqual([undefined, "page-2"]);
     expect(activities(panel)).toHaveLength(4);
   });
 
   it("ignores a stale answer after another file opens, and clears for null", async () => {
+    const other = "urn:uuid:11111111-2222-4333-8444-555555555555";
     const source = new FakeProvenanceSource();
-    source.historyGate = provGate();
+    source.entriesByObject.set(other, provEntries().slice(0, 1));
+    const first = provGate();
+    source.historyGateOnce = first;
     const panel = await mount(source);
-    panel.fileRef = { ...PROV_FILE, object_id: "urn:uuid:11111111-2222-4333-8444-555555555555" };
-    source.historyGate.open();
+    expect(panel.dataset.state).toBe("loading");
+    panel.fileRef = { ...PROV_FILE, object_id: other };
     await settle();
+    // The second file's one activity is shown while the first file's answer is still out.
+    expect(activities(panel).map((r) => r.dataset.key)).toEqual(["v1:op-1"]);
+    first.open();
+    await settle();
+    expect(activities(panel).map((r) => r.dataset.key)).toEqual(["v1:op-1"]);
     expect(source.historyCalls).toHaveLength(2);
     panel.fileRef = null;
     await settle();
     expect(panel.dataset.state).toBe("idle");
     expect(activities(panel)).toHaveLength(0);
+  });
+
+  it("shows a file with no file history as having no activities, not as a failure", async () => {
+    const source = new FakeProvenanceSource();
+    source.historyError = new TypeError("The reference has no file history");
+    const panel = await mount(source);
+    expect(panel.dataset.state).toBe("empty");
+  });
+
+  it("limits the list to the newest 500 activities and says so", async () => {
+    const source = new FakeProvenanceSource();
+    const base = provEntries()[0] as ReturnType<typeof provEntries>[number];
+    source.entries = Array.from({ length: 520 }, (_, i) => ({
+      ...base,
+      operation_id: `op-${i + 1}`,
+      version: { ...base.version, version: `v${i + 1}` },
+    }));
+    source.pageSize = 200;
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const panel = await mount(source);
+    expect(activities(panel)).toHaveLength(500);
+    expect(activities(panel)[0]?.dataset.key).toBe("v520:op-520");
+    expect(root(panel).querySelector(".after-rows")?.textContent).toBe(
+      "The list is limited to 500 activities.",
+    );
+  });
+
+  it("starts the read again when it was cut short by leaving the document", async () => {
+    const source = new FakeProvenanceSource();
+    const gate = provGate();
+    source.historyGate = gate;
+    const panel = await mount(source);
+    expect(panel.dataset.state).toBe("loading");
+    panel.remove();
+    source.historyGate = undefined;
+    gate.open();
+    await settle();
+    document.body.append(panel);
+    await settle();
+    expect(panel.dataset.state).toBe("ready");
+    expect(activities(panel)).toHaveLength(4);
   });
 
   it("uses native controls only, no positive tabindex, and passes the accessibility audit", async () => {

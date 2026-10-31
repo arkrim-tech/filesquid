@@ -47,6 +47,25 @@ export interface FilePanelRouteOptions {
   readonly facts?: FactsSource;
   /** Reads the history, its records and its export; without it the panel has no Provenance tab. */
   readonly provenance?: ProvenanceSource;
+  /** Whether the viewer may open the Logs view (View in Logs); never when absent. */
+  readonly canViewLogs?: () => boolean;
+}
+
+/**
+ * Follow which host the shell shows, from its host badge's `fs-host` events, from now on: the
+ * owner is the person on the desktop host, the only host with a Logs view (UI-S-021). Call it
+ * when the route is bound, before the panel exists, so a host that is known by the time a file
+ * opens is not missed. Side effect: adds an event listener to the shell.
+ *
+ * @param shell The app shell, whose host badge dispatches the events.
+ * @returns A function that tells whether the viewer may open the Logs view now.
+ */
+export function watchOwner(shell: HTMLElement): () => boolean {
+  let hostType: string | undefined;
+  shell.addEventListener(HOST_EVENT, (event) => {
+    hostType = (event as CustomEvent<{ hostType?: string }>).detail?.hostType;
+  });
+  return () => hostType === "desktop";
 }
 
 /** The tag of the file panel the route mounts. */
@@ -133,12 +152,7 @@ export function bindFilePanel(
   browser: FsFileBrowser,
   options: FilePanelRouteOptions,
 ): void {
-  // View in Logs is for the owner (the desktop host); the Logs view is the desktop's too (UI-S-021).
-  let hostType: string | undefined;
-  shell.addEventListener(HOST_EVENT, (event) => {
-    hostType = (event as CustomEvent<{ hostType?: string }>).detail?.hostType;
-  });
-  const panel = createPanel(options, () => hostType === "desktop");
+  const panel = createPanel(options, options.canViewLogs ?? (() => false));
   browser.addEventListener("fs-file-open", (event) => {
     const { file } = (event as CustomEvent<{ file: FileRef | null }>).detail;
     panel.fileRef = file;

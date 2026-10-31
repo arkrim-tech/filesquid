@@ -241,6 +241,18 @@ describe("<fs-app-shell>", () => {
     window.location.hash = "";
   });
 
+  it("keeps the Logs row current on an address filtered to a file or operation (UI-F2.15)", async () => {
+    window.location.hash = "#/logs?file=7f3c9a1e-0b2c-4d5e-8f90-a1b2c341d2b8";
+    const shell = mount();
+    await settle();
+    const root = shell.shadowRoot as ShadowRoot;
+    expect(root.querySelector('a[href="#/logs"]')?.getAttribute("aria-current")).toBe("page");
+    window.location.hash = "#/logs?operation_id=op-4";
+    window.dispatchEvent(new HashChangeEvent("hashchange"));
+    expect(root.querySelector('a[href="#/logs"]')?.getAttribute("aria-current")).toBe("page");
+    window.location.hash = "";
+  });
+
   it("puts the search slot, the host badge and the Monitor button in the 60 px header", async () => {
     const shell = mount();
     await settle();

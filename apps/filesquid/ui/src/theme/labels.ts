@@ -338,6 +338,7 @@ export const REQUIRED_LABEL_KEYS = [
   "filePanelSource",
   "filePanelSourceValue",
   "filePanelImportPath",
+  "filePanelImportsMore",
   "filePanelMethodFilePicker",
   "filePanelMethodFolder",
   "filePanelMethodDragAndDrop",

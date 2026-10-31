@@ -33,7 +33,8 @@ import { focusElement } from "../a11y/focus";
 import { A11Y_STYLE } from "./a11y-style";
 import { CONTROL_STYLE } from "./control-style";
 import { icon } from "./icons";
-import { PROPERTY_TABLE_STYLE, PropertyTable } from "./property-table";
+import { HOST_EVENT } from "./fs-host-indicator";
+import { MAX_PROPERTY_ROWS, PROPERTY_TABLE_STYLE, PropertyTable } from "./property-table";
 import { saveFileToDevice } from "./save-file";
 import type { PropertyRow } from "../files/details";
 import type { FileRef } from "../files/model";
@@ -47,6 +48,7 @@ import {
   parseProvRecord,
   readAllHistory,
   type ActivityView,
+  type AllHistory,
   type Attribute,
   type ProvRecord,
 } from "../files/provenance";
@@ -160,6 +162,8 @@ export class FsProvenancePanel extends HTMLElement {
   private records = new Map<string, RecordState>();
   private expanded = new Set<string>();
   private partial = { capped: false, truncated: false };
+  /** True when the element left the document while it was loading. */
+  private interrupted = false;
 
   constructor() {
     super();
@@ -198,10 +202,31 @@ export class FsProvenancePanel extends HTMLElement {
     void this.load();
   }
 
-  /** Cancel the reads in flight when the element leaves the document. */
+  /**
+   * Cancel the reads in flight when the element leaves the document; a load that was cut short
+   * starts again when the element is put back, so a reused panel is never left loading. The
+   * panel also follows the host (the owner check of View in Logs) while it is in the document.
+   */
   disconnectedCallback(): void {
+    document.removeEventListener(HOST_EVENT, this.onHostChange);
+    if (this.table?.state === "loading") this.interrupted = true;
     this.abort?.abort();
   }
+
+  /** Restart a load that leaving the document cut short, and follow the host again. */
+  connectedCallback(): void {
+    document.addEventListener(HOST_EVENT, this.onHostChange);
+    if (!this.interrupted) return;
+    this.interrupted = false;
+    void this.load();
+  }
+
+  /** The host became known or changed: draw View in Logs for the owner check as it now stands. */
+  private readonly onHostChange = (): void => {
+    if (this.table?.state !== "ready") return;
+    this.syncFooterLink();
+    this.renderRows();
+  };
 
   /** Build the stylesheet, the table and the footer. */
   private build(options: ProvenancePanelOptions): void {
@@ -325,6 +350,7 @@ export class FsProvenancePanel extends HTMLElement {
     this.records = new Map();
     this.expanded = new Set();
     this.partial = { capped: false, truncated: false };
+    this.clearExportResult();
     if (!file) return table.clear();
     const abort = new AbortController();
     this.abort = abort;
@@ -332,16 +358,37 @@ export class FsProvenancePanel extends HTMLElement {
     try {
       const all = await readAllHistory(options.source, file, { signal: abort.signal });
       if (generation !== this.generation) return;
-      this.partial = { capped: all.capped, truncated: all.truncated };
-      this.views = activityViews(all.entries);
-      const latest = this.views[0];
-      if (latest) this.expanded.add(latest.key);
-      this.renderRows();
-      if (latest) void this.ensureRecord(latest);
+      this.show(all);
     } catch (error) {
       if (generation !== this.generation || abort.signal.aborted) return;
+      // A reference with no file history (not a file's own original) has no activities.
+      if (error instanceof TypeError)
+        return this.show({ entries: [], truncated: false, capped: false });
       console.warn("FileSquid could not read the provenance", errorName(error));
       table.error(error);
+    }
+  }
+
+  /** Show what the history reads found: the newest activities up to the table's bound, the latest expanded. */
+  private show(all: AllHistory): void {
+    const newest = activityViews(all.entries);
+    this.views = newest.slice(0, MAX_PROPERTY_ROWS);
+    const cut = newest.length > this.views.length;
+    this.partial = { capped: all.capped || cut, truncated: all.truncated };
+    const latest = this.views[0];
+    if (latest) this.expanded.add(latest.key);
+    this.renderRows();
+    if (latest) void this.ensureRecord(latest);
+  }
+
+  /** Forget the last export's announcement and failure, so another file does not inherit them. */
+  private clearExportResult(): void {
+    const status = this.footer?.querySelector<HTMLElement>(".status");
+    const failed = this.footer?.querySelector<HTMLElement>(".failed");
+    if (status) status.textContent = "";
+    if (failed) {
+      failed.textContent = "";
+      failed.hidden = true;
     }
   }
 
@@ -558,14 +605,19 @@ export class FsProvenancePanel extends HTMLElement {
     const { options, file } = this;
     if (!options || !file) return;
     const labels = options.labels;
+    const generation = this.generation;
+    const signal = this.abort?.signal;
     status.textContent = "";
     failed.hidden = true;
     try {
-      const exported = await options.source.exportHistory(file);
+      const exported = await options.source.exportHistory(file, { signal });
+      // Another file opened meanwhile: its panel must not announce this file's export.
+      if (generation !== this.generation) return;
       (options.save ?? saveFileToDevice)(exported.blob, `${file.display_name}.history.jsonld`);
       const done = formatLabel(labels.provenanceExported, { name: file.display_name });
       status.textContent = exported.truncated ? `${done} ${labels.provenanceExportPartial}` : done;
     } catch (error) {
+      if (generation !== this.generation) return;
       console.warn("FileSquid could not export the history", errorName(error));
       failed.textContent = labels.provenanceExportFailed;
       failed.hidden = false;

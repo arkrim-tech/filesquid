@@ -81,8 +81,8 @@ Feature: File panel tabs: File info, Description and Provenance
     And the other activities should be collapsed and read their record only when I expand them
 
   Scenario: Each activity links to the Logs view for its operation
-    When I open the "Provenance" tab as the owner
-    Then the latest activity should offer "View in Logs" for its operation
+    When I open the "Provenance" tab as the owner and expand every activity
+    Then each activity should offer "View in Logs" for its own operation ID
     And the footer should offer "View in Logs" for the file
 
   Scenario: Anyone who is not the owner or an administrator gets no View in Logs

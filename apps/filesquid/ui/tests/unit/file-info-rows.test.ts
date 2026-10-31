@@ -133,13 +133,70 @@ describe("detailRows with the facts projection", () => {
   });
 
   it("draws one Uploaded and Source pair per acquisition, at most ten", () => {
-    const base = facts().imports[0] as never;
-    const many = Array.from({ length: 12 }, () => base);
+    const base = facts().imports[0] as object;
+    const methods = ["file_picker", "folder", "drag_and_drop", "other_application", "api_upload"];
+    const many = Array.from({ length: 12 }, (_, i) => ({
+      ...base,
+      imported_at: `2026-10-${String(i + 1).padStart(2, "0")}T12:00:00Z`,
+      method: methods[i % methods.length],
+      volume_name: i % 2 === 0 ? `Disk ${i}` : null,
+    })) as never[];
     const rows = detailRows(DETAILS, VERSIONS, labels, "en", undefined, {
       facts: facts({ imports: many }),
     });
-    expect(rows.filter((r) => r.key.startsWith("uploaded"))).toHaveLength(10);
-    expect(rows.filter((r) => r.key.startsWith("source"))).toHaveLength(10);
+    const pairs = rows.filter((r) => /^(uploaded|source)/.test(r.key));
+    expect(pairs).toHaveLength(20);
+    const expectedMethod = [
+      "Files upload",
+      "Folder upload",
+      "Files upload · dragged and dropped",
+      "Shared from another application",
+      "Files upload",
+    ];
+    for (let i = 0; i < 10; i += 1) {
+      const suffix = i === 0 ? "" : `-${i + 1}`;
+      const uploaded = rows.find((r) => r.key === `uploaded${suffix}`);
+      const source = rows.find((r) => r.key === `source${suffix}`);
+      expect(uploaded?.value).toMatch(new RegExp(`^Oct ${i + 1}, 2026, 12:00 \\(12:00 UTC\\)$`));
+      const method = expectedMethod[i % 5] as string;
+      expect(source?.value).toBe(i % 2 === 0 ? `${method} · volume Disk ${i}` : method);
+    }
+    // Rows come in order: each Uploaded is followed by its own Source, then the next pair.
+    expect(pairs.map((r) => r.key).slice(0, 4)).toEqual([
+      "uploaded",
+      "source",
+      "uploaded-2",
+      "source-2",
+    ]);
+    const note = rows.find((r) => r.key === "imports-more");
+    expect(note).toMatchObject({
+      display: "note",
+      value: "Rows for 2 more acquisitions are not shown.",
+    });
+  });
+
+  it("shows no more-acquisitions note when every acquisition has its rows", () => {
+    const rows = detailRows(DETAILS, VERSIONS, labels, "en", undefined, { facts: facts() });
+    expect(rows.some((r) => r.key === "imports-more")).toBe(false);
+  });
+
+  it("shows a volume and a path that are not UTF-8 as their base64 bytes", () => {
+    const base = facts().imports[0] as object;
+    const entry = {
+      ...base,
+      volume_name: { encoding: "base64", value: "RElTSw==" },
+      relative_path: { encoding: "base64", value: "/+8=" },
+    } as never;
+    const rows = detailRows(DETAILS, VERSIONS, labels, "en", undefined, {
+      facts: facts({ imports: [entry] }),
+    });
+    expect(rows.find((r) => r.key === "source")?.value).toBe(
+      "Folder upload · volume base64: RElTSw==",
+    );
+    expect(rows.find((r) => r.key === "import-path")).toMatchObject({
+      value: "base64: /+8=",
+      mono: true,
+    });
   });
 
   it("shows a name that is not UTF-8 as its base64 bytes", () => {

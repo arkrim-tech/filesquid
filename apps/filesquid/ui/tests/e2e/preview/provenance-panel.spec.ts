@@ -602,6 +602,14 @@ test("JSON-LD saves the file's history and announces it; a failure is an alert",
   await expect(prov.locator(".footer [role=status]")).toContainText(
     label(labels, "provenanceExportPartial"),
   );
+  // A failed export is an alert, saves nothing and keeps the status line empty.
+  api.provenance.failExport(500, "internal");
+  await button.click();
+  await expect(prov.locator(".footer [role=alert]")).toHaveText(
+    label(labels, "provenanceExportFailed"),
+  );
+  await expect(prov.locator(".footer [role=status]")).toHaveText("");
+  expect(api.provenance.exports).toBe(3);
   expect(errors).toEqual([]);
 });
 

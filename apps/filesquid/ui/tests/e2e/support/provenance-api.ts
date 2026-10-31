@@ -9,6 +9,7 @@
  * {@link ProvenanceApi}, and a later `page.route` (the metadata spec's statements) takes
  * precedence over these.
  */
+import { randomUUID } from "node:crypto";
 import type { Page, Route } from "@playwright/test";
 import { PROV_OBJECT, provEntries, provFacts, provRecord } from "../../support/provenance-fakes";
 import type { HistoryEntry } from "../../../src/files/provenance";
@@ -44,8 +45,41 @@ export interface ProvenanceApi {
   holdHistory(): () => void;
   /** Answer the facts route with this status and code instead. */
   failFacts(status: number, code: string): void;
+  /** Answer the export route with this status and code instead. */
+  failExport(status: number, code: string): void;
   /** Whether the export reports a truncated body. */
   truncatedExport: boolean;
+}
+
+/** The file the routes answer for: what the file panel fixture says about it. */
+export interface ProvenanceFile {
+  /** The name users see. */
+  readonly displayName: string;
+  /** The stored path of its original (its extension is the file's). */
+  readonly path: string;
+  /** Its media type. */
+  readonly mediaType: string;
+  /** Its size in bytes at the head. */
+  readonly size: number;
+}
+
+/** The format labels the facts route answers for the media types of the fixtures. */
+const FORMATS: Readonly<Record<string, string>> = {
+  "image/jpeg": "JPEG image",
+  "application/pdf": "PDF document",
+};
+
+/** The facts of the file: its own names, type and size, over the mockup's SHA-256 and import. */
+function factsOf(file: ProvenanceFile): FileFacts {
+  const extension = file.path.split(".").pop() ?? null;
+  return provFacts({
+    original_name: file.displayName,
+    display_name: file.displayName,
+    extension,
+    format: FORMATS[file.mediaType] ?? null,
+    media_type: file.mediaType,
+    size: file.size,
+  });
 }
 
 /** A JSON error body of the contract. */
@@ -59,11 +93,13 @@ function refusal(status: number, code: string) {
  * @param page - The page under test.
  * @returns What the fake saw, and ways to steer it.
  */
-export async function serveProvenance(page: Page): Promise<ProvenanceApi> {
+export async function serveProvenance(page: Page, file: ProvenanceFile): Promise<ProvenanceApi> {
   const fail: {
     history?: { status: number; code: string };
     facts?: { status: number; code: string };
+    export?: { status: number; code: string };
   } = {};
+  const cursors = new Map<string, number>();
   let hold: Promise<void> | undefined;
   const api: ProvenanceApi = {
     historyRequests: [],
@@ -73,7 +109,7 @@ export async function serveProvenance(page: Page): Promise<ProvenanceApi> {
     exports: 0,
     technical: [],
     entries: provEntries(),
-    facts: provFacts(),
+    facts: factsOf(file),
     failRecords: new Set(),
     pageSize: 100,
     truncatedExport: false,
@@ -85,6 +121,7 @@ export async function serveProvenance(page: Page): Promise<ProvenanceApi> {
       return () => release();
     },
     failFacts: (status, code) => void (fail.facts = { status, code }),
+    failExport: (status, code) => void (fail.export = { status, code }),
   };
   const json = (route: Route, body: unknown) => route.fulfill({ json: body });
   await page.route(/\/api\/v1\/files\/facts\?/, (route) => {
@@ -116,9 +153,13 @@ export async function serveProvenance(page: Page): Promise<ProvenanceApi> {
     api.historyRequests.push(url.searchParams.get("cursor"));
     await hold;
     if (fail.history) return route.fulfill(refusal(fail.history.status, fail.history.code));
-    const start = Number(url.searchParams.get("cursor") ?? 0);
+    // The cursor is opaque to the page: the fake issues tokens and maps them back to offsets.
+    const token = url.searchParams.get("cursor");
+    const start = token === null ? 0 : (cursors.get(token) ?? 0);
     const items = api.entries.slice(start, start + api.pageSize);
-    const next = start + api.pageSize < api.entries.length ? String(start + api.pageSize) : null;
+    const more = start + api.pageSize < api.entries.length;
+    const next = more ? `c-${randomUUID()}` : null;
+    if (next !== null) cursors.set(next, start + api.pageSize);
     return json(route, { items, next_cursor: next, truncated: false });
   });
   await page.route(/\/api\/v1\/files\/[0-9a-f-]{36}\/versions\/v\d+\/prov$/, (route) => {
@@ -132,6 +173,7 @@ export async function serveProvenance(page: Page): Promise<ProvenanceApi> {
   });
   await page.route(/\/api\/v1\/files\/[0-9a-f-]{36}\/history\/export/, (route) => {
     api.exports += 1;
+    if (fail.export) return route.fulfill(refusal(fail.export.status, fail.export.code));
     const headers: Record<string, string> = {
       "content-type": "application/ld+json",
       "content-disposition": 'attachment; filename="history.jsonld"',

@@ -3,7 +3,8 @@
  * file as `GET /files/{id}/history` answers it (oldest first, in pages), the JSON-LD record of
  * each version, the JSON-LD export and the facts projection, answering the data of mockups 35
  * and 36 (`facade-study.jpg`, four versions, the head v4 a metadata edit). Each call is
- * recorded and each read can be made to fail or to wait.
+ * recorded; the history can be made to fail or to wait (every call, or only the next one), and
+ * record, export and facts reads can be made to fail.
  */
 import { ApiError } from "../../src/api/client";
 import type { FactsSource, FileFacts } from "../../src/files/facts-source";
@@ -122,10 +123,16 @@ export class FakeProvenanceSource implements ProvenanceSource {
   records = new Map<string, unknown>();
   /** A gate `history` waits on, when set. */
   historyGate?: ProvGate;
+  /** A gate only the next `history` call waits on; the call that takes it clears it. */
+  historyGateOnce?: ProvGate;
+  /** The entries of a file other than the fixture's, by object ID (`entries` for any other). */
+  entriesByObject = new Map<string, HistoryEntry[]>();
   /** The error `exportHistory` rejects with, when set. */
   exportError?: unknown;
   /** Whether `exportHistory` reports a truncated export. */
   exportTruncated = false;
+  /** A gate `exportHistory` waits on, when set. */
+  exportGate?: ProvGate;
   /** Every history call's cursor (undefined for the first page). */
   readonly historyCalls: (string | undefined)[] = [];
   /** Every record read's version. */
@@ -137,13 +144,18 @@ export class FakeProvenanceSource implements ProvenanceSource {
     file: FileRef,
     options: SourceOptions & { cursor?: string } = {},
   ): Promise<HistoryPage> {
-    void file;
     this.historyCalls.push(options.cursor);
+    const once = this.historyGateOnce;
+    this.historyGateOnce = undefined;
+    await once?.wait;
     await this.historyGate?.wait;
     if (this.historyError) throw this.historyError;
-    const start = options.cursor ? Number(options.cursor) : 0;
-    const items = this.entries.slice(start, start + this.pageSize);
-    const next = start + this.pageSize < this.entries.length ? String(start + this.pageSize) : null;
+    // The cursor is an opaque token to the client; the fake maps it back to an offset.
+    const start = options.cursor ? Number(/^page-(\d+)$/.exec(options.cursor)?.[1]) : 0;
+    const all = this.entriesByObject.get(file.object_id) ?? this.entries;
+    const items = all.slice(start, start + this.pageSize);
+    const more = start + this.pageSize < all.length;
+    const next = more ? `page-${start + this.pageSize}` : null;
     return { items, next_cursor: next, truncated: this.truncated };
   }
 
@@ -159,6 +171,7 @@ export class FakeProvenanceSource implements ProvenanceSource {
   async exportHistory(file: FileRef): Promise<ExportedHistory> {
     void file;
     this.exports += 1;
+    await this.exportGate?.wait;
     if (this.exportError) throw this.exportError;
     const blob = new Blob(['[{"@id":"x"}]'], { type: "application/ld+json" });
     return { blob, truncated: this.exportTruncated };
@@ -204,6 +217,7 @@ export class FakeFactsSource implements FactsSource {
   ): Promise<{ library_id: string; file_id: string; version: string; facts: FileFacts }> {
     this.calls.push(file);
     if (this.error) throw this.error;
-    return { library_id: file.library_id, file_id: "f", version: file.version, facts: this.answer };
+    const file_id = file.object_id.slice("urn:uuid:".length);
+    return { library_id: file.library_id, file_id, version: file.version, facts: this.answer };
   }
 }

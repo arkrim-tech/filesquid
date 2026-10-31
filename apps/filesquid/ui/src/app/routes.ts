@@ -19,7 +19,7 @@ import type { DownloadSource } from "../files/download-source";
 import type { MetadataSource } from "../files/metadata-source";
 import type { FactsSource } from "../files/facts-source";
 import type { ProvenanceSource } from "../files/provenance-source";
-import { bindFilePanel, removeFilePanel } from "./file-panel-route";
+import { bindFilePanel, removeFilePanel, watchOwner } from "./file-panel-route";
 
 /** An element the routed views are mounted in; the app shell also offers `focusMain`. */
 export type RouteHost = HTMLElement & {
@@ -350,9 +350,10 @@ export function bindFilesRoute(
   options: FilesRouteOptions,
   win: Window = window,
 ): () => void {
-  applyFilesRoute(shell, options, win);
+  const owner = watchOwner(shell);
+  applyFilesRoute(shell, options, win, owner);
   const onChange = () => {
-    applyFilesRoute(shell, options, win);
+    applyFilesRoute(shell, options, win, owner);
     shell.focusMain?.();
   };
   win.addEventListener("hashchange", onChange);
@@ -360,7 +361,12 @@ export function bindFilesRoute(
 }
 
 /** Mount the file browser for a files route, move it to the route's folder, or remove it. */
-function applyFilesRoute(shell: HTMLElement, options: FilesRouteOptions, win: Window): void {
+function applyFilesRoute(
+  shell: HTMLElement,
+  options: FilesRouteOptions,
+  win: Window,
+  owner: () => boolean,
+): void {
   const location = parseLocationHash(win.location.hash);
   const existing = shell.querySelector<FsFileBrowser>("fs-file-browser");
   if (!location) {
@@ -368,7 +374,7 @@ function applyFilesRoute(shell: HTMLElement, options: FilesRouteOptions, win: Wi
     removeFilePanel(shell);
     return;
   }
-  const browser = existing ?? createFileBrowser(shell, options, win);
+  const browser = existing ?? createFileBrowser(shell, options, win, owner);
   browser.location = location;
 }
 
@@ -377,10 +383,13 @@ function createFileBrowser(
   shell: HTMLElement,
   options: FilesRouteOptions,
   win: Window,
+  owner: () => boolean,
 ): FsFileBrowser {
   const browser = document.createElement("fs-file-browser") as FsFileBrowser;
   browser.configure({ labels: options.labels, source: options.source, href: locationHash });
-  if (options.filePanel) bindFilePanel(shell, browser, { ...options, ...options.filePanel });
+  if (options.filePanel) {
+    bindFilePanel(shell, browser, { ...options, ...options.filePanel, canViewLogs: owner });
+  }
   browser.addEventListener("fs-location-change", (event) => {
     const { location } = (event as CustomEvent<{ location: FileLocation }>).detail;
     const hash = locationHash(location);

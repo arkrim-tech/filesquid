@@ -253,6 +253,27 @@ describe("bindFilesRoute", () => {
     expect(tab.shadowRoot?.querySelector("a.logs")).toBeNull();
   });
 
+  it("remembers the desktop host from before the files route was entered (UI-F2.15)", async () => {
+    const history = new FakePanelSource();
+    stop = bindFilesRoute(host, {
+      labels,
+      source: fixture(),
+      filePanel: { history, download: history, provenance: new FakeProvenanceSource() },
+    });
+    // The host is known while another route is shown and no browser exists yet.
+    host.dispatchEvent(new CustomEvent("fs-host", { detail: { hostType: "desktop" } }));
+    window.history.replaceState(null, "", "#/files/lib/obj");
+    window.dispatchEvent(new HashChangeEvent("hashchange"));
+    await settle();
+    await click(control(browser() as FsFileBrowser, "readme.txt"));
+    await settle();
+    const panel = host.querySelector<FsFilePanel>("fs-file-panel") as FsFilePanel;
+    panel.shadowRoot?.querySelectorAll<HTMLElement>('[role="tab"]')[1]?.click();
+    await settle();
+    const tab = panel.shadowRoot?.querySelector("fs-provenance-panel") as HTMLElement;
+    expect(tab.shadowRoot?.querySelector("a.logs")).not.toBeNull();
+  });
+
   it("mounts no file panel without a history source", async () => {
     window.history.replaceState(null, "", "#/files/lib/obj");
     stop = bindFilesRoute(host, { labels, source: fixture() });

@@ -202,7 +202,12 @@ export async function servePanel(page: Page, fixture: PanelFixture): Promise<Pan
     ],
   });
   await serveFiles(page, source);
-  const provenance = await serveProvenance(page);
+  const provenance = await serveProvenance(page, {
+    displayName: fixture.displayName,
+    path: fixture.path,
+    mediaType: fixture.mediaType,
+    size: versionSize(fixture),
+  });
   const extra: Record<string, unknown>[] = [];
   const overrides = new Map<string, string | null>();
   const labelCommits = new Set<string>();

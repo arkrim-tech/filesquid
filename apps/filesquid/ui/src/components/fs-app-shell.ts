@@ -462,7 +462,9 @@ export class FsAppShell extends HTMLElement {
 
   /** Mark the sidebar and header rows of the current route. */
   private syncCurrent(): void {
-    const hash = window.location.hash;
+    // A filtered address (`#/logs?file=<uuid>`) is still the view its row names; a query
+    // inside a search address is percent-encoded, so only a real query is cut off.
+    const hash = window.location.hash.split("?")[0] ?? "";
     for (const link of this.shadowRoot?.querySelectorAll<HTMLAnchorElement>("a[href]") ?? []) {
       if (link.getAttribute("href") === hash && hash !== "")
         link.setAttribute("aria-current", "page");

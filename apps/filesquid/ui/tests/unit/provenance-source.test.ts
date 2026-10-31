@@ -120,4 +120,15 @@ describe("ClientProvenanceSource", () => {
     expect(c.request).not.toHaveBeenCalled();
     expect(c.read).not.toHaveBeenCalled();
   });
+
+  it("refuses a path that is not the file's own stored original, so another file's history is never shown", async () => {
+    const c = client();
+    const source = new ClientProvenanceSource(c);
+    const other = { ...FILE, path: "Harbour project/facade-study.jpg" };
+    await expect(source.history(other)).rejects.toThrow(TypeError);
+    await expect(source.record(other, "v1")).rejects.toThrow(TypeError);
+    await expect(source.exportHistory(other)).rejects.toThrow(TypeError);
+    expect(c.request).not.toHaveBeenCalled();
+    expect(c.read).not.toHaveBeenCalled();
+  });
 });
