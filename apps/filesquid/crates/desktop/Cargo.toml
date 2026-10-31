@@ -84,6 +84,10 @@ name = "integration_library_catalog"
 path = "tests/integration/library_catalog.rs"
 
 [[test]]
+name = "integration_journal_sealing"
+path = "tests/integration/journal_sealing.rs"
+
+[[test]]
 name = "integration_history_wiring"
 path = "tests/integration/history_wiring.rs"
 

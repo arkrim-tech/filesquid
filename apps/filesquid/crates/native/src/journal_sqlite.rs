@@ -108,6 +108,39 @@ impl SqliteJournal {
         insert(tx, host, entry).map(|(id, _)| id)
     }
 
+    /// Make every id this store assigns from now on greater than `id`, by advancing the
+    /// table's AUTOINCREMENT counter to at least `id`; a counter already past it is left as it
+    /// is. A store refilled after it was lost (Task DE-0.11) calls it with the highest id its
+    /// sealed journal had read, so a new entry never takes the id of an entry still to be
+    /// restored from a library's files. Database I/O.
+    ///
+    /// # Errors
+    /// [`JournalError`] when the counter cannot be read or written.
+    pub fn reserve_through(&self, id: i64) -> Result<(), JournalError> {
+        let mut conn = self.lock()?;
+        let tx = conn.transaction().map_err(sql_err)?;
+        let sequence: i64 = tx
+            .query_row(
+                "SELECT COALESCE(MAX(seq), 0) FROM sqlite_sequence WHERE name = 'activity_journal'",
+                [],
+                |r| r.get(0),
+            )
+            .map_err(sql_err)?;
+        if sequence < id {
+            tx.execute(
+                "DELETE FROM sqlite_sequence WHERE name = 'activity_journal'",
+                [],
+            )
+            .map_err(sql_err)?;
+            tx.execute(
+                "INSERT INTO sqlite_sequence (name, seq) VALUES ('activity_journal', ?1)",
+                rusqlite::params![id],
+            )
+            .map_err(sql_err)?;
+        }
+        tx.commit().map_err(sql_err)
+    }
+
     fn lock(&self) -> Result<std::sync::MutexGuard<'_, Connection>, JournalError> {
         self.conn
             .lock()

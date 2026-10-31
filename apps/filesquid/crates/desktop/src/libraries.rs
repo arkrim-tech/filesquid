@@ -63,6 +63,9 @@ pub struct LibraryServing {
     /// The API state whose rebuild runner takes an opened library's unfinished rebuild (Task
     /// DE-1.8); `None` when this launch did not reconcile its jobs, which then schedules none.
     pub rebuilds: Option<filesquid_api::ApiState>,
+    /// The journal sealing each served library is opened for (Task DE-0.11); `None` seals no
+    /// library.
+    pub sealing: Option<crate::sealing::DesktopSealing>,
 }
 
 /// The desktop's library commands: [`LibraryCommands`] over [`HostLocations`], serving each
@@ -105,7 +108,7 @@ impl DesktopLibraries {
     /// leases, its catalog index (named as [`Self::align_name`] says, with `requested` the
     /// name the bind request gave, only when the bind `changed` the library, so the names are
     /// aligned under the revision that bind answered and an open that changed nothing changes
-    /// no name), its validation and its history. A part that cannot be
+    /// no name), its validation, its journal sealing and its history. A part that cannot be
     /// served is logged as a warning with its error code only (the journal layer journals
     /// it); the library stays open in the commands. Creates directories in the data
     /// directory; the catalog attach (which may rebuild a whole index) and the name
@@ -135,6 +138,13 @@ impl DesktopLibraries {
         }
         if let Some(validation) = &self.serving.validation {
             validation.open_library(view.library_id.clone(), root.backend.clone());
+        }
+        if let Some(sealing) = &self.serving.sealing {
+            crate::sealing::open_library(
+                sealing,
+                (&view.library_id, &root),
+                &self.serving.data_dir,
+            );
         }
         self.serving.opened.insert(&view.library_id, root);
         if let Some(state) = &self.serving.rebuilds {

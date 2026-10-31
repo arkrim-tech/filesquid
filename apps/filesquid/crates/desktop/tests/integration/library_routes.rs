@@ -138,6 +138,7 @@ impl Desktop {
             catalog: catalog.clone(),
             repository: RepositoryId::new(INSTALLATION).expect("repository"),
             rebuilds: Some(state.clone()),
+            sealing: None,
         };
         let locations =
             install_library_routes(&state, &host, &installation(), serving).expect("routes");

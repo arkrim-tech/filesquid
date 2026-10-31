@@ -47,6 +47,7 @@ pub mod libraries;
 pub mod navigation;
 pub mod panic_journal;
 pub mod rebuilds;
+pub mod sealing;
 pub mod stdout_log;
 #[cfg(feature = "test-webdriver")]
 pub mod test_fixture;
@@ -57,6 +58,7 @@ pub use stdout_log::LOGGING_OPERATION;
 use backfill::{BackfillTask, DesktopBackfill, BACKFILL_STOP_WAIT};
 use event_channel::{Forwarding, TauriSink, FORWARDER_HEARTBEAT};
 use filesquid_api::auth::{record_token_issue, Authoriser, LaunchToken, Principal};
+use filesquid_api::canonical::OwnerReadable;
 use filesquid_api::history::backfill::Backfill;
 use filesquid_api::history::{HostFacts, OcflRootsHistory, ProvenanceContext};
 use filesquid_api::host::{HostIdentity, NotEnrolled};
@@ -64,7 +66,7 @@ use filesquid_api::jobs::Jobs;
 use filesquid_api::journal::{JournalEntry, Outcome};
 use filesquid_api::journal_writer::JournalSender;
 use filesquid_api::local_library::{
-    LocalLibraryService, RebuildRunner, RepairLedger, REBUILD_JOB_KIND,
+    JournalRestore, LocalLibraryService, RebuildRunner, RepairLedger, REBUILD_JOB_KIND,
 };
 use filesquid_api::ocfl_validation::ValidationService;
 use filesquid_api::registry::ProcessHandle;
@@ -108,6 +110,7 @@ struct DesktopMonitor {
     stop: Arc<AtomicBool>,
     backfill: Arc<DesktopBackfill>,
     imports: Arc<filesquid_native::import::worker::ImportWorker>,
+    sealing: sealing::DesktopSealing,
 }
 
 /// The journal sinks the host attaches once the journal opens: the journal layer, the Tauri
@@ -455,6 +458,28 @@ fn open_test_library(app: &tauri::AppHandle, data_dir: &std::path::Path) {
     }
 }
 
+/// The data directory of a test-instrumented build: the one
+/// [`test_fixture::E2E_DATA_DIR_VARIABLE`] names, else the platform's app data directory.
+///
+/// # Errors
+/// The variable is set but blank, or the platform has no app data directory.
+#[cfg(feature = "test-webdriver")]
+fn app_data_dir(app: &tauri::AppHandle) -> Result<std::path::PathBuf, Box<dyn std::error::Error>> {
+    match test_fixture::e2e_data_dir()? {
+        Some(dir) => Ok(dir),
+        None => Ok(app.path().app_data_dir()?),
+    }
+}
+
+/// The platform's app data directory (a shipping build reads no test variable).
+///
+/// # Errors
+/// The platform has no app data directory.
+#[cfg(not(feature = "test-webdriver"))]
+fn app_data_dir(app: &tauri::AppHandle) -> Result<std::path::PathBuf, Box<dyn std::error::Error>> {
+    Ok(app.path().app_data_dir()?)
+}
+
 /// Shipping builds open no library and register no folder at launch; the owner's libraries
 /// open through the library routes (DE-1.1).
 #[cfg(not(feature = "test-webdriver"))]
@@ -541,10 +566,15 @@ pub fn local_library_service(
     installation: &InstallationId,
     ledger: Arc<dyn RepairLedger>,
 ) -> LocalLibraryService {
-    LocalLibraryService::new(host.monitor().journal(), ledger).with_provenance(
-        provenance_context(installation),
-        host.monitor().announcing_store(),
-    )
+    LocalLibraryService::new(host.monitor().journal(), ledger)
+        .with_provenance(
+            provenance_context(installation),
+            host.monitor().announcing_store(),
+        )
+        .with_journal_restore(JournalRestore {
+            store: host.monitor().store(),
+            transform: Arc::new(OwnerReadable),
+        })
 }
 
 /// Journal operation of the library routes' installation at launch.
@@ -739,7 +769,9 @@ fn catalog_error_code(err: &filesquid_api::library::CatalogError) -> &'static st
 
 /// Open the journal in the app data directory, attach every journal sink, install the
 /// monitor, journal a logging stack that could not be installed (`logging` false), read the
-/// installation UUID, open the library catalogs, install the PROV-O history source over their
+/// installation UUID, refill a lost operational store from the sealed journal and start the
+/// journal sealing (catching up a missed seal, then hourly; Task DE-0.11), open the library
+/// catalogs, install the PROV-O history source over their
 /// storage roots and the folders the owner opens, open the durable job store and reconcile
 /// its jobs, install the navigation listing, install the library routes and the file provenance
 /// ([`install_library_services`]), register the event forwarder's process, start the ticker
@@ -751,8 +783,10 @@ fn start_monitor(
     journal: &HostJournal,
     logging: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let data_dir = app.path().app_data_dir()?;
+    let data_dir = app_data_dir(app)?;
     let state = app.state::<ApiState>();
+    let store_lost = !data_dir.join(JOURNAL_FILE).exists();
+    let refill = tauri::async_runtime::block_on(sealing::refill_before_open(&data_dir, store_lost));
     let host = Arc::new(open_host_monitor(&state, &data_dir, Some(&journal.layer))?);
     journal.attach(host.monitor().journal());
     if !logging {
@@ -761,6 +795,10 @@ fn start_monitor(
             .send(stdout_log::logging_failure_entry());
     }
     let installation = load_installation(&data_dir, &host).inspect_err(|_| host.stop())?;
+    let runtime = tauri::async_runtime::handle().inner().clone();
+    let stop = Arc::new(AtomicBool::new(false));
+    let sealing =
+        start_journal_sealing(&host, &data_dir, &installation, (&runtime, &stop, refill))?;
     let catalog = Arc::new(
         open_library_catalog(&data_dir, &host, &installation).inspect_err(|_| host.stop())?,
     );
@@ -773,10 +811,9 @@ fn start_monitor(
     navigation::install_navigation(&state, catalog.clone(), &installation)
         .inspect_err(|_| host.stop())?;
     app.manage(DesktopCatalog(catalog.clone()));
-    install_library_services(app, &host, &installation, &data_dir, (opened, catalog))
+    let serving = (opened, catalog, sealing.clone());
+    install_library_services(app, &host, &installation, &data_dir, serving)
         .inspect_err(|_| host.stop())?;
-    let runtime = tauri::async_runtime::handle().inner().clone();
-    let stop = Arc::new(AtomicBool::new(false));
     install_job_routes(&state, &app.state::<DesktopJobs>().0, runtime, stop.clone())
         .inspect_err(|_| host.stop())?;
     app.manage(DesktopInstallation(installation));
@@ -793,8 +830,34 @@ fn start_monitor(
         stop,
         backfill,
         imports,
+        sealing,
     });
     Ok(())
+}
+
+/// Start this launch's journal sealing ([`sealing::launch_sealing`]) on `runtime`, bounded by
+/// `stop`, journaling the `refill` done before the monitor opened; on failure the monitor is
+/// stopped (flushing the journal). Filesystem, database and storage I/O.
+///
+/// # Errors
+/// As [`sealing::launch_sealing`].
+fn start_journal_sealing(
+    host: &HostMonitor,
+    data_dir: &std::path::Path,
+    installation: &InstallationId,
+    (runtime, stop, refill): (
+        &tokio::runtime::Handle,
+        &Arc<AtomicBool>,
+        Option<Result<filesquid_native::journal_objects::Refill, String>>,
+    ),
+) -> Result<sealing::DesktopSealing, String> {
+    tauri::async_runtime::block_on(sealing::launch_sealing(
+        host,
+        data_dir,
+        installation,
+        (runtime, stop.clone(), refill),
+    ))
+    .inspect_err(|_| host.stop())
 }
 
 /// Longest the app's exit waits for the import worker to suspend its job.
@@ -956,7 +1019,11 @@ fn install_library_services(
     host: &HostMonitor,
     installation: &InstallationId,
     data_dir: &std::path::Path,
-    (opened, catalog): (Arc<OpenedRoots>, Arc<SqliteCatalog>),
+    (opened, catalog, sealing): (
+        Arc<OpenedRoots>,
+        Arc<SqliteCatalog>,
+        sealing::DesktopSealing,
+    ),
 ) -> Result<(), String> {
     let state = app.state::<ApiState>();
     let validation = host.start_validation::<FsBackend>(data_dir, &state)?;
@@ -976,6 +1043,7 @@ fn install_library_services(
             .try_state::<DesktopRecovered>()
             .filter(|recovered| recovered.0)
             .map(|_| state.inner().clone()),
+        sealing: Some(sealing),
     };
     let locations = install_library_routes(&state, host, installation, serving)?;
     let dialog = Box::new(folder_choice::RfdDialog::new(app.clone()));
@@ -1048,8 +1116,9 @@ fn forward_events(app: &tauri::AppHandle) {
     });
 }
 
-/// Stop the ticker, the event forwarder and the history backfill (waiting for it, bounded),
-/// complete the forwarder's process, journal `host.stopped` and flush the journal.
+/// Stop the ticker, the event forwarder, the hourly seal and the history backfill (waiting for
+/// it, bounded), seal the journal (bounded, [`sealing::CLOSE_SEAL_WAIT`]), complete the
+/// forwarder's process, journal `host.stopped` and flush the journal.
 fn stop_monitor(app: &tauri::AppHandle) {
     if let Some(monitor) = app.try_state::<DesktopMonitor>() {
         monitor.stop.store(true, Ordering::SeqCst);
@@ -1058,6 +1127,10 @@ fn stop_monitor(app: &tauri::AppHandle) {
         if let Some(jobs) = app.try_state::<DesktopJobs>() {
             rebuilds::wait_for_rebuilds(&jobs.0, rebuilds::REBUILD_STOP_WAIT);
         }
+        tauri::async_runtime::block_on(sealing::seal_before_close(
+            &monitor.sealing,
+            sealing::CLOSE_SEAL_WAIT,
+        ));
         monitor.forwarder.complete();
         monitor.host.stop();
     }

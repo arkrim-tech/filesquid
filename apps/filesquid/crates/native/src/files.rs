@@ -168,7 +168,7 @@ fn same_directory(_: &std::fs::Metadata, _: &std::fs::Metadata) -> bool {
 }
 
 /// A filesystem backend at `<dir>/<name>`, with its multipart parts beside it.
-fn backend_at(dir: &Path, name: &str, what: &str) -> Result<FsBackend, String> {
+pub(crate) fn backend_at(dir: &Path, name: &str, what: &str) -> Result<FsBackend, String> {
     let root = dir.join(name);
     real_dir(&root, what)?;
     real_dir(&dir.join(format!("{name}-parts")), what)?;

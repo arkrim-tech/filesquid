@@ -623,3 +623,19 @@ fn an_older_journal_gains_the_client_event_id_column_on_open() {
     drop(store);
     std::fs::remove_dir_all(dir).expect("cleanup");
 }
+
+/// DE-0.11: a refilled store reserves ids through the highest id its sealed journal read, so
+/// a new entry never takes an id still to be restored; a lower reservation changes nothing.
+#[test]
+fn reserving_through_an_id_makes_new_ids_greater() {
+    let dir = temp_dir("reserve-through");
+    let store = SqliteJournal::open(&dir.join("filesquid.sqlite"), "desktop").expect("store");
+    store.reserve_through(100).expect("reserve");
+    store.reserve_through(5).expect("a lower reservation");
+    let ids = store
+        .append(&[entry("host.started", Outcome::Succeeded, 1)])
+        .expect("append");
+    assert_eq!(ids, vec![101]);
+    drop(store);
+    std::fs::remove_dir_all(dir).expect("cleanup");
+}
