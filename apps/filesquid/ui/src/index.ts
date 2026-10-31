@@ -12,6 +12,7 @@ import { FsFileBrowser } from "./components/fs-file-browser";
 import { FsFilePreview } from "./components/fs-file-preview";
 import { FsDetailsPanel } from "./components/fs-details-panel";
 import { FsMetadataPanel } from "./components/fs-metadata-panel";
+import { FsProvenancePanel } from "./components/fs-provenance-panel";
 import { FsFilePanel } from "./components/fs-file-panel";
 import { FsVersionsPanel } from "./components/fs-versions-panel";
 import { FsHostIndicator } from "./components/fs-host-indicator";
@@ -86,6 +87,49 @@ export {
   METADATA_OPERATIONS,
   type MetadataPanelOptions,
 } from "./components/fs-metadata-panel";
+export { FsProvenancePanel, type ProvenancePanelOptions } from "./components/fs-provenance-panel";
+export {
+  ClientFactsSource,
+  hasFileRecord,
+  type FactsClient,
+  type FactsSource,
+  type FileFacts,
+  type FileFactsAnswer,
+  type ImportSummary,
+  type RawName,
+} from "./files/facts-source";
+export {
+  ClientProvenanceSource,
+  NoFileHistoryError,
+  HISTORY_PAGE_SIZE,
+  type ExportedHistory,
+  type HistoryPageOptions,
+  type ProvenanceClient,
+  type ProvenanceSource,
+} from "./files/provenance-source";
+export {
+  MAX_HISTORY_PAGES,
+  MAX_RECORD_NODES,
+  OPERATION_KINDS,
+  activityAttributes,
+  activityRow,
+  activityTime,
+  activityViews,
+  classifyAgent,
+  kindWords,
+  parseProvRecord,
+  readAllHistory,
+  type ActivityView,
+  type AgentView,
+  type AllHistory,
+  type Attribute,
+  type AttributeValue,
+  type EntityRef,
+  type HistoryEntry,
+  type HistoryPage,
+  type OperationKind,
+  type ProvRecord,
+} from "./files/provenance";
 export {
   MAX_DIALOG_CANDIDATES,
   METADATA_DIALOG_STYLE,
@@ -485,6 +529,9 @@ export function defineElements(): void {
   }
   if (!customElements.get("fs-metadata-panel")) {
     customElements.define("fs-metadata-panel", FsMetadataPanel);
+  }
+  if (!customElements.get("fs-provenance-panel")) {
+    customElements.define("fs-provenance-panel", FsProvenancePanel);
   }
   if (!customElements.get("fs-versions-panel")) {
     customElements.define("fs-versions-panel", FsVersionsPanel);
