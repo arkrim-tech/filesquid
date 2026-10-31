@@ -800,7 +800,7 @@ fn drive_samples() -> Vec<(&'static str, Vec<Value>)> {
         deleted: None,
     };
     let deleted = FileRow {
-        deleted: Some(DeletedRow {
+        deleted: Some(Box::new(DeletedRow {
             library_id: LIBRARY.into(),
             library_name: "Family archive".into(),
             deleted_at: "2026-10-20T00:00:00.000Z".into(),
@@ -811,7 +811,7 @@ fn drive_samples() -> Vec<(&'static str, Vec<Value>)> {
             home_collection_title: Some("Site visits".into()),
             home_collection_deleted: true,
             folder: Some("2026/October".into()),
-        }),
+        })),
         ..file(None)
     };
     let rows = vec![

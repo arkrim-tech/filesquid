@@ -774,10 +774,17 @@ fn start_monitor(
     navigation::install_navigation(&state, catalog.clone(), &installation)
         .inspect_err(|_| host.stop())?;
     app.manage(DesktopCatalog(catalog.clone()));
-    let trash = recently_deleted::install_recently_deleted(&state, &host, catalog.clone(), &data_dir)
-        .inspect_err(|_| host.stop())?;
-    install_library_services(app, &host, &installation, &data_dir, (opened, catalog.clone()))
-        .inspect_err(|_| host.stop())?;
+    let trash =
+        recently_deleted::install_recently_deleted(&state, &host, catalog.clone(), &data_dir)
+            .inspect_err(|_| host.stop())?;
+    install_library_services(
+        app,
+        &host,
+        &installation,
+        &data_dir,
+        (opened, catalog.clone()),
+    )
+    .inspect_err(|_| host.stop())?;
     let runtime = tauri::async_runtime::handle().inner().clone();
     let stop = Arc::new(AtomicBool::new(false));
     let jobs = app.state::<DesktopJobs>().0.clone();

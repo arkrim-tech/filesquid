@@ -25,8 +25,8 @@ use crate::envelope::{self, Command};
 use crate::error::{ApiError, ErrorCode};
 use crate::journal::{JournalEntry, Level, Outcome};
 use crate::library::{
-    CommandRequest, CommandResult, ExpiryMode, InstallationSettings, LibraryCommand,
-    LibraryError, LibraryService, PageKey, SETTINGS_OPERATION,
+    CommandRequest, CommandResult, ExpiryMode, InstallationSettings, LibraryCommand, LibraryError,
+    LibraryService, PageKey, SETTINGS_OPERATION,
 };
 use crate::navigation::NodeRef;
 use crate::operation::{CommandEnvelope, OperationId};
@@ -127,10 +127,18 @@ fn check_command(
     principal: &Principal,
     request: Result<Json<Command<LibraryCommand>>, JsonRejection>,
 ) -> Result<(Arc<LibraryService>, CommandRequest), (Option<OperationId>, ApiError)> {
-    let Json(body) = request.map_err(|_| (None, invalid("The body is not a Recently deleted command.")))?;
+    let Json(body) =
+        request.map_err(|_| (None, invalid("The body is not a Recently deleted command.")))?;
     let operation_id = Some(body.envelope.operation_id().clone());
     let library = trash_library(&body.input)
-        .ok_or_else(|| (operation_id.clone(), invalid("This route takes only delete, restore, delete now and retention commands.")))?
+        .ok_or_else(|| {
+            (
+                operation_id.clone(),
+                invalid(
+                    "This route takes only delete, restore, delete now and retention commands.",
+                ),
+            )
+        })?
         .clone();
     check_envelope(&body.envelope, &library).map_err(|err| (operation_id.clone(), err))?;
     if !may_read(state, principal, &library) {
@@ -203,14 +211,17 @@ async fn write_settings(
         return refuse(&state, SETTINGS_OPERATION, actor, None, err).await;
     };
     let store = service.clone();
-    let stored = tokio::task::spawn_blocking(move || store.set_installation_settings(actor, settings)).await;
+    let stored =
+        tokio::task::spawn_blocking(move || store.set_installation_settings(actor, settings)).await;
     match stored {
         Ok(Ok(_)) => match settings_view(&state, &principal, service).await {
             Ok(view) => Json(view).into_response(),
             Err(err) => err.into_response(),
         },
         Ok(Err(err)) => library_error(&err).into_response(),
-        Err(_) => ApiError::internal(SETTINGS_OPERATION, "the settings task failed").into_response(),
+        Err(_) => {
+            ApiError::internal(SETTINGS_OPERATION, "the settings task failed").into_response()
+        }
     }
 }
 
@@ -240,7 +251,10 @@ async fn settings_view(
     };
     match tokio::task::spawn_blocking(read).await {
         Ok(view) => view.map_err(|err| library_error(&err)),
-        Err(_) => Err(ApiError::internal(SETTINGS_READ_OPERATION, "the settings task failed")),
+        Err(_) => Err(ApiError::internal(
+            SETTINGS_READ_OPERATION,
+            "the settings task failed",
+        )),
     }
 }
 
@@ -263,7 +277,9 @@ fn readable_libraries(
             if !navigation.may_read(principal, &NodeRef::Library(id.clone())) {
                 continue;
             }
-            let Some(state) = catalog.library(&id)? else { continue };
+            let Some(state) = catalog.library(&id)? else {
+                continue;
+            };
             views.push(LibraryRetentionView {
                 library_id: id.as_str().to_string(),
                 name: state.record.name,
@@ -301,8 +317,9 @@ fn may_configure(state: &ApiState, principal: &Principal) -> bool {
 fn committed(operation_id: &OperationId, result: &CommandResult) -> Response {
     match envelope::committed(operation_id, result) {
         Some(answer) => Json(answer).into_response(),
-        None => ApiError::internal(COMMAND_OPERATION, "the answer could not be encoded")
-            .into_response(),
+        None => {
+            ApiError::internal(COMMAND_OPERATION, "the answer could not be encoded").into_response()
+        }
     }
 }
 

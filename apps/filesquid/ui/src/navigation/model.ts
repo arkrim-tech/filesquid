@@ -130,6 +130,7 @@ export const KIND_LABEL: Readonly<Record<NavigationKind, LabelKey>> = {
   library: "library",
   collection: "collection",
   virtual_collection: "virtualCollection",
+  recently_deleted: "navigationRecentlyDeleted",
   folder: "folder",
 };
 

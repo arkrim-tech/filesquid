@@ -626,7 +626,7 @@ export interface paths {
         };
         /**
          * List one level of the navigation tree
-         * @description One level of the tree a UI shows as its navigation and breadcrumb (API-S-021). Without node: the host's one repository. With node: that node's children - a repository's libraries; a library's collections, then its virtual collections, then the folders its unfiled files imply; a collection's folders; a folder's subfolders; nothing under a virtual collection; never files. A folder exists only when committed ordinary files imply it, so one implied only by hidden or deleted files is not listed. Every node carries an opaque handle (at most 512 bytes, never a path, storage key, SQL or token), its kind, its name and has_children (true only when the caller may read a child). ancestors holds the nodes from the repository down to and including the listed node, for the breadcrumb. Paging: limit 1-1000 (default 200) and an opaque cursor, in a stable order - the fixed kind order library, collection, virtual_collection, folder; libraries, collections and virtual collections in catalog order; folders by name in Unicode code-point order; no repeat or gap across pages. A page may hold fewer nodes than limit while next_cursor is present (nodes the caller may not read are skipped); keep following next_cursor until it is null. Only nodes the caller may read are listed, counted or named in an ancestor trail; an unknown node and one the caller may not read, or one under an unreadable ancestor, get the same 404 not_found. A folder whose handle would exceed 512 bytes cannot be named and is not listed. A malformed cursor, a cursor of another level, a limit outside 1-1000 or an unknown parameter answers 400 invalid_request. A successful read is not journaled; a refusal is journaled once as navigation.list (API-S-017). Subscribe to navigation.change on the event channel to know when to read a level again.
+         * @description One level of the tree a UI shows as its navigation and breadcrumb (API-S-021). Without node: the host's one repository. With node: that node's children - a repository's libraries, then its one `recently_deleted` node (Task API-F2.15; a filter over the deleted files of every library this host has opened, `name` null, `has_children` false); a library's collections, then its virtual collections (no file is ever unfiled); a collection's folders; a folder's subfolders; nothing under a virtual collection; never files. A folder exists only when committed ordinary files imply it, so one implied only by hidden or deleted files is not listed. Every node carries an opaque handle (at most 512 bytes, never a path, storage key, SQL or token), its kind, its name and has_children (true only when the caller may read a child). ancestors holds the nodes from the repository down to and including the listed node, for the breadcrumb. Paging: limit 1-1000 (default 200) and an opaque cursor, in a stable order - the fixed kind order library, collection, virtual_collection, folder; libraries, collections and virtual collections in catalog order; folders by name in Unicode code-point order; no repeat or gap across pages. A page may hold fewer nodes than limit while next_cursor is present (nodes the caller may not read are skipped); keep following next_cursor until it is null. Only nodes the caller may read are listed, counted or named in an ancestor trail; an unknown node and one the caller may not read, or one under an unreadable ancestor, get the same 404 not_found. A folder whose handle would exceed 512 bytes cannot be named and is not listed. A malformed cursor, a cursor of another level, a limit outside 1-1000 or an unknown parameter answers 400 invalid_request. A successful read is not journaled; a refusal is journaled once as navigation.list (API-S-017). Subscribe to navigation.change on the event channel to know when to read a level again.
          */
         get: operations["listNavigation"];
         put?: never;
@@ -1110,7 +1110,7 @@ export interface paths {
         };
         /**
          * One page of a view of a node
-         * @description The view operation (API-S-011, SRS-F-062): one page of the files of a library, collection or virtual-collection node, in a stable order. A library node's `all` view shows its collections and virtual collections as folder rows beside its unfiled files; a collection node shows its files, a virtual-collection node its members, and the `deleted` view the node's recoverably deleted files with no folder rows. The views home, personal, recent, favorites, shares and tags are not available yet (400). Each page sorts the whole scope again (at most 10,000 files, MAX_VIEW_FILES, and 1,000 folder rows; `complete` is false beyond that or when a file could not be read) and starts after the cursor's row, so rows never repeat. A missing value (a folder's size, a file the caller never opened) sorts after every value in both directions; ties break by name, then identifier. `modified_by_me` and `opened_by_me` come only from the caller's own succeeded journal entries (changes; content-handle mints and single-file downloads). A cursor made for other parameters is refused (400); a cursor of a view whose rows or their order changed since it was made is refused as conflict (409), so a row never repeats or is skipped, and the client starts again without a cursor. An unknown, malformed or unreadable node is 404; a node of another kind is 400. A successful read is not journaled; a refusal is journaled once.
+         * @description The view operation (API-S-011, SRS-F-062): one page of the files of a library, collection or virtual-collection node, in a stable order. A library node's `all` view shows its collections and virtual collections as folder rows (no file is ever unfiled, ADR 041 Decision 3); a collection node shows its files, a virtual-collection node its members, and the `deleted` view the node's recoverably deleted files with no folder rows. The views home, personal, recent, favorites, shares and tags are not available yet (400). Each page sorts the whole scope again (at most 10,000 files, MAX_VIEW_FILES, and 1,000 folder rows; `complete` is false beyond that or when a file could not be read) and starts after the cursor's row, so rows never repeat. A missing value (a folder's size, a file the caller never opened) sorts after every value in both directions; ties break by name, then identifier. `modified_by_me` and `opened_by_me` come only from the caller's own succeeded journal entries (changes; content-handle mints and single-file downloads). A cursor made for other parameters is refused (400); a cursor of a view whose rows or their order changed since it was made is refused as conflict (409), so a row never repeats or is skipped, and the client starts again without a cursor. An unknown, malformed or unreadable node is 404; a node of another kind is 400. A successful read is not journaled; a refusal is journaled once. The repository's `recently_deleted` node (Task API-F2.15) lists the deleted files of every library this host has opened that the caller may read, whatever the view, with no folder rows, each file row carrying its `deleted` facts (library ID and name, deleted_at, purge_after under its own library's retention, days left, deletion cause, home collection and its title, also after that collection was deleted, and folder); a library whose files the host does not serve makes the view incomplete.
          */
         get: operations["getFileView"];
         put?: never;
@@ -1150,7 +1150,7 @@ export interface paths {
         };
         /**
          * Search the files the caller may read
-         * @description The search operation: the files and folder rows of the caller's readable scope that match q, as rows like GET /api/v1/files/view (display names, API-S-027; collections and virtual collections as folder rows). Grammar (API-S-012, SRS-F-063): terms separated by white space; a term is a word, a quoted phrase ("Client deck") or an operator name:value whose value may be quoted; a leading - excludes what the term matches; operator names compare without case, and text containing a colon is quoted. Free text matches the display name and every dcterms: value. Operators: type: (image, video, audio, text, document: PDF, RTF and the Microsoft Office, OOXML and OpenDocument formats; folder), in: (a collection's title), title: (dcterms:title), owner:me, creator: (dcterms:creator, whole value), tag: (dcterms:subject), is:deleted, is:unfiled, before: and after: (the head version's date in the caller's zone), createdbefore: and createdafter: (YYYY-MM-DD; the capture date from exif:DateTimeOriginal, else dcterms:created: a value with a zone is an instant compared by its date in the caller's zone, a value without one by the calendar date it states, so no instant is invented), source: (dcterms:source), size> and size< (an integer and an optional B, KB, MB or GB in powers of 1024). Every value and name compared is normalised to Unicode NFC and then to lower case (each character's lower-case mapping, then NFC again), so a decomposed (NFD) name matches a composed query; diacritics are not folded. An unknown operator (generator: among them, since this build has no c2pa module) is refused as invalid_request naming it, never matched as an empty filter. Operators of the grammar this host cannot answer, is:favorite, owner: naming another user and the filesquid-server operators sharedwith:, to:, from: and pendingowner:, are refused as unavailable (503) naming the operator, the disabled-module error of API-S-007. The scope (the repository by default, or a library, collection or virtual-collection node) is permission-filtered before anything is read or ranked (SRS-NFR-004): an unreadable library, collection or file is never read or examined, and a caller who may not read the repository cannot search it (404). Relevance (the default order, most relevant first) adds for each free-text term 3 when the display name holds it, 2 when a dcterms:title does and 1 when a dcterms: value other than the title does (the three add up); any view sort key may replace it without changing the matches. Paging and cursors follow GET /api/v1/files/view: the order is stable, a cursor of other parameters is refused (400) and a cursor of results that changed is refused as conflict (409). Bounds: q is at most 1,024 bytes (MAX_QUERY_BYTES) and 32 terms (MAX_QUERY_TERMS); one search examines at most 1,000 libraries (MAX_SEARCH_LIBRARIES) and 10,000 files (MAX_SEARCH_FILES), reading one more catalog entry, never examined, only to learn that the scope is larger, and complete is false when a bound left files out or a file could not be read; the caller's own times read at most 20 journal pages per library (MAX_JOURNAL_PAGES). There is no separate index: each search reads the catalog and the files' OCFL records, so its answer always follows canonical state. Content (full-text) search is not offered yet. A successful search is not journaled; a refusal is journaled once.
+         * @description The search operation: the files and folder rows of the caller's readable scope that match q, as rows like GET /api/v1/files/view (display names, API-S-027; collections and virtual collections as folder rows). Grammar (API-S-012, SRS-F-063): terms separated by white space; a term is a word, a quoted phrase ("Client deck") or an operator name:value whose value may be quoted; a leading - excludes what the term matches; operator names compare without case, and text containing a colon is quoted. Free text matches the display name and every dcterms: value. Operators: type: (image, video, audio, text, document: PDF, RTF and the Microsoft Office, OOXML and OpenDocument formats; folder), in: (a collection's title), title: (dcterms:title), owner:me, creator: (dcterms:creator, whole value), tag: (dcterms:subject), is:deleted (files deleted one by one or with their collection, in every library the caller may read; is:unfiled is retired and refused like any unknown operator), before: and after: (the head version's date in the caller's zone), createdbefore: and createdafter: (YYYY-MM-DD; the capture date from exif:DateTimeOriginal, else dcterms:created: a value with a zone is an instant compared by its date in the caller's zone, a value without one by the calendar date it states, so no instant is invented), source: (dcterms:source), size> and size< (an integer and an optional B, KB, MB or GB in powers of 1024). Every value and name compared is normalised to Unicode NFC and then to lower case (each character's lower-case mapping, then NFC again), so a decomposed (NFD) name matches a composed query; diacritics are not folded. An unknown operator (generator: among them, since this build has no c2pa module) is refused as invalid_request naming it, never matched as an empty filter. Operators of the grammar this host cannot answer, is:favorite, owner: naming another user and the filesquid-server operators sharedwith:, to:, from: and pendingowner:, are refused as unavailable (503) naming the operator, the disabled-module error of API-S-007. The scope (the repository by default, or a library, collection or virtual-collection node) is permission-filtered before anything is read or ranked (SRS-NFR-004): an unreadable library, collection or file is never read or examined, and a caller who may not read the repository cannot search it (404). Relevance (the default order, most relevant first) adds for each free-text term 3 when the display name holds it, 2 when a dcterms:title does and 1 when a dcterms: value other than the title does (the three add up); any view sort key may replace it without changing the matches. Paging and cursors follow GET /api/v1/files/view: the order is stable, a cursor of other parameters is refused (400) and a cursor of results that changed is refused as conflict (409). Bounds: q is at most 1,024 bytes (MAX_QUERY_BYTES) and 32 terms (MAX_QUERY_TERMS); one search examines at most 1,000 libraries (MAX_SEARCH_LIBRARIES) and 10,000 files (MAX_SEARCH_FILES), reading one more catalog entry, never examined, only to learn that the scope is larger, and complete is false when a bound left files out or a file could not be read; the caller's own times read at most 20 journal pages per library (MAX_JOURNAL_PAGES). There is no separate index: each search reads the catalog and the files' OCFL records, so its answer always follows canonical state. Content (full-text) search is not offered yet. A successful search is not journaled; a refusal is journaled once.
          */
         get: operations["searchFiles"];
         put?: never;
@@ -1441,6 +1441,50 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/recently-deleted/commands": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Delete, restore, delete now or set a library's retention
+         * @description The commands of the one Recently deleted (Task API-F2.15; API-S-019, ADR 041 Decisions 8 to 10): delete files one by one, delete a collection with its files in the same version (nothing is moved; each file keeps its object, logical path and home collection), restore files into their object and logical path (when the home collection is gone, into a new collection titled "untitled collection", or "untitled collection 2" and so on with the first free title, one per gone home collection and command, in one journaled operation and snapshot version; when the 9,999 titles are taken the restore is 409 conflict, journaled as restore_name_exhausted, with no change), delete files now after a confirmation of the exact scope, and set or clear a library's own retention (1 to 3,650 days, invalid_retention otherwise; it never changes a deleted file's purge_after). Any other library command is invalid_request. The envelope's scope is `library:<library_id>` and its expected_revision the library's current revision; a stale one is a conflict outcome with no change. A library the caller may not read is 404 not_found. Every committed command is journaled once with opaque IDs only; every refusal once as failed with its code.
+         */
+        post: operations["recentlyDeletedCommand"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/settings/recently-deleted": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read the Recently deleted settings
+         * @description The installation default retention (30 days unless changed), the expiry setting (`keep_version_history` by default), whether the caller may change them (only the admin; on the desktop the owner), and each library the caller may read with its own period and revision (Task API-F2.15; API-S-019, ADR 041 Decisions 10 and 11). Readable by anyone who may read a library.
+         */
+        get: operations["getRecentlyDeletedSettings"];
+        /**
+         * Change the Recently deleted settings
+         * @description Set the installation default retention (1 to 3,650 days, invalid_retention otherwise) and the expiry setting. Only the admin may (on the desktop, the owner); any other caller is 403 forbidden. The change is journaled once as settings.recently_deleted.set, without its values, and never changes the purge_after of a file already deleted. A change to the current values stores nothing.
+         */
+        put: operations["putRecentlyDeletedSettings"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1637,7 +1681,7 @@ export interface components {
          * @description The kind of a committed operation: one activity of the PROV-O history.
          * @enum {string}
          */
-        OperationKind: "import" | "upload" | "copy" | "rename" | "move" | "hide" | "unhide" | "delete" | "restore" | "purge" | "metadata.edit" | "label" | "revert" | "reinstate" | "snapshot" | "catalog.organisation" | "repair" | "export" | "scrub" | "publish" | "backfill" | "unknown";
+        OperationKind: "import" | "upload" | "copy" | "rename" | "move" | "hide" | "unhide" | "delete" | "restore" | "purge" | "metadata.edit" | "label" | "revert" | "reinstate" | "snapshot" | "catalog.organisation" | "repair" | "export" | "scrub" | "publish" | "backfill" | "tombstone" | "unknown";
         /** @description One OCFL object version. */
         VersionRef: {
             object_id: string;
@@ -1960,10 +2004,10 @@ export interface components {
             object_cap: number;
         };
         /**
-         * @description What a navigation node stands for. A listing orders children by this fixed order (library, collection, virtual_collection, folder); a client never sorts by the names.
+         * @description What a navigation node stands for. A listing orders children by this fixed order (library, collection, virtual_collection, recently_deleted, folder); a client never sorts by the names. The repository lists one `recently_deleted` node after its libraries: the one Recently deleted filter over the deleted files of every library this host has opened that the caller may read, `name` null and `has_children` false (Task API-F2.15, ADR 041 Decision 8).
          * @enum {string}
          */
-        NavigationKind: "repository" | "library" | "collection" | "virtual_collection" | "folder";
+        NavigationKind: "repository" | "library" | "collection" | "virtual_collection" | "recently_deleted" | "folder";
         /** @description One node of the navigation tree. */
         NavigationNode: {
             /** @description The opaque handle. Clients MUST NOT parse it; it holds no filesystem path, storage key, OCFL content path, SQL or token. */
@@ -2717,6 +2761,8 @@ export interface components {
              * @description When the caller last opened it, from the caller's own journal entries only; null when never.
              */
             opened_by_me: string | null;
+            /** @description Present in a `deleted` view and in the Recently deleted node's view only. */
+            deleted?: components["schemas"]["DeletedRow"];
         };
         /** @description One row of a view. */
         ViewRow: components["schemas"]["ViewFolderRow"] | components["schemas"]["ViewFileRow"];
@@ -3234,6 +3280,173 @@ export interface components {
             error: components["schemas"]["PortError"] | null;
             /** @description What the move made. */
             result: components["schemas"]["FileCommit"] | components["schemas"]["CollectionMove"] | null;
+        };
+        /**
+         * @description How a file entered the deleted state: deleted on its own, or with its home collection (ADR 041 Decision 8).
+         * @enum {string}
+         */
+        DeletionCause: "one_by_one" | "with_collection";
+        /**
+         * @description What expiry does to a deleted file's object when its retention ends (ADR 041 Decision 11): `keep_version_history` (the default) rewrites it as a tombstone that keeps only its version history, PROV-O records and a purge record; `delete_all_version_history` deletes the object, its index entries and its metadata record.
+         * @enum {string}
+         */
+        ExpiryMode: "keep_version_history" | "delete_all_version_history";
+        /** @description What Recently deleted shows of one deleted file (mockup 16: Library, Was in, Deleted, How and Expires; API-S-019). */
+        DeletedRow: {
+            /** @description Its library. */
+            library_id: string;
+            /** @description The library's name. */
+            library_name: string;
+            /**
+             * Format: date-time
+             * @description When it was deleted (RFC 3339 UTC).
+             */
+            deleted_at: string;
+            /**
+             * Format: date-time
+             * @description When it expires, under its own library's retention at deletion time.
+             */
+            purge_after: string;
+            /** @description Whole days left before it expires; 0 when it is due (a file of a library that was closed at its time is expired by the first run after the library is opened). */
+            days_left: number;
+            cause: components["schemas"]["DeletionCause"];
+            /** @description Its home collection. */
+            home_collection_id: string;
+            /** @description The home collection's title, also after that collection was deleted. */
+            home_collection_title: string | null;
+            /** @description True when the home collection no longer exists; a restore then creates an "untitled collection". */
+            home_collection_deleted: boolean;
+            /** @description The folder inside the home collection; null at its root or when unknown. */
+            folder: string | null;
+        };
+        /** @description When files were deleted and when they expire (RFC 3339 UTC), and how. */
+        Deletion: {
+            /**
+             * Format: date-time
+             * @description Deletion time.
+             */
+            deleted_at: string;
+            /**
+             * Format: date-time
+             * @description End of recoverability.
+             */
+            purge_after: string;
+            /** @description Left out for `one_by_one`. */
+            cause?: components["schemas"]["DeletionCause"];
+        };
+        /** @description The installation's Recently deleted settings (ADR 041 Decisions 10 and 11), kept in the host's operational store. */
+        InstallationSettings: {
+            /** @description Days a deleted file stays in Recently deleted in a library without its own period (30 by default). */
+            default_retention_days: number;
+            expiry: components["schemas"]["ExpiryMode"];
+        };
+        /** @description One library's own retention in the settings answer. */
+        LibraryRetention: {
+            /** @description The library. */
+            library_id: string;
+            /** @description Its name. */
+            name: string;
+            /** @description Its own period in days, or null when the installation default applies. */
+            retention_days: number | null;
+            /** @description Its revision: the expected revision of its next retention command. */
+            revision: string;
+            /** @description Whether the caller may change its period. */
+            may_change: boolean;
+        };
+        /** @description The answer of the settings routes (mockups 49 and 50). */
+        RecentlyDeletedSettings: {
+            /** @description The installation default retention, in days. */
+            default_retention_days: number;
+            expiry: components["schemas"]["ExpiryMode"];
+            /** @description Whether the caller may change the installation settings: only the admin (on the desktop, the owner). */
+            may_change: boolean;
+            /** @description The libraries the caller may read, with their own periods. */
+            libraries: components["schemas"]["LibraryRetention"][];
+            /** @description False when more libraries exist than one answer lists. */
+            complete: boolean;
+        };
+        /** @description A collection a restore created for the files of one gone home collection (ADR 041 Decision 9). */
+        RestoredInto: {
+            /** @description The gone home collection the files came from. */
+            from_collection_id: string;
+            /** @description The new collection. */
+            collection_id: string;
+            /** @description "untitled collection" or "untitled collection N", the first free title (at most 9,999 are tried). */
+            title: string;
+        };
+        /** @description The answer of a library command (API-S-019). */
+        LibraryCommandResult: {
+            outcome: components["schemas"]["CommandOutcome"];
+            /** @description The library the command changed. */
+            library_id: string | null;
+            /** @description The library's revision after the command. */
+            revision: string | null;
+            /** @description Identifier the command created, if any. */
+            created_id?: string;
+            /** @description Times of the files the command newly deleted; a file already deleted keeps its earlier times. */
+            deletion?: components["schemas"]["Deletion"];
+            /** @description The collections a restore created; left out when none. */
+            restored_into?: components["schemas"]["RestoredInto"][];
+        };
+        /** @description A command of the Recently deleted route: delete files one by one, delete a collection with its files, restore files, delete files now (a confirmed purge) or set a library's own retention. */
+        RecentlyDeletedCommandInput: {
+            /** @constant */
+            command: "delete_files";
+            /** @description The library. */
+            library_id: string;
+            /** @description 1 to 1,000 distinct files (invalid_file_count, duplicate_file otherwise). */
+            file_ids: string[];
+        } | {
+            /** @constant */
+            command: "delete_collection";
+            /** @description The library. */
+            library_id: string;
+            /** @description The collection. */
+            collection_id: string;
+        } | {
+            /** @constant */
+            command: "restore_files";
+            /** @description The library. */
+            library_id: string;
+            /** @description 1 to 1,000 distinct files (invalid_file_count, duplicate_file otherwise). */
+            file_ids: string[];
+        } | {
+            /** @constant */
+            command: "purge_files";
+            /** @description The library. */
+            library_id: string;
+            /** @description 1 to 1,000 distinct files (invalid_file_count, duplicate_file otherwise). */
+            file_ids: string[];
+            /** @description The library and exact file count the owner confirmed. */
+            confirmation: {
+                /** @description The library. */
+                library_id: string;
+                /** @description The exact file count. */
+                file_count: number;
+            };
+        } | {
+            /** @constant */
+            command: "set_library_retention";
+            /** @description The library. */
+            library_id: string;
+            /** @description Days, or null for the installation default. */
+            retention_days: number | null;
+        };
+        /** @description Body of POST /api/v1/recently-deleted/commands: the command envelope (scope `library:<library_id>`, expected_revision the library's current revision) and the command. */
+        RecentlyDeletedCommand: {
+            envelope: components["schemas"]["CommandEnvelope"];
+            input: components["schemas"]["RecentlyDeletedCommandInput"];
+        };
+        /** @description The answer of a Recently deleted command: the `CommandOutcome` fields (kind `committed`) and the command's result. A repeated operation_id of a command that changed something answers its first outcome from the catalog's receipt, without the restored collections. */
+        RecentlyDeletedCommandOutcome: {
+            /** @description The command's operation id. */
+            operation_id: string;
+            /** @description Always `committed`. */
+            kind: components["schemas"]["CommandOutcomeKind"];
+            /** @description Always null: a refusal is an error answer. */
+            error: components["schemas"]["PortError"] | null;
+            /** @description What the command did. */
+            result: components["schemas"]["LibraryCommandResult"] | null;
         };
     };
     responses: {
@@ -6052,6 +6265,91 @@ export interface operations {
             409: components["responses"]["JobRetryConflict"];
             500: components["responses"]["Internal"];
             503: components["responses"]["JobsUnavailable"];
+        };
+    };
+    recentlyDeletedCommand: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RecentlyDeletedCommand"];
+            };
+        };
+        responses: {
+            /** @description The command's committed outcome. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecentlyDeletedCommandOutcome"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["LibraryCommandConflict"];
+            500: components["responses"]["Internal"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    getRecentlyDeletedSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The Recently deleted settings. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecentlyDeletedSettings"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["Internal"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    putRecentlyDeletedSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InstallationSettings"];
+            };
+        };
+        responses: {
+            /** @description The Recently deleted settings. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecentlyDeletedSettings"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["Internal"];
+            503: components["responses"]["Unavailable"];
         };
     };
 }

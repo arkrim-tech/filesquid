@@ -159,7 +159,7 @@ pub struct FileRow {
     /// What Recently deleted shows of a deleted file; present in a deleted view and in the
     /// Recently deleted node's view only.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub deleted: Option<DeletedRow>,
+    pub deleted: Option<Box<DeletedRow>>,
 }
 
 /// The Recently deleted facts of one deleted file (mockup 16: Library, Was in, Deleted, How
@@ -342,7 +342,7 @@ pub fn file_candidate(
         modified: format_rfc3339_ms(facts.modified_ms),
         modified_by_me: mine.modified_ms.map(format_rfc3339_ms),
         opened_by_me: mine.opened_ms.map(format_rfc3339_ms),
-        deleted,
+        deleted: deleted.map(Box::new),
     };
     Candidate {
         row: ViewRow::File(row),

@@ -218,8 +218,7 @@ impl LibraryService {
             .ok_or(LibraryError::NotFound("library"))?;
         let operation_id = mint_uuid_v4()?;
         let id = OperationId::new(operation_id.clone()).map_err(|_| LibraryError::Internal)?;
-        let expected =
-            ExpectedRevision::new(state.revision).map_err(|_| LibraryError::Internal)?;
+        let expected = ExpectedRevision::new(state.revision).map_err(|_| LibraryError::Internal)?;
         let journal = due.iter().fold(
             JournalEntry::new(EXPIRY_OPERATION, Outcome::Succeeded)
                 .actor(actor)
@@ -238,7 +237,9 @@ impl LibraryService {
             library_id: library_id.clone(),
             expected_revision: expected,
             changes,
-            journal: journal.operation_id(operation_id.as_str()).at_ms(self.now_ms()),
+            journal: journal
+                .operation_id(operation_id.as_str())
+                .at_ms(self.now_ms()),
             created_id: None,
             deletion: None,
         })?;

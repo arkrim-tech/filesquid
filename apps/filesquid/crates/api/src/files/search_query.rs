@@ -306,9 +306,7 @@ fn is_clause(value: &str) -> Result<Clause, FileError> {
     match value {
         "deleted" => Ok(Clause::Deleted),
         "favorite" => Err(unavailable("is:favorite")),
-        _ => Err(FileError::invalid(
-            "is: takes deleted or favorite.",
-        )),
+        _ => Err(FileError::invalid("is: takes deleted or favorite.")),
     }
 }
 

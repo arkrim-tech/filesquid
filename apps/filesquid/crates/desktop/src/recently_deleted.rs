@@ -39,8 +39,9 @@ pub fn install_recently_deleted(
     catalog: Arc<SqliteCatalog>,
     data_dir: &Path,
 ) -> Result<Arc<LibraryService>, String> {
-    let settings = SqliteRetentionSettings::open(&data_dir.join(JOURNAL_FILE), host.monitor().store())
-        .map_err(|_| "the Recently deleted settings could not be opened".to_string())?;
+    let settings =
+        SqliteRetentionSettings::open(&data_dir.join(JOURNAL_FILE), host.monitor().store())
+            .map_err(|_| "the Recently deleted settings could not be opened".to_string())?;
     let service = LibraryService::new(catalog, host.monitor().journal())
         .with_settings(Arc::new(settings))
         .with_navigation(NavigationPublisher::new(state.events.clone()));

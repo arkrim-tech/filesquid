@@ -172,7 +172,10 @@ async fn read_view_inputs(
         let scope = view_scope(&navigation, &principal, &node, view, home.as_deref())?;
         let mut mine = HashMap::new();
         let libraries = store.as_deref().map(|journal| (journal, &scope.libraries));
-        for (journal, library) in libraries.into_iter().flat_map(|(j, l)| l.iter().map(move |x| (j, x))) {
+        for (journal, library) in libraries
+            .into_iter()
+            .flat_map(|(j, l)| l.iter().map(move |x| (j, x)))
+        {
             mine.extend(my_times(journal, principal.actor(), &library.library_id)?);
         }
         Ok(ViewInputs { scope, mine })

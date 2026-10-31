@@ -4,8 +4,8 @@
 
 use super::failed;
 use filesquid_api::library::{
-    CatalogError, CommitReceipt, Deletion, DeletionCause, FileEntry, FileListing, FileScope, FileState, Keyed,
-    LibraryRecord, PageKey, VisibilityFilter, MAX_RETENTION_DAYS,
+    CatalogError, CommitReceipt, Deletion, DeletionCause, FileEntry, FileListing, FileScope,
+    FileState, Keyed, LibraryRecord, PageKey, VisibilityFilter, MAX_RETENTION_DAYS,
 };
 use filesquid_core::{
     Collection, CollectionId, CollectionSort, File, FileId, Folder, FolderId, Library, LibraryId,

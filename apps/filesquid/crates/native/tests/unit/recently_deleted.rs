@@ -9,7 +9,9 @@ mod catalog_fixture;
 
 use catalog_fixture::{catalog_file, Fixture};
 use filesquid_api::canonical::{read_snapshot, OwnerReadable};
-use filesquid_api::library::{DeletionCause, LibraryCatalog, LibraryCommand, UNTITLED_COLLECTION_TITLE};
+use filesquid_api::library::{
+    DeletionCause, LibraryCatalog, LibraryCommand, UNTITLED_COLLECTION_TITLE,
+};
 use filesquid_core::{CollectionId, FileId, LibraryId};
 use filesquid_native::catalog::RegisterFile;
 use filesquid_ocfl::storage::{complete_immediately, FsBackend};
@@ -24,7 +26,13 @@ fn new_file() -> FileId {
 }
 
 /// Register `file` in `collection` of `library` at `path`.
-fn register(fx: &Fixture, library: &LibraryId, collection: &CollectionId, file: &FileId, path: &str) {
+fn register(
+    fx: &Fixture,
+    library: &LibraryId,
+    collection: &CollectionId,
+    file: &FileId,
+    path: &str,
+) {
     let request = RegisterFile {
         file_id: file.clone(),
         collection_id: collection.clone(),
@@ -91,7 +99,10 @@ fn the_cause_and_the_removed_home_title_survive_a_rebuild() {
     assert_eq!(entity.removed_home_title.as_deref(), Some("Site visits"));
     let fx = rebuilt(fx, &lib);
     let one = fx.catalog.file(&alone).expect("read").expect("file");
-    assert_eq!(one.state.deletion.expect("deleted").cause, DeletionCause::OneByOne);
+    assert_eq!(
+        one.state.deletion.expect("deleted").cause,
+        DeletionCause::OneByOne
+    );
     assert!(one.removed_home_title.is_none());
     let two = fx.catalog.file(&with).expect("read").expect("file");
     assert_eq!(
@@ -127,7 +138,10 @@ fn a_library_retention_command_is_kept_in_the_snapshot_and_journaled() {
         },
     );
     let deletion = deleted.deletion.expect("deleted");
-    assert_eq!(deletion.purge_after_ms - deletion.deleted_at_ms, 90 * DAY_MS);
+    assert_eq!(
+        deletion.purge_after_ms - deletion.deleted_at_ms,
+        90 * DAY_MS
+    );
 }
 
 #[test]
@@ -197,10 +211,13 @@ fn ready<F: std::future::Future>(future: F) -> F::Output {
 /// Write the file object of `file` in `library`'s folder: two versions of an original, a
 /// metadata record and a PROV-O record, as an import would leave it.
 fn write_file_object(fx: &Fixture, library: &LibraryId, file: &FileId) {
-    let location = fx.locations.register(&fx.folder_of(library)).expect("register");
+    let location = fx
+        .locations
+        .register(&fx.folder_of(library))
+        .expect("register");
     let root = fx.locations.root_of(&location).expect("root");
-    let staging = FsBackend::new(fx.root.join("obj-staging"), fx.root.join("obj-parts"))
-        .expect("staging");
+    let staging =
+        FsBackend::new(fx.root.join("obj-staging"), fx.root.join("obj-parts")).expect("staging");
     let area = StagingArea::new(&staging, "object").expect("area");
     let object_root = format!("files/{}", file.as_str());
     let model = ChangeModel::new(
@@ -254,7 +271,10 @@ fn later_service(fx: &Fixture, expiry: ExpiryMode) -> filesquid_api::library::Li
     settings
         .store(
             &stored,
-            filesquid_api::journal::JournalEntry::new("x", filesquid_api::journal::Outcome::Succeeded),
+            filesquid_api::journal::JournalEntry::new(
+                "x",
+                filesquid_api::journal::Outcome::Succeeded,
+            ),
         )
         .expect("store");
     let later = filesquid_api::journal::now_ms() + 31 * DAY_MS;
@@ -274,7 +294,11 @@ fn tombstone_paths(fx: &Fixture, lib: &LibraryId, file: &FileId) -> Vec<String> 
     let backend = folder_backend(fx, lib);
     let root = ready(StorageRoot::open(&backend)).expect("root");
     let object = ready(root.open_object(&format!("files/{}", file.as_str()))).expect("object");
-    assert_eq!(object.head().to_string(), "v1", "its own first version is the tombstone");
+    assert_eq!(
+        object.head().to_string(),
+        "v1",
+        "its own first version is the tombstone"
+    );
     let state = object.state(object.head()).expect("state");
     state.paths().map(str::to_string).collect()
 }
@@ -285,7 +309,10 @@ fn assert_tombstone(fx: &Fixture, lib: &LibraryId, file: &FileId) {
     let object_root = format!("files/{}", file.as_str());
     assert!(complete_immediately(is_tombstone(&backend, &object_root)).expect("ready"));
     let paths = tombstone_paths(fx, lib, file);
-    assert!(paths.iter().all(|p| !p.starts_with("original/")), "no bytes or record: {paths:?}");
+    assert!(
+        paths.iter().all(|p| !p.starts_with("original/")),
+        "no bytes or record: {paths:?}"
+    );
     assert!(paths.contains(&TOMBSTONE_RECORD.to_string()));
     assert!(paths.contains(&format!("{FORMER_PROVENANCE}/v2.jsonld")));
     let record_path = fx
@@ -304,12 +331,24 @@ fn assert_tombstone(fx: &Fixture, lib: &LibraryId, file: &FileId) {
     assert_eq!(original.size, Some(12), "its size, without its bytes");
     let kinds: Vec<&str> = record.events.iter().map(|e| e.kind.as_str()).collect();
     assert_eq!(kinds, ["purge", "tombstone"]);
-    assert!(record.events.iter().all(|e| e.operation_id == record.purge.operation_id));
-    assert!(record.events[0].activity.starts_with("urn:filesquid:activity:"));
-    assert!(!record.events[0].activity.ends_with(":unknown"), "the purge's snapshot version");
-    let bytes = std::fs::read_dir(fx.folder_of(lib).join(&object_root).join("v1/content/tombstone"))
-        .expect("content")
-        .count();
+    assert!(record
+        .events
+        .iter()
+        .all(|e| e.operation_id == record.purge.operation_id));
+    assert!(record.events[0]
+        .activity
+        .starts_with("urn:filesquid:activity:"));
+    assert!(
+        !record.events[0].activity.ends_with(":unknown"),
+        "the purge's snapshot version"
+    );
+    let bytes = std::fs::read_dir(
+        fx.folder_of(lib)
+            .join(&object_root)
+            .join("v1/content/tombstone"),
+    )
+    .expect("content")
+    .count();
     assert!(bytes > 0);
 }
 
@@ -319,11 +358,24 @@ fn keep_version_history_rewrites_the_object_as_a_tombstone_and_journals_the_purg
     let report = later_service(&fx, ExpiryMode::KeepVersionHistory)
         .expire_library("system", &lib, fx.catalog.as_ref())
         .expect("expire");
-    assert_eq!((report.expired, report.objects_done, report.objects_failed), (1, 1, 0));
-    assert!(fx.catalog.file(&file).expect("read").is_none(), "gone from the index");
-    assert!(snapshot_of(&fx, &lib).files.iter().all(|f| f.file.id() != &file));
+    assert_eq!(
+        (report.expired, report.objects_done, report.objects_failed),
+        (1, 1, 0)
+    );
+    assert!(
+        fx.catalog.file(&file).expect("read").is_none(),
+        "gone from the index"
+    );
+    assert!(snapshot_of(&fx, &lib)
+        .files
+        .iter()
+        .all(|f| f.file.id() != &file));
     assert_tombstone(&fx, &lib, &file);
-    assert!(fx.catalog.pending_purges(&lib, 10).expect("read").is_empty());
+    assert!(fx
+        .catalog
+        .pending_purges(&lib, 10)
+        .expect("read")
+        .is_empty());
     let entries = catalog_fixture::all_entries(fx.journal.as_ref());
     let purge = entries
         .iter()
@@ -333,13 +385,22 @@ fn keep_version_history_rewrites_the_object_as_a_tombstone_and_journals_the_purg
         .iter()
         .find(|e| e.operation == "file.tombstone")
         .expect("the tombstone is journaled");
-    assert_eq!(purge.operation_id, tombstone.operation_id, "one purge operation ID");
+    assert_eq!(
+        purge.operation_id, tombstone.operation_id,
+        "one purge operation ID"
+    );
     for entry in &entries {
         let text = serde_json::to_string(entry).expect("json");
-        assert!(!text.contains("notes.txt") && !text.contains("Documents"), "{text}");
+        assert!(
+            !text.contains("notes.txt") && !text.contains("Documents"),
+            "{text}"
+        );
     }
     let fx = rebuilt(fx, &lib);
-    assert!(fx.catalog.file(&file).expect("read").is_none(), "recovered as history, not a file");
+    assert!(
+        fx.catalog.file(&file).expect("read").is_none(),
+        "recovered as history, not a file"
+    );
 }
 
 #[test]
@@ -370,14 +431,22 @@ fn a_crash_at_each_step_of_the_tombstone_write_is_completed_by_the_next_run() {
             .expire_library("system", &lib, fx.catalog.as_ref())
             .expect("expire");
         assert_eq!(first.objects_failed, 1, "{step:?}");
-        assert_eq!(fx.catalog.pending_purges(&lib, 10).expect("read").len(), 1, "kept: {step:?}");
+        assert_eq!(
+            fx.catalog.pending_purges(&lib, 10).expect("read").len(),
+            1,
+            "kept: {step:?}"
+        );
         fx.catalog.fail_purges_at(None);
         let second = service
             .expire_library("system", &lib, fx.catalog.as_ref())
             .expect("expire");
         assert_eq!(second.objects_done, 1, "{step:?}");
         assert_tombstone(&fx, &lib, &file);
-        assert!(fx.catalog.pending_purges(&lib, 10).expect("read").is_empty());
+        assert!(fx
+            .catalog
+            .pending_purges(&lib, 10)
+            .expect("read")
+            .is_empty());
     }
 }
 
@@ -389,7 +458,11 @@ fn a_deletion_stopped_part_way_is_finished_by_the_next_run() {
     service
         .expire_library("system", &lib, fx.catalog.as_ref())
         .expect("expire");
-    let v2 = fx.folder_of(&lib).join("files").join(file.as_str()).join("v2");
+    let v2 = fx
+        .folder_of(&lib)
+        .join("files")
+        .join(file.as_str())
+        .join("v2");
     std::fs::remove_dir_all(&v2).expect("half-delete the original");
     fx.catalog.fail_purges_at(None);
     let done = service
@@ -422,7 +495,10 @@ fn the_expiry_runs_as_a_durable_job_over_every_open_library() {
     let (state, report) =
         run_expiry_job(&jobs, &service, &fx.catalog, "installation:test", &stop).expect("run");
     assert_eq!(state, JobState::Completed);
-    assert_eq!((report.libraries, report.expired, report.objects_done), (1, 1, 1));
+    assert_eq!(
+        (report.libraries, report.expired, report.objects_done),
+        (1, 1, 1)
+    );
     assert_tombstone(&fx, &lib, &file);
     let (_, again) =
         run_expiry_job(&jobs, &service, &fx.catalog, "installation:test", &stop).expect("rerun");

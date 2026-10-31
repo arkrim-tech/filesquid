@@ -361,6 +361,7 @@ function kindIcon(kind: NavigationKind): SVGSVGElement {
     library: "library",
     collection: "collection",
     virtual_collection: "layers",
+    recently_deleted: "trash",
     folder: "folder",
   };
   const svg = icon(names[kind] ?? "folder", 16);

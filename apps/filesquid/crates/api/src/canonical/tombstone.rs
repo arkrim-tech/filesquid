@@ -219,7 +219,9 @@ pub async fn read_former<B: StorageBackend>(
     };
     let history = version_history(object.inventory());
     if history.len() > MAX_FORMER_VERSIONS {
-        return Err(CanonicalError::Failed("too many versions for a tombstone".into()));
+        return Err(CanonicalError::Failed(
+            "too many versions for a tombstone".into(),
+        ));
     }
     let mut former = Former::default();
     for info in history {
@@ -258,7 +260,9 @@ async fn read_provenance<B: StorageBackend>(
     let mut files = Vec::new();
     for file in state.files().filter(|f| f.path.starts_with(PROVENANCE_DIR)) {
         if files.len() >= MAX_FORMER_PROVENANCE {
-            return Err(CanonicalError::Failed("too many PROV-O files for a tombstone".into()));
+            return Err(CanonicalError::Failed(
+                "too many PROV-O files for a tombstone".into(),
+            ));
         }
         let name = file.path.trim_start_matches(PROVENANCE_DIR).to_string();
         let bytes = read_small(object, backend, file, MAX_PROVENANCE_BYTES).await?;
@@ -280,7 +284,10 @@ pub async fn delete_object<B: StorageBackend>(
     let prefix = format!("{object_root}/");
     let mut deleted = 0;
     for _ in 0..=MAX_OBJECT_KEYS / KEY_PAGE {
-        let page = backend.list(&prefix, None, KEY_PAGE).await.map_err(storage)?;
+        let page = backend
+            .list(&prefix, None, KEY_PAGE)
+            .await
+            .map_err(storage)?;
         if page.keys.is_empty() {
             return Ok(deleted);
         }
@@ -289,7 +296,9 @@ pub async fn delete_object<B: StorageBackend>(
             deleted += 1;
         }
     }
-    Err(CanonicalError::Failed("the object holds too many stored files".into()))
+    Err(CanonicalError::Failed(
+        "the object holds too many stored files".into(),
+    ))
 }
 
 /// Stage the tombstone's content in `model`: the record and the former PROV-O files. The
@@ -309,7 +318,10 @@ where
 {
     model.reset().await.map_err(change)?;
     let bytes = encode_record(record)?;
-    model.stage_bytes(TOMBSTONE_RECORD, &bytes).await.map_err(change)?;
+    model
+        .stage_bytes(TOMBSTONE_RECORD, &bytes)
+        .await
+        .map_err(change)?;
     for (name, bytes) in &former.provenance {
         let path = format!("{FORMER_PROVENANCE}/{name}");
         model.stage_bytes(&path, bytes).await.map_err(change)?;

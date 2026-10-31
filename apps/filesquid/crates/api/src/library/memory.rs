@@ -254,7 +254,7 @@ impl State {
                 file_id,
                 collection_id,
             } => self.rehome(&file_id, collection_id),
-            CatalogChange::SetRetention(days) => self.set_retention(&commit_library, days),
+            CatalogChange::SetRetention(days) => self.set_retention(commit_library, days),
             CatalogChange::PutVirtualCollection(v) => {
                 self.virtuals.insert(v.id().as_str().to_string(), v);
             }
@@ -328,7 +328,8 @@ impl State {
     fn rehome(&mut self, file_id: &FileId, collection_id: CollectionId) {
         if let Some(stored) = self.files.get_mut(file_id.as_str()) {
             let file = &stored.entry.file;
-            stored.entry.file = File::new(file.id().clone(), file.library_id().clone(), collection_id);
+            stored.entry.file =
+                File::new(file.id().clone(), file.library_id().clone(), collection_id);
             stored.entry.removed_home_title = None;
         }
     }

@@ -518,7 +518,11 @@ fn the_navigation_lists_the_installations_repository_and_its_libraries() {
         .collect();
     assert_eq!(libraries.len(), 1, "the repository's library: {page}");
     assert_eq!(
-        page["nodes"].as_array().expect("nodes").last().expect("node")["kind"],
+        page["nodes"]
+            .as_array()
+            .expect("nodes")
+            .last()
+            .expect("node")["kind"],
         "recently_deleted",
         "then its one Recently deleted node: {page}"
     );
@@ -527,7 +531,11 @@ fn the_navigation_lists_the_installations_repository_and_its_libraries() {
     let (status, page) = desktop.get(&format!("/api/v1/navigation?node={repository}"));
     assert_eq!(status, 200, "{page}");
     let libraries = page["nodes"].as_array().expect("nodes");
-    assert_eq!(libraries.len(), 2, "the library, then Recently deleted: {page}");
+    assert_eq!(
+        libraries.len(),
+        2,
+        "the library, then Recently deleted: {page}"
+    );
     assert_eq!(libraries[0]["name"], UNTITLED_LIBRARY, "{page}");
     assert!(page.to_string().contains(&library) || libraries[0]["node"].is_string());
     let filter = owner_event_filter(&desktop.state).expect("filter");
@@ -990,8 +998,13 @@ fn recently_deleted_settings_and_the_expiry_job_are_wired() {
     )
     .expect("installed");
     assert!(
-        install_recently_deleted(&desktop.state, &desktop.host, desktop.catalog.clone(), &desktop.dir)
-            .is_err(),
+        install_recently_deleted(
+            &desktop.state,
+            &desktop.host,
+            desktop.catalog.clone(),
+            &desktop.dir
+        )
+        .is_err(),
         "installed once"
     );
     let folder = dir.join("Library A");
@@ -1006,11 +1019,17 @@ fn recently_deleted_settings_and_the_expiry_job_are_wired() {
     assert_eq!(view["may_change"], true);
     assert_eq!(view["libraries"].as_array().expect("libraries").len(), 1);
     let set = json!({ "default_retention_days": 45, "expiry": "keep_version_history" });
-    let (status, changed) = desktop.send("PUT", "/api/v1/settings/recently-deleted", Some(set), true);
+    let (status, changed) =
+        desktop.send("PUT", "/api/v1/settings/recently-deleted", Some(set), true);
     assert_eq!(status, 200, "{changed}");
     assert_eq!(changed["default_retention_days"], 45);
     let jobs = open_jobs(&desktop.dir, &desktop.host).expect("jobs");
-    let task = ExpiryTask::new(service, desktop.catalog.clone(), jobs.clone(), &installation());
+    let task = ExpiryTask::new(
+        service,
+        desktop.catalog.clone(),
+        jobs.clone(),
+        &installation(),
+    );
     task.run_once(&AtomicBool::new(false));
     let finished = jobs
         .unfinished_of(filesquid_api::library::EXPIRY_JOB_KIND, 1)

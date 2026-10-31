@@ -138,13 +138,21 @@ impl Trash {
     /// The handle of the repository's Recently deleted node, read from the navigation.
     async fn trash_node(&self) -> String {
         let root = self.rig.get("/api/v1/navigation").await.json();
-        let repository = root["nodes"][0]["node"].as_str().expect("repository").to_string();
+        let repository = root["nodes"][0]["node"]
+            .as_str()
+            .expect("repository")
+            .to_string();
         let page = self
             .rig
             .get(&format!("/api/v1/navigation?node={}", encode(&repository)))
             .await
             .json();
-        let last = page["nodes"].as_array().expect("nodes").last().expect("node").clone();
+        let last = page["nodes"]
+            .as_array()
+            .expect("nodes")
+            .last()
+            .expect("node")
+            .clone();
         assert_eq!(last["kind"], "recently_deleted", "{page}");
         last["node"].as_str().expect("handle").to_string()
     }
@@ -154,7 +162,10 @@ impl Trash {
         let node = self.trash_node().await;
         let answer = self
             .rig
-            .get(&format!("/api/v1/files/view?node={}&sort=name", encode(&node)))
+            .get(&format!(
+                "/api/v1/files/view?node={}&sort=name",
+                encode(&node)
+            ))
             .await;
         assert_eq!(answer.status, StatusCode::OK, "{:?}", answer.json());
         let page = answer.json();
@@ -171,8 +182,12 @@ fn add_studio(drive: &DriveCatalog) {
         library: Library::new(id.clone(), repository),
         name: "Studio work".into(),
     };
-    let clients = Collection::new(CollectionId::new(CLIENTS).expect("id"), id.clone(), "Clients")
-        .expect("collection");
+    let clients = Collection::new(
+        CollectionId::new(CLIENTS).expect("id"),
+        id.clone(),
+        "Clients",
+    )
+    .expect("collection");
     let commit = CatalogCommit {
         operation_id: OperationId::new("seed-studio").expect("op"),
         library_id: id.clone(),
@@ -186,7 +201,10 @@ fn add_studio(drive: &DriveCatalog) {
         deletion: None,
     };
     drive.catalog.commit(commit).expect("seed");
-    drive.catalog.set_retention_days(&id, Some(90)).expect("retention");
+    drive
+        .catalog
+        .set_retention_days(&id, Some(90))
+        .expect("retention");
 }
 
 /// The deleted facts of the row named `name`.
@@ -206,7 +224,10 @@ async fn recently_deleted_lists_the_deleted_files_of_every_library_with_their_ow
     let brief = trash.file("brief-v1.pdf", STUDIO, CLIENTS).await;
     trash.file("kept.txt", STUDIO, CLIENTS).await;
     let deleted = trash
-        .command(LIBRARY, json!({"command": "delete_files", "library_id": LIBRARY, "file_ids": [alone]}))
+        .command(
+            LIBRARY,
+            json!({"command": "delete_files", "library_id": LIBRARY, "file_ids": [alone]}),
+        )
         .await;
     assert_eq!(deleted.status, StatusCode::OK, "{:?}", deleted.json());
     assert_eq!(deleted.json()["kind"], "committed");
@@ -216,12 +237,22 @@ async fn recently_deleted_lists_the_deleted_files_of_every_library_with_their_ow
     assert_eq!(collection.status, StatusCode::OK, "{:?}", collection.json());
     assert_eq!(collection.result()["deletion"]["cause"], "with_collection");
     let studio = trash
-        .command(STUDIO, json!({"command": "delete_files", "library_id": STUDIO, "file_ids": [brief]}))
+        .command(
+            STUDIO,
+            json!({"command": "delete_files", "library_id": STUDIO, "file_ids": [brief]}),
+        )
         .await;
     assert_eq!(studio.status, StatusCode::OK, "{:?}", studio.json());
     let (rows, page) = trash.trash_rows().await;
-    let names: Vec<&str> = rows.iter().map(|r| r["display_name"].as_str().expect("name")).collect();
-    assert_eq!(names, ["brief-v1.pdf", "minutes.pdf", "site-visit.jpg"], "no folder rows: {page}");
+    let names: Vec<&str> = rows
+        .iter()
+        .map(|r| r["display_name"].as_str().expect("name"))
+        .collect();
+    assert_eq!(
+        names,
+        ["brief-v1.pdf", "minutes.pdf", "site-visit.jpg"],
+        "no folder rows: {page}"
+    );
     assert_eq!(page["complete"], true);
     let one = deleted_of(&rows, "minutes.pdf");
     assert_eq!(one["library_id"], LIBRARY);
@@ -230,7 +261,10 @@ async fn recently_deleted_lists_the_deleted_files_of_every_library_with_their_ow
     assert_eq!(one["home_collection_title"], "Holidays");
     let with = deleted_of(&rows, "site-visit.jpg");
     assert_eq!(with["cause"], "with_collection");
-    assert_eq!(with["home_collection_title"], "Holidays", "kept after its deletion");
+    assert_eq!(
+        with["home_collection_title"], "Holidays",
+        "kept after its deletion"
+    );
     assert_eq!(with["home_collection_deleted"], true);
     let other = deleted_of(&rows, "brief-v1.pdf");
     assert_eq!(other["library_name"], "Studio work");
@@ -238,7 +272,8 @@ async fn recently_deleted_lists_the_deleted_files_of_every_library_with_their_ow
     assert_eq!(other["home_collection_deleted"], false);
     let span = |row: &Value| {
         let at = filesquid_api::journal::parse_rfc3339_ms(row["deleted_at"].as_str().expect("at"));
-        let after = filesquid_api::journal::parse_rfc3339_ms(row["purge_after"].as_str().expect("after"));
+        let after =
+            filesquid_api::journal::parse_rfc3339_ms(row["purge_after"].as_str().expect("after"));
         after.expect("after") - at.expect("at")
     };
     assert_eq!(span(one), 30 * DAY_MS, "the installation default");
@@ -251,14 +286,22 @@ async fn the_node_is_refused_by_the_folder_listing_and_found_by_is_deleted() {
     let trash = Trash::new(None).await;
     let file = trash.file("minutes.pdf", LIBRARY, COLLECTION).await;
     trash
-        .command(LIBRARY, json!({"command": "delete_files", "library_id": LIBRARY, "file_ids": [file]}))
+        .command(
+            LIBRARY,
+            json!({"command": "delete_files", "library_id": LIBRARY, "file_ids": [file]}),
+        )
         .await;
     let node = trash.trash_node().await;
     let listing = trash
         .rig
         .get(&format!("/api/v1/files/listing?node={}", encode(&node)))
         .await;
-    assert_eq!(listing.status, StatusCode::BAD_REQUEST, "{:?}", listing.json());
+    assert_eq!(
+        listing.status,
+        StatusCode::BAD_REQUEST,
+        "{:?}",
+        listing.json()
+    );
     let found = trash.rig.get("/api/v1/files/search?q=is%3Adeleted").await;
     assert_eq!(found.status, StatusCode::OK, "{:?}", found.json());
     let rows = found.json()["rows"].as_array().expect("rows").clone();
@@ -275,7 +318,10 @@ async fn a_restore_whose_home_is_gone_names_the_untitled_collection_it_created()
         .command(LIBRARY, json!({"command": "delete_collection", "library_id": LIBRARY, "collection_id": COLLECTION}))
         .await;
     let restored = trash
-        .command(LIBRARY, json!({"command": "restore_files", "library_id": LIBRARY, "file_ids": [file]}))
+        .command(
+            LIBRARY,
+            json!({"command": "restore_files", "library_id": LIBRARY, "file_ids": [file]}),
+        )
         .await;
     assert_eq!(restored.status, StatusCode::OK, "{:?}", restored.json());
     let made = &restored.result()["restored_into"][0];
@@ -289,7 +335,10 @@ async fn a_restore_whose_home_is_gone_names_the_untitled_collection_it_created()
 async fn the_command_route_takes_only_trash_commands_in_their_own_scope() {
     let trash = Trash::new(None).await;
     let other = trash
-        .command(LIBRARY, json!({"command": "create_collection", "library_id": LIBRARY, "title": "x"}))
+        .command(
+            LIBRARY,
+            json!({"command": "create_collection", "library_id": LIBRARY, "title": "x"}),
+        )
         .await;
     assert_eq!(other.status, StatusCode::BAD_REQUEST, "{:?}", other.json());
     let body = json!({
@@ -309,7 +358,12 @@ async fn the_command_route_takes_only_trash_commands_in_their_own_scope() {
         .rig
         .send_command(Method::POST, "/api/v1/recently-deleted/commands", &stale)
         .await;
-    assert_eq!(conflict.status, StatusCode::CONFLICT, "{:?}", conflict.json());
+    assert_eq!(
+        conflict.status,
+        StatusCode::CONFLICT,
+        "{:?}",
+        conflict.json()
+    );
     assert_eq!(conflict.json()["kind"], "conflict");
     let journal = trash.rig.journal();
     assert!(journal
@@ -317,7 +371,10 @@ async fn the_command_route_takes_only_trash_commands_in_their_own_scope() {
         .any(|e| e.operation == "recently_deleted.command" && e.outcome == Outcome::Failed));
     for entry in &journal {
         let text = serde_json::to_string(entry).expect("json");
-        assert!(!text.contains("Holidays") && !text.contains("Clients"), "{text}");
+        assert!(
+            !text.contains("Holidays") && !text.contains("Clients"),
+            "{text}"
+        );
     }
 }
 
@@ -334,14 +391,21 @@ async fn the_settings_answer_the_default_the_expiry_setting_and_each_library_s_p
     assert_eq!(libraries.len(), 2);
     assert_eq!(libraries[0]["retention_days"], Value::Null);
     assert_eq!(libraries[1]["retention_days"], 90);
-    for bad in [json!({"default_retention_days": 0, "expiry": "keep_version_history"}),
-                json!({"default_retention_days": 3651, "expiry": "keep_version_history"}),
-                json!({"default_retention_days": 30, "expiry": "forever"})] {
+    for bad in [
+        json!({"default_retention_days": 0, "expiry": "keep_version_history"}),
+        json!({"default_retention_days": 3651, "expiry": "keep_version_history"}),
+        json!({"default_retention_days": 30, "expiry": "forever"}),
+    ] {
         let answer = trash
             .rig
             .send_command(Method::PUT, "/api/v1/settings/recently-deleted", &bad)
             .await;
-        assert_eq!(answer.status, StatusCode::BAD_REQUEST, "{bad}: {:?}", answer.json());
+        assert_eq!(
+            answer.status,
+            StatusCode::BAD_REQUEST,
+            "{bad}: {:?}",
+            answer.json()
+        );
     }
     let set = json!({"default_retention_days": 14, "expiry": "delete_all_version_history"});
     let answer = trash
@@ -363,19 +427,31 @@ async fn a_library_the_caller_may_not_read_is_left_out_of_recently_deleted() {
     let mine = trash.file("minutes.pdf", LIBRARY, COLLECTION).await;
     let hidden = trash.file("brief-v1.pdf", STUDIO, CLIENTS).await;
     trash
-        .command(LIBRARY, json!({"command": "delete_files", "library_id": LIBRARY, "file_ids": [mine]}))
+        .command(
+            LIBRARY,
+            json!({"command": "delete_files", "library_id": LIBRARY, "file_ids": [mine]}),
+        )
         .await;
     let refused = trash
-        .command(STUDIO, json!({"command": "delete_files", "library_id": STUDIO, "file_ids": [hidden]}))
+        .command(
+            STUDIO,
+            json!({"command": "delete_files", "library_id": STUDIO, "file_ids": [hidden]}),
+        )
         .await;
-    assert_eq!(refused.status, StatusCode::NOT_FOUND, "{:?}", refused.json());
+    assert_eq!(
+        refused.status,
+        StatusCode::NOT_FOUND,
+        "{:?}",
+        refused.json()
+    );
     let service = trash.rig.state.library_service().expect("service");
     let studio = LibraryId::new(STUDIO).expect("id");
     let request = filesquid_api::library::CommandRequest {
         envelope: filesquid_api::operation::CommandEnvelope::new(
             OperationId::new("direct").expect("op"),
             ExpectedRevision::new(trash.revision(STUDIO)).expect("rev"),
-            filesquid_api::operation::OperationScope::new(format!("library:{STUDIO}")).expect("scope"),
+            filesquid_api::operation::OperationScope::new(format!("library:{STUDIO}"))
+                .expect("scope"),
         ),
         command: filesquid_api::library::LibraryCommand::DeleteFiles {
             library_id: studio,
@@ -384,8 +460,18 @@ async fn a_library_the_caller_may_not_read_is_left_out_of_recently_deleted() {
     };
     service.execute("owner", request).expect("deleted directly");
     let (rows, _) = trash.trash_rows().await;
-    let names: Vec<&str> = rows.iter().map(|r| r["display_name"].as_str().expect("name")).collect();
+    let names: Vec<&str> = rows
+        .iter()
+        .map(|r| r["display_name"].as_str().expect("name"))
+        .collect();
     assert_eq!(names, ["minutes.pdf"]);
-    let settings = trash.rig.get("/api/v1/settings/recently-deleted").await.json();
-    assert_eq!(settings["libraries"].as_array().expect("libraries").len(), 1);
+    let settings = trash
+        .rig
+        .get("/api/v1/settings/recently-deleted")
+        .await
+        .json();
+    assert_eq!(
+        settings["libraries"].as_array().expect("libraries").len(),
+        1
+    );
 }

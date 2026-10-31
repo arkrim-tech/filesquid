@@ -9,18 +9,18 @@
 //! never shapes the caller's order (SRS-F-062).
 
 use super::drive::{DeletedRow, FolderKind, FolderRow, MyTimes, ViewKind, MAX_VIEW_FILES};
-use super::search_scope::MAX_SEARCH_LIBRARIES;
 use super::error::FileError;
 use super::nodes::file_error;
+use super::search_scope::MAX_SEARCH_LIBRARIES;
 use super::MAX_SIZE_OBJECTS;
 use super::{
     COPY_OPERATION, METADATA_REMOVE_OPERATION, METADATA_SET_OPERATION, MOVE_OPERATION,
     REMOVE_OPERATION, RENAME_OPERATION, RESTORE_OPERATION, UPLOAD_OPERATION,
 };
 use crate::auth::Principal;
-use crate::journal::{JournalQuery, JournalStore, Outcome, MAX_PAGE};
 use crate::home::HomeCollections;
 use crate::journal::format_rfc3339_ms;
+use crate::journal::{JournalQuery, JournalStore, Outcome, MAX_PAGE};
 use crate::library::{
     CatalogError, FileEntry, FileListing, FileScope, Keyed, LibraryCatalog, PageKey,
     VisibilityFilter,

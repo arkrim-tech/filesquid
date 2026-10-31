@@ -272,7 +272,11 @@ impl Planner<'_> {
     ) -> Result<Planned, LibraryError> {
         let collection = self.collection_in(lib, id)?;
         let deletion = policy.deletion_at(self.now_ms).with_collection();
-        let holds = self.holds(lib, id, &[VisibilityFilter::Ordinary, VisibilityFilter::Hidden])?;
+        let holds = self.holds(
+            lib,
+            id,
+            &[VisibilityFilter::Ordinary, VisibilityFilter::Hidden],
+        )?;
         let any = holds || self.holds(lib, id, &[VisibilityFilter::Deleted])?;
         let files = any.then(|| CatalogChange::DeleteCollectionFiles {
             collection_id: id.clone(),
@@ -325,7 +329,10 @@ impl Planner<'_> {
                 continue;
             }
             let home = entry.file.home_collection_id().clone();
-            let exists = self.catalog.collection(&home)?.is_some_and(|c| c.library_id() == lib);
+            let exists = self
+                .catalog
+                .collection(&home)?
+                .is_some_and(|c| c.library_id() == lib);
             if !exists {
                 let group = gone.entry(home.as_str().to_string()).or_default();
                 if group.is_empty() {

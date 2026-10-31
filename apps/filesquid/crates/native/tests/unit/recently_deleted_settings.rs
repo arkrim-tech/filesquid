@@ -26,7 +26,8 @@ fn settings_default_survive_a_reopen_and_are_journaled() {
         default_retention_days: 90,
         expiry: ExpiryMode::DeleteAllVersionHistory,
     };
-    let entry = JournalEntry::new("settings.recently_deleted.set", Outcome::Succeeded).actor("owner");
+    let entry =
+        JournalEntry::new("settings.recently_deleted.set", Outcome::Succeeded).actor("owner");
     store.store(&changed, entry).expect("store");
     drop(store);
     let reopened = SqliteRetentionSettings::open(&path, journal.clone()).expect("reopen");
@@ -47,6 +48,9 @@ fn settings_default_survive_a_reopen_and_are_journaled() {
         ..changed
     };
     let refused = reopened.store(&bad, JournalEntry::new("x", Outcome::Succeeded));
-    assert!(refused.is_err(), "the store refuses an out-of-range period too");
+    assert!(
+        refused.is_err(),
+        "the store refuses an out-of-range period too"
+    );
     assert_eq!(reopened.read().expect("read"), changed);
 }

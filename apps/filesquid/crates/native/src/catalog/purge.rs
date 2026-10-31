@@ -63,7 +63,11 @@ impl SqliteCatalog {
     /// # Errors
     /// A poisoned lock.
     pub fn open_libraries(&self) -> Result<Vec<LibraryId>, CatalogError> {
-        Ok(self.lock()?.values().map(|library| library.id.clone()).collect())
+        Ok(self
+            .lock()?
+            .values()
+            .map(|library| library.id.clone())
+            .collect())
     }
 
     /// Stop every object work at `step` as a crash would, or at none (crash-recovery tests;
@@ -148,7 +152,11 @@ fn pending(conn: &Connection, limit: usize) -> Result<Vec<PendingPurge>, Catalog
         .map_err(sql)?;
     let rows = stmt
         .query_map(params![limit], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?))
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+            ))
         })
         .map_err(sql)?;
     rows.map(|row| {

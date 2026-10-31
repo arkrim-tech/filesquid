@@ -250,9 +250,7 @@ pub(crate) fn collection_deletions(
 ) -> Result<Vec<SnapshotKey>, CatalogError> {
     let mut keys = Vec::new();
     let mut stmt = conn
-        .prepare(
-            "SELECT id FROM files WHERE home_collection_id = ?1 ORDER BY id LIMIT ?2",
-        )
+        .prepare("SELECT id FROM files WHERE home_collection_id = ?1 ORDER BY id LIMIT ?2")
         .map_err(sql)?;
     let limit = i64::try_from(MAX_ENTITIES).unwrap_or(i64::MAX);
     for change in changes {

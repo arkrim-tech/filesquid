@@ -85,7 +85,7 @@ fn contract_is_openapi_3_1_with_the_crate_api_version() {
     let doc = contract();
     assert_eq!(doc["openapi"], "3.1.0");
     assert_eq!(doc["info"]["version"], API_VERSION);
-    assert_eq!(API_VERSION, "0.35.0");
+    assert_eq!(API_VERSION, "0.36.0");
 }
 
 #[test]
@@ -297,6 +297,7 @@ async fn owner_state() -> (ApiState, Monitor) {
     ));
     state.install_history_backfill(Arc::new(StartingLauncher));
     jobs_contract::install(&state, &monitor);
+    install_recently_deleted(&state, &monitor);
     (state, monitor)
 }
 
@@ -329,6 +330,14 @@ async fn call(state: &ApiState, method: &Method, path: &str) -> (StatusCode, Vec
         .header("authorization", format!("Bearer {TOKEN}"));
     if let Some((content_type, _)) = &body {
         request = request.header("content-type", *content_type);
+    }
+    let trash_json = *method != Method::GET
+        && matches!(
+            path,
+            "/api/v1/recently-deleted/commands" | "/api/v1/settings/recently-deleted"
+        );
+    if body.is_none() && trash_json {
+        request = request.header("content-type", "application/json");
     }
     let body = match body {
         Some((_, bytes)) => Body::from(with_revision(state, bytes).await),
@@ -389,7 +398,55 @@ fn sample_body(method: &Method, path: &str) -> Body {
     if *method == Method::PUT && path == "/api/v1/admin/ocfl/validation-settings" {
         return Body::from(serde_json::to_vec(&ValidationConfig::default()).expect("json"));
     }
+    if *method == Method::PUT && path == "/api/v1/settings/recently-deleted" {
+        let settings =
+            serde_json::json!({"default_retention_days": 30, "expiry": "keep_version_history"});
+        return Body::from(settings.to_string());
+    }
+    if path == "/api/v1/recently-deleted/commands" {
+        let command = serde_json::json!({
+            "envelope": {"schema_version": 1, "operation_id": "op-trash", "expected_revision": "1",
+                         "scope": format!("library:{TRASH_LIBRARY}")},
+            "input": {"command": "set_library_retention", "library_id": TRASH_LIBRARY, "retention_days": 7},
+        });
+        return Body::from(command.to_string());
+    }
     Body::empty()
+}
+
+/// The library of the contract's Recently deleted library service.
+const TRASH_LIBRARY: &str = "5e0c1b2a-3948-4f57-8a6b-7c8d9e0f1a2b";
+
+/// Install a library service over an in-memory catalog holding [`TRASH_LIBRARY`] at
+/// revision 1, with in-memory Recently deleted settings.
+fn install_recently_deleted(state: &ApiState, monitor: &Monitor) {
+    use filesquid_api::library::{
+        CatalogChange, CatalogCommit, LibraryCatalog, LibraryRecord, LibraryService, MemoryCatalog,
+        MemorySettings,
+    };
+    let catalog = Arc::new(MemoryCatalog::new());
+    let library = filesquid_core::LibraryId::new(TRASH_LIBRARY).expect("library");
+    let record = LibraryRecord {
+        library: filesquid_core::Library::new(
+            library.clone(),
+            filesquid_core::RepositoryId::new("repository").expect("repository"),
+        ),
+        name: "Trash library".into(),
+    };
+    catalog
+        .commit(CatalogCommit {
+            operation_id: filesquid_api::operation::OperationId::new("seed").expect("op"),
+            library_id: library,
+            expected_revision: filesquid_api::operation::ExpectedRevision::new("0").expect("rev"),
+            changes: vec![CatalogChange::CreateLibrary(record)],
+            journal: JournalEntry::new("seed", filesquid_api::journal::Outcome::Succeeded),
+            created_id: None,
+            deletion: None,
+        })
+        .expect("seed");
+    let service = LibraryService::new(catalog, monitor.journal())
+        .with_settings(Arc::new(MemorySettings::new()));
+    assert!(state.install_library_service(Arc::new(service)));
 }
 
 /// Assert `status` is one the operation documents and, when the documented response has a
@@ -780,6 +837,7 @@ fn samples() -> Vec<(&'static str, Vec<Value>)> {
     all.extend(library_contract::samples());
     all.extend(client_event_samples());
     all.extend(jobs_contract::samples());
+    all.extend(recently_deleted_samples());
     all
 }
 
@@ -948,6 +1006,7 @@ fn navigation_samples() -> Vec<(&'static str, Vec<Value>)> {
         NodeKind::Library,
         NodeKind::Collection,
         NodeKind::VirtualCollection,
+        NodeKind::RecentlyDeleted,
         NodeKind::Folder,
     ];
     let folder = NodeRef::folder(
@@ -1530,4 +1589,137 @@ async fn events_from_every_publisher_match_their_documented_payloads() {
     }
     let all: BTreeSet<String> = topic::ALL.iter().map(|t| t.to_string()).collect();
     assert_eq!(seen, all, "every documented topic is published by Rust");
+}
+
+/// Serialized samples of the Recently deleted schemas (Task API-F2.15): the settings answer,
+/// every expiry setting and deletion cause, a command answer with a restored collection and
+/// a deletion, and each command the route takes.
+fn recently_deleted_samples() -> Vec<(&'static str, Vec<Value>)> {
+    use filesquid_api::library::{
+        CommandResult, Deletion, DeletionCause, ExpiryMode, InstallationSettings, LibraryCommand,
+        PurgeConfirmation, RestoredInto,
+    };
+    use filesquid_api::operation::{CommandOutcome, CommandOutcomeKind, OperationId};
+    use filesquid_api::recently_deleted::{LibraryRetentionView, RecentlyDeletedSettingsView};
+    use filesquid_core::{CollectionId, FileId, LibraryId};
+    let library = LibraryId::new("6f1d2c3b-4a5e-4f60-8a7b-9c0d1e2f3a4b").expect("library");
+    let collection = CollectionId::new("c0ffee00-1234-4abc-8def-0123456789ab").expect("id");
+    let file = FileId::new("0b6f6a58-5c1d-4b5e-9f3e-2a7d8c9e0f19").expect("file");
+    let settings = InstallationSettings {
+        default_retention_days: 30,
+        expiry: ExpiryMode::KeepVersionHistory,
+    };
+    let view = RecentlyDeletedSettingsView {
+        default_retention_days: 30,
+        expiry: ExpiryMode::DeleteAllVersionHistory,
+        may_change: true,
+        libraries: vec![LibraryRetentionView {
+            library_id: library.as_str().into(),
+            name: "Studio work".into(),
+            retention_days: Some(90),
+            revision: "4".into(),
+            may_change: true,
+        }],
+        complete: true,
+    };
+    let deletion = Deletion {
+        deleted_at_ms: 1_000,
+        purge_after_ms: 2_000,
+        cause: DeletionCause::WithCollection,
+    };
+    let result = CommandResult {
+        outcome: CommandOutcome::new(
+            OperationId::new("op-1").expect("op"),
+            CommandOutcomeKind::Committed,
+        ),
+        library_id: Some(library.clone()),
+        revision: Some("5".into()),
+        created_id: Some(collection.as_str().into()),
+        deletion: Some(deletion),
+        restored_into: vec![RestoredInto {
+            from_collection_id: collection.clone(),
+            collection_id: collection.clone(),
+            title: "untitled collection 2".into(),
+        }],
+    };
+    let commands = vec![
+        LibraryCommand::DeleteFiles {
+            library_id: library.clone(),
+            file_ids: vec![file.clone()],
+        },
+        LibraryCommand::DeleteCollection {
+            library_id: library.clone(),
+            collection_id: collection.clone(),
+        },
+        LibraryCommand::RestoreFiles {
+            library_id: library.clone(),
+            file_ids: vec![file.clone()],
+        },
+        LibraryCommand::PurgeFiles {
+            library_id: library.clone(),
+            file_ids: vec![file],
+            confirmation: PurgeConfirmation {
+                library_id: library.clone(),
+                file_count: 1,
+            },
+        },
+        LibraryCommand::SetLibraryRetention {
+            library_id: library,
+            retention_days: Some(7),
+        },
+    ];
+    let commands_view = commands.clone();
+    let outcome = serde_json::json!({
+        "operation_id": "op-1", "kind": "committed", "error": null, "result": to_value(&result)
+    });
+    vec![
+        (
+            "ExpiryMode",
+            [
+                ExpiryMode::KeepVersionHistory,
+                ExpiryMode::DeleteAllVersionHistory,
+            ]
+            .map(to_value)
+            .to_vec(),
+        ),
+        (
+            "DeletionCause",
+            [DeletionCause::OneByOne, DeletionCause::WithCollection]
+                .map(to_value)
+                .to_vec(),
+        ),
+        ("InstallationSettings", vec![to_value(settings)]),
+        ("RecentlyDeletedSettings", vec![to_value(&view)]),
+        ("Deletion", vec![to_value(deletion)]),
+        (
+            "DeletedRow",
+            vec![to_value(filesquid_api::files::drive::DeletedRow {
+                library_id: "6f1d2c3b-4a5e-4f60-8a7b-9c0d1e2f3a4b".into(),
+                library_name: "Family archive".into(),
+                deleted_at: "2026-10-20T00:00:00.000Z".into(),
+                purge_after: "2026-11-19T00:00:00.000Z".into(),
+                days_left: 19,
+                cause: DeletionCause::OneByOne,
+                home_collection_id: "c0ffee00-1234-4abc-8def-0123456789ab".into(),
+                home_collection_title: Some("Documents".into()),
+                home_collection_deleted: false,
+                folder: None,
+            })],
+        ),
+        ("LibraryRetention", vec![to_value(&view.libraries[0])]),
+        ("RestoredInto", vec![to_value(&result.restored_into[0])]),
+        (
+            "RecentlyDeletedCommand",
+            vec![serde_json::json!({
+                "envelope": {"schema_version": 1, "operation_id": "op-1", "expected_revision": "1", "scope": "library:x"},
+                "input": to_value(&commands[0]),
+            })],
+        ),
+        ("LibraryCommandResult", vec![to_value(&result)]),
+        (
+            "RecentlyDeletedCommandInput",
+            commands_view.into_iter().map(to_value).collect(),
+        ),
+        ("RecentlyDeletedCommandOutcome", vec![outcome]),
+    ]
 }

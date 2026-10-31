@@ -37,7 +37,10 @@ fn delete_collection(fx: &Fixture, id: &CollectionId) {
 }
 
 /// Restore `files` in the fixture's library.
-fn restore(fx: &Fixture, files: &[&FileId]) -> Result<filesquid_api::library::CommandResult, LibraryError> {
+fn restore(
+    fx: &Fixture,
+    files: &[&FileId],
+) -> Result<filesquid_api::library::CommandResult, LibraryError> {
     fx.try_run(LibraryCommand::RestoreFiles {
         library_id: fx.library(),
         file_ids: files.iter().map(|f| (*f).clone()).collect(),
@@ -68,10 +71,13 @@ fn deleting_a_collection_deletes_its_files_with_it_and_keeps_its_title() {
     let earlier = fx.add_file_in("f0", &visits);
     let first = fx.add_file_in("f1", &visits);
     let second = fx.add_file_in("f2", &visits);
-    let before = fx.run_at(NOW_MS - DAY_MS, LibraryCommand::DeleteFiles {
-        library_id: fx.library(),
-        file_ids: vec![earlier.clone()],
-    });
+    let before = fx.run_at(
+        NOW_MS - DAY_MS,
+        LibraryCommand::DeleteFiles {
+            library_id: fx.library(),
+            file_ids: vec![earlier.clone()],
+        },
+    );
     let earlier_times = before.deletion.expect("deleted");
     let commits = fx.catalog.commit_count();
     let result = fx.run(LibraryCommand::DeleteCollection {
@@ -90,11 +96,18 @@ fn deleting_a_collection_deletes_its_files_with_it_and_keeps_its_title() {
         assert_eq!(state.removed_home_title.as_deref(), Some("Site visits"));
     }
     let kept = entry(&fx, &earlier);
-    assert_eq!(kept.state.deletion, Some(earlier_times), "keeps its earlier times");
-    assert_eq!(kept.removed_home_title.as_deref(), Some("Site visits"));
-    assert!(fx.list_files(FileScope::Library, VisibilityFilter::Ordinary).is_empty());
     assert_eq!(
-        fx.list_files(FileScope::Library, VisibilityFilter::Deleted).len(),
+        kept.state.deletion,
+        Some(earlier_times),
+        "keeps its earlier times"
+    );
+    assert_eq!(kept.removed_home_title.as_deref(), Some("Site visits"));
+    assert!(fx
+        .list_files(FileScope::Library, VisibilityFilter::Ordinary)
+        .is_empty());
+    assert_eq!(
+        fx.list_files(FileScope::Library, VisibilityFilter::Deleted)
+            .len(),
         3
     );
 }
@@ -269,7 +282,10 @@ fn a_restore_is_refused_when_every_untitled_title_is_taken() {
         .find(|e| e.operation == "library.file.restore")
         .expect("journaled");
     assert_eq!(refusal.outcome, Outcome::Failed);
-    assert_eq!(refusal.error_code.as_deref(), Some("restore_name_exhausted"));
+    assert_eq!(
+        refusal.error_code.as_deref(),
+        Some("restore_name_exhausted")
+    );
 }
 
 // ---- Expiry (ADR 041 Decision 11) ----
@@ -277,7 +293,11 @@ fn a_restore_is_refused_when_every_untitled_title_is_taken() {
 use filesquid_api::library::{ExpiryReport, EXPIRY_OBJECT_OPERATION, EXPIRY_OPERATION};
 
 /// A service of `fx` at `now_ms` reading `settings`.
-fn service_at(fx: &Fixture, now_ms: i64, settings: Arc<MemorySettings>) -> filesquid_api::library::LibraryService {
+fn service_at(
+    fx: &Fixture,
+    now_ms: i64,
+    settings: Arc<MemorySettings>,
+) -> filesquid_api::library::LibraryService {
     fx.service
         .clone()
         .with_clock(Arc::new(move || now_ms))
@@ -292,7 +312,10 @@ fn settings_with(expiry: ExpiryMode) -> Arc<MemorySettings> {
         expiry,
     };
     settings
-        .store(&stored, filesquid_api::journal::JournalEntry::new("x", Outcome::Succeeded))
+        .store(
+            &stored,
+            filesquid_api::journal::JournalEntry::new("x", Outcome::Succeeded),
+        )
         .expect("store");
     settings
 }
@@ -312,15 +335,24 @@ fn expiry_removes_due_files_from_every_view_and_records_their_object_work() {
     let due = fx.add_file_in("f1", &docs);
     let kept = fx.add_file_in("f2", &docs);
     delete(&fx, &[&due]);
-    fx.run_at(NOW_MS + 20 * DAY_MS, LibraryCommand::DeleteFiles {
-        library_id: fx.library(),
-        file_ids: vec![kept.clone()],
-    });
+    fx.run_at(
+        NOW_MS + 20 * DAY_MS,
+        LibraryCommand::DeleteFiles {
+            library_id: fx.library(),
+            file_ids: vec![kept.clone()],
+        },
+    );
     let report = expire(&fx, ExpiryMode::KeepVersionHistory);
     assert_eq!(report.expired, 1);
     assert_eq!(report.objects_done, 1);
-    assert!(fx.catalog.file(&due).expect("read").is_none(), "never listed again");
-    assert!(fx.catalog.file(&kept).expect("read").is_some(), "not due yet");
+    assert!(
+        fx.catalog.file(&due).expect("read").is_none(),
+        "never listed again"
+    );
+    assert!(
+        fx.catalog.file(&kept).expect("read").is_some(),
+        "not due yet"
+    );
     let done = fx.catalog.purged_objects();
     assert_eq!(done, vec![(due.clone(), ExpiryMode::KeepVersionHistory)]);
     let journal = fx.catalog.journal_entries();
@@ -335,7 +367,10 @@ fn expiry_removes_due_files_from_every_view_and_records_their_object_work() {
         vec![fx.library().as_str().to_string(), due.as_str().to_string()],
         "opaque IDs only"
     );
-    assert_eq!(report.operation_id.as_deref(), purge.operation_id.as_deref());
+    assert_eq!(
+        report.operation_id.as_deref(),
+        purge.operation_id.as_deref()
+    );
 }
 
 #[test]
@@ -367,9 +402,16 @@ fn a_failed_object_purge_is_journaled_as_failed_and_retried_at_the_next_run() {
         .find(|e| e.operation == EXPIRY_OBJECT_OPERATION)
         .expect("journaled");
     assert_eq!(entry.outcome, Outcome::Failed);
-    assert_eq!(entry.target_ids, vec![fx.library().as_str().to_string(), due.as_str().to_string()]);
+    assert_eq!(
+        entry.target_ids,
+        vec![fx.library().as_str().to_string(), due.as_str().to_string()]
+    );
     let second = expire(&fx, ExpiryMode::KeepVersionHistory);
-    assert_eq!((second.expired, second.objects_done), (0, 1), "the pending work is retried");
+    assert_eq!(
+        (second.expired, second.objects_done),
+        (0, 1),
+        "the pending work is retried"
+    );
     assert_eq!(fx.catalog.purged_objects().len(), 1);
 }
 

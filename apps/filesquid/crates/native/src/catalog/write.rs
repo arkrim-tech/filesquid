@@ -16,8 +16,7 @@ use filesquid_api::canonical::{operation_kind, OperationRecord, SnapshotDelta, S
 use filesquid_api::journal::JournalEntry;
 use filesquid_api::library::{
     CatalogChange, CatalogCommit, CatalogError, CommitReceipt, Deletion, ExpiryMode, FileState,
-    LibraryRecord,
-    COLLECTION_HOLDS_FILES,
+    LibraryRecord, COLLECTION_HOLDS_FILES,
 };
 use filesquid_core::{
     Collection, CollectionId, File, FileId, Folder, LibraryId, VirtualCollection, VirtualMembership,

@@ -202,7 +202,6 @@ fn collection_files(w: &mut MonitorWorld, collection: String, first: String, sec
     }
 }
 
-
 #[when(expr = "the owner lists the navigation tree without a node")]
 fn list_root(w: &mut MonitorWorld) {
     let nav = &mut w.navigation;

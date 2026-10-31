@@ -56,8 +56,8 @@ mod write;
 pub use attach::{AttachReport, LibraryFolder, DEFAULT_LIBRARY_NAME, ENTITY_RENAME_OPERATION};
 pub use canonical::WORK_DIR_SUFFIX;
 pub use intent::{intent_entry, PendingIntent, INTENT_RECORDED_OPERATION};
-pub use purge::PurgeStep;
 pub use provenance::{CatalogRoots, HostRoots, LibraryBackfill, MAX_BACKFILL_RUNS};
+pub use purge::PurgeStep;
 pub use reconcile::RECONCILE_OPERATION;
 pub use register::{RegisterFile, Registration, REGISTER_OPERATION};
 

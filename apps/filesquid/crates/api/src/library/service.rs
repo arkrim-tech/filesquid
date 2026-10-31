@@ -17,8 +17,8 @@ use super::catalog::{
 use super::command::{CommandRequest, CommandResult};
 use super::plan::{Planned, Planner};
 use super::policy::{DeletionPolicy, VisibilityFilter};
-use super::settings::{InstallationSettings, RetentionSettings, SETTINGS_OPERATION};
 use super::query::{Cursor, LibraryQuery, Page, QueryAnswer, QueryRequest};
+use super::settings::{InstallationSettings, RetentionSettings, SETTINGS_OPERATION};
 use super::{LibraryError, LOG_TARGET};
 use crate::journal::{now_ms, JournalEntry, Level, Outcome};
 use crate::journal_writer::JournalSender;
