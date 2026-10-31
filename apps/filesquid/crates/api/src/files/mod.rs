@@ -97,7 +97,7 @@ pub use download::{Download, DownloadStream};
 pub use drive_facts::{CollectionHistorySizeView, CollectionSizeQuery, FactsAnswer};
 pub use error::FileError;
 pub use handle::{FileFuture, FileOperations};
-pub use import::SourceImport;
+pub use import::{ImportedOriginal, SourceImport};
 pub use labels::{APP_DATA_FOLDER, LABELS_PATH, MAX_LABELS, PROVENANCE_FOLDER, RESERVED_FOLDERS};
 pub use names::{DisplayNames, NameFuture, StoredFile};
 pub use nodes::{Listing, ScopeObject, ScopeObjects};

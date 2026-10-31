@@ -13,7 +13,7 @@ use super::host::{gather_host, Build};
 use super::source::{SourceFile, SOURCE_KEY};
 use super::time::now;
 use crate::HostFiles;
-use filesquid_api::files::{Committed, FileError, SourceImport, UploadView};
+use filesquid_api::files::{Committed, FileError, ImportedOriginal, SourceImport};
 use filesquid_metadata::import::ImportMethod;
 use std::path::Path;
 
@@ -39,6 +39,9 @@ pub struct FileImport<'a> {
     pub build: &'a Build,
     /// Who imports.
     pub actor: &'a str,
+    /// Where the bytes read from the source are counted, for the file's progress (Task
+    /// DE-1.8); the stage reads each file twice.
+    pub progress: Option<std::sync::Arc<std::sync::atomic::AtomicU64>>,
 }
 
 /// Why one file was not imported (each with an error code and no path).
@@ -114,7 +117,7 @@ pub fn commit_failure(err: FileError) -> ImportFailure {
 pub async fn import_file(
     files: &HostFiles,
     request: &FileImport<'_>,
-) -> Result<Committed<UploadView>, ImportFailure> {
+) -> Result<Committed<ImportedOriginal>, ImportFailure> {
     let started_at = now().ok_or(ImportFailure::Clock)?;
     let gathered =
         gather_source(request.path, request.import_root).map_err(ImportFailure::Source)?;
@@ -131,7 +134,7 @@ pub async fn import_file(
         attributes: gathered.attributes,
         host,
     };
-    let source = SourceFile::new(request.path);
+    let source = SourceFile::new(request.path).counting(request.progress.clone());
     files
         .import_original(import, &source, SOURCE_KEY, request.actor)
         .await

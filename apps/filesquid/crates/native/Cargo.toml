@@ -141,3 +141,8 @@ required-features = ["desktop"]
 name = "unit_import_large"
 path = "tests/unit/import_large.rs"
 required-features = ["desktop"]
+
+[[test]]
+name = "unit_import_items"
+path = "tests/unit/import_items.rs"
+required-features = ["desktop"]

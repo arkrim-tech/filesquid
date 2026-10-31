@@ -13,6 +13,7 @@ use filesquid_api::auth::LaunchToken;
 use filesquid_api::imports::{ImportSource, ImportStartError};
 use filesquid_api::journal::JournalEntry;
 use filesquid_api::library::{CommandRequest, LibraryCatalog, LibraryCommand, LibraryService};
+use filesquid_api::local_library::LibraryRegistry;
 use filesquid_api::local_library::{LocalLibraryService, MemoryRepairLedger};
 use filesquid_api::operation::OperationId as IntentOperation;
 use filesquid_api::operation::{CommandEnvelope, ExpectedRevision, OperationId, OperationScope};
@@ -28,8 +29,8 @@ use filesquid_native::catalog::{
     LibraryFolder, PendingIntent, RegisterFile, Registration, DEFAULT_LIBRARY_NAME,
 };
 use filesquid_native::import::index::ImportIndex;
+use filesquid_native::import::items::open_import_stores;
 use filesquid_native::import::job::IMPORT_FILE_OPERATION;
-use filesquid_native::import::plans::SqliteImportPlans;
 use filesquid_native::import::worker::{ImportServices, ImportWorker};
 use filesquid_native::workers::history_backfill::open_jobs;
 use filesquid_native::{
@@ -299,8 +300,47 @@ impl ImportRig {
     }
 
     /// POST an import as [`ImportRig::import`] does, naming `destination` (an object of
-    /// `collection_id` and `folder`, either left out to test its refusal).
+    /// `collection_id` and `folder`, either left out to test its refusal), and confirm the
+    /// plan it answers at once, as an owner who accepts the review; any other answer (a
+    /// started job, a cancelled dialog, a refusal) is answered as it is.
     pub async fn import_into(
+        &self,
+        library: &str,
+        operation: &str,
+        source: &str,
+        destination: Value,
+    ) -> (u16, Value) {
+        let (status, answer) = self
+            .plan_into(library, operation, source, destination)
+            .await;
+        match answer["plan_id"].as_str() {
+            Some(plan_id) if status == 200 => self.start(plan_id).await,
+            _ => (status, answer),
+        }
+    }
+
+    /// POST an import of the `source` of `library` under `operation` into the rig's
+    /// destination and answer the review, without starting it.
+    pub async fn plan(&self, library: &str, operation: &str, source: &str) -> (u16, Value) {
+        let destination = json!({ "collection_id": self.collection, "folder": FOLDER });
+        self.plan_into(library, operation, source, destination)
+            .await
+    }
+
+    /// Confirm the plan `plan_id` (`POST /api/v1/imports/{plan_id}/start`).
+    pub async fn start(&self, plan_id: &str) -> (u16, Value) {
+        let path = format!("/api/v1/imports/{plan_id}/start");
+        self.send("POST", &path, Vec::new()).await
+    }
+
+    /// Discard the plan `plan_id` (`DELETE /api/v1/imports/{plan_id}`).
+    pub async fn discard(&self, plan_id: &str) -> (u16, Value) {
+        let path = format!("/api/v1/imports/{plan_id}");
+        self.send("DELETE", &path, Vec::new()).await
+    }
+
+    /// POST an import naming `destination` and answer the review route as it is.
+    pub async fn plan_into(
         &self,
         library: &str,
         operation: &str,
@@ -441,7 +481,7 @@ async fn start(dir: &Path, dialog: &Arc<ScriptedDialog>, gate: &Arc<Gate>, creat
     }
     let installation = InstallationId::parse(INSTALLATION).expect("installation");
     let catalog = Arc::new(open_library_catalog(&data, &host, &installation).expect("catalog"));
-    open_library(dir, &files, &catalog, &installation);
+    let locations = open_library(dir, &files, &catalog, &installation);
     let collection = match create {
         true => create_collection(&catalog, &host),
         false => first_collection(&catalog),
@@ -449,11 +489,12 @@ async fn start(dir: &Path, dialog: &Arc<ScriptedDialog>, gate: &Arc<Gate>, creat
     filesquid_desktop_lib::navigation::install_navigation(&state, catalog.clone(), &installation)
         .expect("navigation");
     install_file_scopes(&files, &catalog).expect("scopes");
+    let (plans, items) = open_import_stores(&data.join(JOURNAL_FILE)).expect("stores");
     let jobs = open_jobs(&data, &host)
         .expect("jobs")
+        .with_items(items.clone())
         .with_events(state.events.clone());
     assert!(state.install_jobs(Arc::new(jobs.clone())), "the job routes");
-    let plans = Arc::new(SqliteImportPlans::open(&data.join(JOURNAL_FILE)).expect("plans"));
     let stop = Arc::new(AtomicBool::new(false));
     let worker = Arc::new(
         ImportWorker::spawn(ImportServices {
@@ -464,6 +505,7 @@ async fn start(dir: &Path, dialog: &Arc<ScriptedDialog>, gate: &Arc<Gate>, creat
                 gate: gate.clone(),
             }),
             plans: plans.clone(),
+            items: items.clone(),
             journal: host.monitor().journal(),
             build: import_build(),
             actor: "owner".into(),
@@ -478,6 +520,9 @@ async fn start(dir: &Path, dialog: &Arc<ScriptedDialog>, gate: &Arc<Gate>, creat
         files,
         jobs,
         plans,
+        items,
+        index: catalog.clone(),
+        registry: locations,
         worker: worker.clone(),
         dialog: Box::new(SharedDialog(dialog.clone())),
     };
@@ -502,11 +547,13 @@ fn open_library(
     files: &HostFiles,
     catalog: &SqliteCatalog,
     installation: &InstallationId,
-) {
+) -> Arc<HostLocations> {
     let id = LibraryId::new(LIBRARY).expect("library");
     let data = dir.join("data");
-    let locations = HostLocations::new(&data);
+    let locations = Arc::new(HostLocations::new(&data));
     let location = locations.register(&dir.join("root")).expect("location");
+    let now = filesquid_api::journal::now_ms();
+    LibraryRegistry::remember(locations.as_ref(), &id, &location, Some("Library"), now);
     let root = locations.root_of(&location).expect("root");
     open_fs_library_root(files, &id, &root, &data).expect("opened");
     let folder = LibraryFolder {
@@ -517,6 +564,7 @@ fn open_library(
         identity: locations.identity_of(&location).expect("identity"),
     };
     catalog.attach(&folder).expect("attached");
+    locations
 }
 
 /// Create the destination collection "Holidays" in [`LIBRARY`] through the library commands;

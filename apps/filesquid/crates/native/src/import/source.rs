@@ -7,7 +7,9 @@
 //! again. The entity tag is made from the file's size, modification time and file identity,
 //! never from its bytes, so asking for it reads nothing: the stage compares it before and
 //! after its hashing read, and compares the digests of its two reads, to refuse a file that
-//! changed meanwhile. Every write is refused. Errors name the key, never the path.
+//! changed meanwhile. Every write is refused. Errors name the key, never the path. A view may
+//! count the bytes it reads ([`SourceFile::counting`]), which the import job reports as the
+//! file's progress (Task DE-1.8).
 
 use filesquid_ocfl::storage::{
     ByteRange, CompletedPart, ETag, ListPage, MaybeSend, ObjectMeta, Precondition, StorageBackend,
@@ -16,6 +18,8 @@ use filesquid_ocfl::storage::{
 use std::future::Future;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 /// The key of the one object a [`SourceFile`] holds.
 pub const SOURCE_KEY: &str = "source";
@@ -24,6 +28,7 @@ pub const SOURCE_KEY: &str = "source";
 #[derive(Clone)]
 pub struct SourceFile {
     path: PathBuf,
+    read: Option<Arc<AtomicU64>>,
 }
 
 impl std::fmt::Debug for SourceFile {
@@ -37,7 +42,14 @@ impl SourceFile {
     pub fn new(path: &Path) -> Self {
         Self {
             path: path.to_path_buf(),
+            read: None,
         }
+    }
+
+    /// The same view, adding every byte it reads to `read`. Pure.
+    pub fn counting(mut self, read: Option<Arc<AtomicU64>>) -> Self {
+        self.read = read;
+        self
     }
 
     /// Refuse every key but [`SOURCE_KEY`]. Pure.
@@ -73,6 +85,9 @@ impl SourceFile {
         file.take(range.len())
             .read_to_end(&mut bytes)
             .map_err(|err| io_error(key, &err))?;
+        if let Some(read) = &self.read {
+            read.fetch_add(bytes.len() as u64, Ordering::Relaxed);
+        }
         Ok(bytes)
     }
 }

@@ -9,14 +9,16 @@
 //! The worker is also the `import` kind's [`JobRunner`] (Task DE-1.9, DE-S-020): a job resumed
 //! through `POST /api/v1/jobs/{job}/resume` is queued like a new one. A job paused through the
 //! job routes is never started, whether queued or found by the recovery: it waits for its
-//! resume, with no refusal journaled. A job found finished (cancelled while pending) has its
+//! resume, with no refusal journaled, and so is a job that tried every file and waits for a
+//! retry of a failed one (Task DE-1.8). A job found finished (cancelled while pending) has its
 //! plan finished and its intent cleared.
 
 use super::host::Build;
+use super::items::SqliteJobItems;
 use super::job::{close_finished, run_import_job, ImportContext};
 use super::plans::SqliteImportPlans;
 use crate::HostFiles;
-use filesquid_api::jobs::{Job, JobError, JobRunner, Jobs};
+use filesquid_api::jobs::{Job, JobError, JobRunner, JobState, Jobs};
 use filesquid_api::journal::{JournalEntry, Level, Outcome};
 use filesquid_api::journal_writer::JournalSender;
 use std::collections::HashSet;
@@ -55,6 +57,8 @@ pub struct ImportServices {
     pub index: Arc<dyn super::index::ImportIndex>,
     /// Each job's plan.
     pub plans: Arc<SqliteImportPlans>,
+    /// Each job's per-file progress (Task DE-1.8).
+    pub items: Arc<SqliteJobItems>,
     /// The host's journal.
     pub journal: JournalSender,
     /// This FileSquid build.
@@ -258,6 +262,7 @@ fn run_one(
         files: &services.files,
         index: services.index.as_ref(),
         plans: &services.plans,
+        items: &services.items,
         journal: &services.journal,
         build: &services.build,
         actor: &services.actor,
@@ -266,8 +271,8 @@ fn run_one(
         retry_unit: services.retry_unit,
     };
     match services.jobs.job(job_id) {
-        Ok(job) if job.is_paused() => return,
         Ok(job) if job.state.is_finished() => return close_finished(&context, &job, &plan),
+        Ok(job) if job.is_paused() || waits_for_retry(services, &job) => return,
         _ => {}
     }
     let Err(err) = runtime.block_on(run_import_job(&context, job_id, &plan)) else {
@@ -281,6 +286,25 @@ fn run_one(
     if finished && services.plans.finish(job_id).is_err() {
         journal_failure(services, Some(job_id), "unavailable");
     }
+}
+
+/// Whether `job` tried every file of its manifest and waits for a retry of a failed one: it is
+/// pending, its checkpoint is at its end, no file is queued and one failed (Task DE-1.8). A job
+/// whose last checkpoint was kept just before a crash, with no failed file, is not waiting: it
+/// runs, and completes. Reads the items store; a failed read counts as not waiting, so the job
+/// runs.
+fn waits_for_retry(services: &ImportServices, job: &Job) -> bool {
+    let at_end = job.total.is_some_and(|total| {
+        super::job::checkpoint_next(job.checkpoint.as_deref()) as u64 >= total
+    });
+    let nothing_queued = || {
+        services
+            .items
+            .waiting(&job.id)
+            .is_ok_and(|waiting| waiting.is_empty())
+    };
+    let one_failed = || services.items.has_failed(&job.id).unwrap_or(false);
+    job.state == JobState::Pending && at_end && nothing_queued() && one_failed()
 }
 
 /// Fail the job `job_id`, whose plan is missing, so it is not tried at every launch: start it

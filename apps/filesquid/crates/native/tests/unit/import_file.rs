@@ -118,6 +118,7 @@ fn request<'a>(path: &'a Path, build: &'a Build) -> FileImport<'a> {
         operation_id: Some("op-1".into()),
         build,
         actor: "owner",
+        progress: None,
     }
 }
 
@@ -127,10 +128,17 @@ async fn an_import_stores_the_original_under_its_uuid_with_its_record_in_one_ver
     let (files, backend) = library(&dir.0).await;
     let build = build();
     let path = source(&dir.0, "Holiday photo.JPG", b"jpeg bytes");
-    let view = import_file(&files, &request(&path, &build))
+    let imported = import_file(&files, &request(&path, &build))
         .await
         .expect("imported")
         .view;
+    assert_eq!(imported.size, 10, "the committed size");
+    assert_eq!(
+        imported.sha256,
+        filesquid_ocfl::DigestAlgorithm::Sha256.digest_hex(b"jpeg bytes"),
+        "the committed digest"
+    );
+    let view = imported.view;
     assert_eq!(view.version, "v1");
     assert_eq!(view.file_id, FILE_ID, "the identifier the plan minted");
     assert_eq!(view.object_id, format!("urn:uuid:{}", view.file_id));
@@ -304,6 +312,27 @@ fn the_source_entity_tag_changes_when_the_file_is_rewritten() {
     assert!(ready(source.put(&key, b"x")).is_err(), "a read-only source");
 }
 
+#[test]
+fn a_counting_source_adds_every_byte_it_reads() {
+    let dir = TempDir::new("counting");
+    let path = source(&dir.0, "a.txt", b"twelve bytes");
+    let read = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let source = SourceFile::new(&path).counting(Some(read.clone()));
+    let key = filesquid_ocfl::storage::StorageKey::new(SOURCE_KEY).expect("key");
+    let range = filesquid_ocfl::storage::ByteRange::new(0, 64).expect("range");
+    for _ in 0..2 {
+        assert_eq!(
+            ready(source.get_range(&key, range)).expect("read").len(),
+            12
+        );
+    }
+    assert_eq!(
+        read.load(std::sync::atomic::Ordering::SeqCst),
+        24,
+        "two whole reads"
+    );
+}
+
 /// Run `future` to completion on this thread.
 fn ready<T>(future: impl std::future::Future<Output = T>) -> T {
     tokio::runtime::Builder::new_current_thread()
@@ -353,7 +382,7 @@ async fn an_import_commit_is_linked_to_the_journal_and_carries_its_record() {
     let committed = import_file(&files, &request(&path, &build))
         .await
         .expect("imported");
-    let view = &committed.view;
+    let view = &committed.view.view;
     let commits: Vec<_> = committed
         .entries
         .iter()

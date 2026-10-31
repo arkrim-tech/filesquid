@@ -56,6 +56,8 @@ mod owner_only;
 #[cfg(feature = "desktop")]
 pub mod preferences_sqlite;
 #[cfg(feature = "desktop")]
+pub mod registry_sqlite;
+#[cfg(feature = "desktop")]
 pub mod repair_ledger;
 #[cfg(feature = "desktop")]
 pub mod workers;

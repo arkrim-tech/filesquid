@@ -33,6 +33,7 @@ use crate::jobs::{
 use filesquid_core::LibraryId;
 use serde::{Deserialize, Serialize};
 use std::ops::ControlFlow;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
@@ -168,6 +169,7 @@ pub struct RebuildRunner {
     batch: usize,
     renewal: Option<Duration>,
     runtime: Option<tokio::runtime::Handle>,
+    stop: Option<Arc<AtomicBool>>,
 }
 
 impl std::fmt::Debug for RebuildRunner {
@@ -193,7 +195,24 @@ impl RebuildRunner {
             batch: REBUILD_BATCH,
             renewal: None,
             runtime: None,
+            stop: None,
         }
+    }
+
+    /// Stop every run once `stop` is set (the host's quit, DE-S-014): the run checkpoints
+    /// after the object it is reading and gives its lease back with the job pending, to resume
+    /// at the next launch (Task DE-1.8).
+    #[must_use]
+    pub fn with_stop(mut self, stop: Arc<AtomicBool>) -> Self {
+        self.stop = Some(stop);
+        self
+    }
+
+    /// Whether the host asked every run to stop.
+    fn stopping(&self) -> bool {
+        self.stop
+            .as_ref()
+            .is_some_and(|stop| stop.load(Ordering::SeqCst))
     }
 
     /// Run resumed jobs on `runtime`, the host's long-lived runtime (default: the runtime of
@@ -260,6 +279,7 @@ impl RebuildRunner {
                 Ok(RebuildEnd::Finished { total, journal }) => {
                     return tracker.complete(returned, total, journal);
                 }
+                Ok(RebuildEnd::Stopped) if self.stopping() => return returned.suspend(),
                 Ok(RebuildEnd::Stopped) => match returned.halt_if_requested()? {
                     Halt::Halted(state) => return Ok(state),
                     Halt::Continued(continued) => *continued,
@@ -297,6 +317,7 @@ impl RebuildRunner {
         let mut progress = JobProgress {
             run: &shared,
             tracker,
+            stop: self.stop.as_deref(),
         };
         let end = self
             .libraries
@@ -517,22 +538,32 @@ fn encode<T: Serialize>(value: &T) -> Result<String, JobError> {
 struct JobProgress<'a> {
     run: &'a Mutex<RunningJob>,
     tracker: &'a mut Tracker,
+    /// The host's quit flag, read at every object.
+    stop: Option<&'a AtomicBool>,
+}
+
+impl JobProgress<'_> {
+    /// Whether the host asked the run to stop.
+    fn stopping(&self) -> bool {
+        self.stop.is_some_and(|stop| stop.load(Ordering::SeqCst))
+    }
 }
 
 impl RebuildProgress for JobProgress<'_> {
     fn object(&mut self, step: RebuildStep<'_>) -> ControlFlow<()> {
         self.tracker.add(step);
         let mut run = lock(self.run);
-        if run.requested().is_none() && !self.tracker.due() {
+        let halting = run.requested().is_some() || self.stopping();
+        if !halting && !self.tracker.due() {
             return ControlFlow::Continue(());
         }
         if let Err(err) = self.tracker.save(&mut run) {
             self.tracker.refused = Some(err);
             return ControlFlow::Break(());
         }
-        match run.requested() {
-            Some(_) => ControlFlow::Break(()),
-            None => ControlFlow::Continue(()),
+        match run.requested().is_some() || self.stopping() {
+            true => ControlFlow::Break(()),
+            false => ControlFlow::Continue(()),
         }
     }
 }

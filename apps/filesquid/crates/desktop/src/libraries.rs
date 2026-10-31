@@ -60,6 +60,9 @@ pub struct LibraryServing {
     pub catalog: Arc<SqliteCatalog>,
     /// This installation as a repository, which a new library entity names.
     pub repository: RepositoryId,
+    /// The API state whose rebuild runner takes an opened library's unfinished rebuild (Task
+    /// DE-1.8); `None` when this launch did not reconcile its jobs, which then schedules none.
+    pub rebuilds: Option<filesquid_api::ApiState>,
 }
 
 /// The desktop's library commands: [`LibraryCommands`] over [`HostLocations`], serving each
@@ -134,6 +137,9 @@ impl DesktopLibraries {
             validation.open_library(view.library_id.clone(), root.backend.clone());
         }
         self.serving.opened.insert(&view.library_id, root);
+        if let Some(state) = &self.serving.rebuilds {
+            crate::rebuilds::resume_rebuilds_of(state, &view.library_id);
+        }
     }
 
     /// Attach `library_id`'s folder `root` (identified as `identity`) to its catalog index on

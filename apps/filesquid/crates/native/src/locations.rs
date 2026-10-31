@@ -12,12 +12,15 @@
 //! Registrations live in memory for the host's lifetime; at most [`MAX_LOCATIONS`].
 //!
 //! The registry is also the desktop's [`LibraryRegistry`] (Task API-F2.18; API-S-038): it keeps
-//! each library's name, the location it was opened from and when, in a [`RegistryBook`] for the
-//! host's lifetime (keeping it across launches is DE-1.8's), and answers the free bytes of a
+//! each library's name, the location it was opened from and when, in a [`RegistryBook`], and,
+//! when opened with [`HostLocations::persistent`], writes them through to the operational
+//! store and restores them at the next launch with each folder registered again under its
+//! location ID (Task DE-1.8, [`crate::registry_sqlite`]), and answers the free bytes of a
 //! registered folder's volume on Linux and macOS with `fs4`. Any other build answers
 //! `volume_unreadable` (owner decision 5 of 2026-10-23: the Win32 read is DE-F3.3's).
 
 use crate::files::{real_dir, storage_root, HostLeases};
+use crate::registry_sqlite::{RegistryRow, SqliteLibraryRegistry};
 use filesquid_api::history::backfill::{Backfill, BackfillError, BackfillReport};
 use filesquid_api::local_library::{
     FreeSpace, LibraryLocations, LibraryRegistry, LibraryRoot, RegistryBook, RegistryEntry,
@@ -54,6 +57,8 @@ pub struct HostLocations {
     locations: Mutex<HashMap<String, Location>>,
     /// What this host remembers of each library it bound (API-S-038).
     libraries: RegistryBook,
+    /// Where that is kept across launches, when it is.
+    store: Option<SqliteLibraryRegistry>,
 }
 
 impl std::fmt::Debug for HostLocations {
@@ -69,6 +74,79 @@ impl HostLocations {
             data_dir: data_dir.to_path_buf(),
             locations: Mutex::new(HashMap::new()),
             libraries: RegistryBook::new(),
+            store: None,
+        }
+    }
+
+    /// The registry of a host that keeps what it remembers of its libraries across launches
+    /// in `store`: every kept library is remembered again and its folder registered again
+    /// under its location ID; a folder that cannot be registered now (moved, unplugged) keeps
+    /// its entry, whose free bytes then read as unreadable. Reads the store and each folder's
+    /// metadata; creates each location's folders in the data directory.
+    ///
+    /// # Errors
+    /// The store cannot be read; nothing is restored then.
+    pub fn persistent(data_dir: &Path, store: SqliteLibraryRegistry) -> Result<Self, String> {
+        let rows = store.rows()?;
+        let mut locations = Self::new(data_dir);
+        for row in rows.iter().rev() {
+            locations.restore(row);
+        }
+        locations.store = Some(store);
+        Ok(locations)
+    }
+
+    /// Remember `row` again and register its folder under its location ID, logging a folder
+    /// that cannot be registered with no path.
+    fn restore(&self, row: &RegistryRow) {
+        let known = self.root_of(&row.location_id).is_some();
+        if !known {
+            if let Err(reason) = self.register_as(&row.location_id, &row.folder) {
+                tracing::info!(
+                    target: "filesquid::native",
+                    library_id = row.library_id.as_str(),
+                    reason = reason.as_str(),
+                    "a remembered library's folder could not be registered again"
+                );
+            }
+        }
+        self.libraries.remember(
+            &row.library_id,
+            &row.location_id,
+            Some(&row.name),
+            row.last_opened_ms,
+        );
+    }
+
+    /// Keep what this host remembers of `library_id` in its store, when it has one; a failure
+    /// is logged with no path (the library stays remembered for this launch).
+    fn persist(&self, library_id: &LibraryId) {
+        let (Some(store), Some(entry)) = (&self.store, self.libraries.entry(library_id)) else {
+            return;
+        };
+        let Some(folder) = self.folder_of(&entry.location_id) else {
+            return;
+        };
+        let row = RegistryRow {
+            library_id: entry.library_id,
+            name: entry.name,
+            location_id: entry.location_id,
+            folder,
+            last_opened_ms: entry.last_opened_ms,
+        };
+        let retained: Vec<LibraryId> = self
+            .libraries
+            .entries()
+            .into_iter()
+            .map(|entry| entry.library_id)
+            .collect();
+        if let Err(reason) = store.save(&row, &retained) {
+            tracing::warn!(
+                target: "filesquid::native",
+                error_code = "unavailable",
+                reason = reason.as_str(),
+                "a library could not be remembered across launches"
+            );
         }
     }
 
@@ -231,12 +309,19 @@ impl LibraryRegistry for HostLocations {
         name: Option<&str>,
         opened_ms: i64,
     ) -> String {
-        self.libraries
-            .remember(library_id, location_id, name, opened_ms)
+        let kept = self
+            .libraries
+            .remember(library_id, location_id, name, opened_ms);
+        self.persist(library_id);
+        kept
     }
 
     fn rename(&self, library_id: &LibraryId, name: &str) -> Option<bool> {
-        self.libraries.rename(library_id, name)
+        let renamed = self.libraries.rename(library_id, name);
+        if renamed == Some(true) {
+            self.persist(library_id);
+        }
+        renamed
     }
 
     fn entry(&self, library_id: &LibraryId) -> Option<RegistryEntry> {

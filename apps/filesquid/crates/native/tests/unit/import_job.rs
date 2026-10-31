@@ -9,7 +9,7 @@
 //! registered there at its logical path in the library's index (ADR 041), a taken path is
 //! numbered, and a crash between a file's object and its registration resumes.
 
-use filesquid_api::jobs::{JobState, JobStore, Jobs, MemoryJobStore};
+use filesquid_api::jobs::{JobItemState, JobItems, JobState, JobStore, Jobs, MemoryJobStore};
 use filesquid_api::journal::{JournalEntry, JournalQuery, MemoryJournal};
 use filesquid_api::journal_writer::{JournalWriter, WriterConfig};
 use filesquid_api::library::{CatalogChange, CatalogCommit, LibraryCatalog};
@@ -25,6 +25,7 @@ use filesquid_native::catalog::{LibraryFolder, PendingIntent, RegisterFile, Regi
 use filesquid_native::import::file::{import_file, FileImport};
 use filesquid_native::import::host::Build;
 use filesquid_native::import::index::ImportIndex;
+use filesquid_native::import::items::SqliteJobItems;
 use filesquid_native::import::job::{
     backoff, checkpoint_next, import_checkpoint, list_plan, manifest_of, reserve_for,
     run_import_job, submit_import, ImportContext, Listed, IMPORT_FILE_OPERATION, MAX_ATTEMPTS,
@@ -79,6 +80,7 @@ struct Rig {
     store: Arc<MemoryJobStore>,
     jobs: Jobs,
     plans: Arc<SqliteImportPlans>,
+    items: Arc<SqliteJobItems>,
     monitor: Monitor,
     build: Build,
     stop: AtomicBool,
@@ -129,12 +131,14 @@ impl Rig {
             "test-launch",
         );
         let plans = Arc::new(SqliteImportPlans::open(&dir.join("plans.sqlite")).expect("plans"));
+        let items = Arc::new(SqliteJobItems::open(&dir.join("plans.sqlite")).expect("items"));
         Self {
             files,
             catalog,
             store,
             jobs,
             plans,
+            items,
             monitor,
             build: Build {
                 version: "0.1.0".into(),
@@ -172,6 +176,7 @@ impl Rig {
             files: &self.files,
             index,
             plans: &self.plans,
+            items: &self.items,
             journal,
             build: &self.build,
             actor: "owner",
@@ -236,6 +241,7 @@ impl Rig {
             operation_id: None,
             build: &self.build,
             actor: "owner",
+            progress: None,
         };
         import_file(&self.files, &request).await.expect("imported");
     }
@@ -475,6 +481,63 @@ fn manifest_with(rig: &Rig, folder: &Path, index: usize, file_id: &str) -> Vec<M
     manifest
 }
 
+/// The state, bytes done and error code of every item of job `job_id`, in order.
+fn item_states(rig: &Rig, job_id: &str) -> Vec<(JobItemState, u64, Option<String>)> {
+    let page = rig.items.page(job_id, None, 1_000).expect("items");
+    page.items
+        .into_iter()
+        .map(|item| (item.state, item.bytes_done, item.error_code))
+        .collect()
+}
+
+#[tokio::test]
+async fn each_file_s_state_is_kept_and_a_failed_file_is_retried_alone() {
+    let dir = TempDir::new("items");
+    let rig = Rig::new(&dir.0).await;
+    let folder = holiday_folder(&dir.0);
+    let plan = plan(&folder);
+    let job = rig.submit(&plan, "op-items");
+    let listed = list_plan(&plan).expect("listed");
+    let manifest = manifest_of(listed, &plan, rig.catalog.as_ref()).expect("manifest");
+    rig.plans
+        .save_manifest(&job.id, &manifest)
+        .expect("manifest");
+    std::fs::remove_file(folder.join("b.png")).expect("b gone");
+    let journal = rig.monitor.journal();
+    let first = run_import_job(&rig.context(&journal), &job.id, &plan)
+        .await
+        .expect("ran");
+    assert_eq!(first.state, JobState::Pending, "waits for a retry");
+    assert_eq!(first.quarantined, ["source_missing"]);
+    let states = item_states(&rig, &job.id);
+    assert_eq!(states[0], (JobItemState::Copied, 1, None), "Day 2/c.txt");
+    assert_eq!(states[1], (JobItemState::Copied, 3, None), "a.jpg");
+    assert_eq!(
+        states[2],
+        (JobItemState::Failed, 0, Some("source_missing".to_string()))
+    );
+    let items = rig.items.page(&job.id, None, 1_000).expect("items").items;
+    assert_eq!(items[2].name, "b.png", "the base name only");
+    std::fs::write(folder.join("b.png"), b"bbbb").expect("b back");
+    std::fs::remove_file(folder.join("a.jpg")).expect("a gone: never read again");
+    let failed = items[2].item_id.clone();
+    assert_eq!(
+        rig.items.retry(&job.id, Some(&failed)).expect("retry"),
+        [failed]
+    );
+    let second = run_import_job(&rig.context(&journal), &job.id, &plan)
+        .await
+        .expect("ran");
+    assert_eq!(second.state, JobState::Completed);
+    assert_eq!(second.imported.len(), 1, "only the retried file");
+    assert!(second.quarantined.is_empty(), "{:?}", second.quarantined);
+    assert_eq!(
+        item_states(&rig, &job.id)[2],
+        (JobItemState::Copied, 4, None)
+    );
+    assert_eq!(objects(&dir.0), 3);
+}
+
 #[tokio::test]
 async fn a_file_that_keeps_failing_is_quarantined_after_five_attempts_and_the_rest_go_on() {
     let dir = TempDir::new("quarantine");
@@ -493,7 +556,11 @@ async fn a_file_that_keeps_failing_is_quarantined_after_five_attempts_and_the_re
     let run = run_import_job(&rig.context(&journal), &job.id, &plan)
         .await
         .expect("ran");
-    assert_eq!(run.state, JobState::Completed);
+    assert_eq!(
+        run.state,
+        JobState::Pending,
+        "a job with a failed file waits for a retry"
+    );
     assert_eq!(run.imported.len(), 2, "the rest go on");
     assert_eq!(
         run.quarantined,
@@ -578,7 +645,11 @@ async fn a_quit_suspends_between_files_and_the_resume_imports_only_the_rest() {
     let run = run_import_job(&rig.context(&journal), &job.id, &plan)
         .await
         .expect("resumed");
-    assert_eq!(run.state, JobState::Completed);
+    assert_eq!(
+        run.state,
+        JobState::Pending,
+        "the conflicted file waits for a retry"
+    );
     assert_eq!(run.imported.len(), 1, "only the last file of the manifest");
     assert_eq!(run.quarantined, ["conflict"]);
     assert_eq!(
@@ -723,6 +794,7 @@ fn worker(rig: &Rig, stop: &Arc<AtomicBool>) -> ImportWorker {
         files: rig.files.clone(),
         index: rig.catalog.clone(),
         plans: rig.plans.clone(),
+        items: rig.items.clone(),
         journal: rig.monitor.journal(),
         build: rig.build.clone(),
         actor: "owner".into(),
@@ -734,9 +806,14 @@ fn worker(rig: &Rig, stop: &Arc<AtomicBool>) -> ImportWorker {
     .expect("worker")
 }
 
-/// Wait (at most 60 s) until `count` files are journaled as imported.
+/// Longest wait for the worker to import every job: the 70 single-file jobs finish in about
+/// 9 s alone, but a loaded full run (every test binary at once) once took longer than 60 s, so
+/// the bound leaves room for that; a run that finishes sooner returns sooner.
+const ALL_JOBS_WAIT: Duration = Duration::from_secs(300);
+
+/// Wait (at most [`ALL_JOBS_WAIT`]) until `count` files are journaled as imported.
 fn wait_for(rig: &Rig, count: usize) {
-    let deadline = std::time::Instant::now() + Duration::from_secs(60);
+    let deadline = std::time::Instant::now() + ALL_JOBS_WAIT;
     while rig.entries(IMPORT_FILE_OPERATION).len() < count && std::time::Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(20));
     }

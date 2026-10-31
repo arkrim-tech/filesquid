@@ -114,6 +114,8 @@ struct Desktop {
     opened: Arc<OpenedRoots>,
     /// The long-lived runtime the rebuild runner runs jobs on, as the app's runtime.
     runtime: tokio::runtime::Runtime,
+    /// The app's exit flag the rebuild runner was given.
+    quitting: Arc<AtomicBool>,
 }
 
 impl Desktop {
@@ -135,6 +137,7 @@ impl Desktop {
             data_dir: dir.clone(),
             catalog: catalog.clone(),
             repository: RepositoryId::new(INSTALLATION).expect("repository"),
+            rebuilds: Some(state.clone()),
         };
         let locations =
             install_library_routes(&state, &host, &installation(), serving).expect("routes");
@@ -144,7 +147,9 @@ impl Desktop {
             .build()
             .expect("runtime");
         let jobs = open_jobs(&dir, &host).expect("jobs");
-        install_job_routes(&state, &jobs, runtime.handle().clone()).expect("job routes");
+        let quitting = Arc::new(AtomicBool::new(false));
+        install_job_routes(&state, &jobs, runtime.handle().clone(), quitting.clone())
+            .expect("job routes");
         Self {
             dir,
             state,
@@ -155,6 +160,7 @@ impl Desktop {
             locations,
             opened,
             runtime,
+            quitting,
         }
     }
 
@@ -860,4 +866,98 @@ fn copy_dir(from: &Path, to: &Path) {
             std::fs::copy(entry.path(), target).expect("copy");
         }
     }
+}
+
+#[test]
+fn a_rebuild_stopped_at_exit_resumes_from_its_checkpoint_when_its_library_opens_again() {
+    let dir = fresh_dir("rebuild-exit");
+    let (library, root) = donor_library(&dir.join("donor"));
+    let desktop = Desktop::launch(dir.join("data"));
+    let open = |desktop: &Desktop| {
+        let location = desktop.register(&root);
+        let body = json!({ "location_id": location, "library_id": library });
+        assert_eq!(desktop.command("/api/v1/libraries/openings", body).0, 200);
+    };
+    open(&desktop);
+    desktop.quitting.store(true, Ordering::SeqCst);
+    let (status, rebuilt) = desktop.command(
+        "/api/v1/libraries/rebuilds",
+        json!({ "library_id": library }),
+    );
+    assert_eq!(status, 200, "{rebuilt}");
+    let job = rebuilt["job_id"].as_str().expect("job id").to_string();
+    let mut view = Value::Null;
+    for _ in 0..MAX_JOB_POLLS {
+        view = desktop.get(&format!("/api/v1/jobs/{job}")).1;
+        if view["state"] == "pending" && view["attempts"] == 1 {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(view["state"], "pending", "suspended at exit: {view}");
+    assert_eq!(view["done"], 1, "its checkpoint after the object in hand");
+    let (data, entries) = desktop.stop();
+    let suspended = entries.iter().filter(|e| e.operation == "job.suspended");
+    assert_eq!(suspended.count(), 1, "the exit suspended it once");
+    let desktop = Desktop::launch(data);
+    let (_, view) = desktop.get(&format!("/api/v1/jobs/{job}"));
+    assert_eq!(
+        view["state"], "pending",
+        "not run before its library opens: {view}"
+    );
+    open(&desktop);
+    let view = desktop.finished_job(&job);
+    assert_eq!(view["state"], "completed", "{view}");
+    assert_eq!(view["attempts"], 2, "resumed once");
+    assert_eq!(
+        view["result"]["objects"].as_array().expect("objects").len(),
+        1,
+        "no checkpointed object read again"
+    );
+    desktop.stop();
+}
+
+#[test]
+fn recent_libraries_and_their_facts_survive_a_restart_without_a_path() {
+    let dir = fresh_dir("recent-restart");
+    let desktop = Desktop::launch(dir.join("data"));
+    let folder = dir.join("Family archive");
+    std::fs::create_dir_all(&folder).expect("folder");
+    let location = desktop.register(&folder);
+    let body = json!({ "location_id": location, "name": "Family archive" });
+    let (status, created) = desktop.command("/api/v1/libraries", body);
+    assert_eq!(status, 200, "{created}");
+    let library = created["library_id"].as_str().expect("id").to_string();
+    let rename = json!({ "library_id": library, "name": "Family archive 1990s" });
+    assert_eq!(desktop.command("/api/v1/libraries/renames", rename).0, 200);
+    let (data, _) = desktop.stop();
+    let desktop = Desktop::launch(data);
+    let (status, recent) = desktop.get("/api/v1/libraries/recent");
+    assert_eq!(status, 200, "{recent}");
+    let listed = &recent["libraries"][0];
+    assert_eq!(listed["library_id"], library.as_str(), "{recent}");
+    assert_eq!(
+        listed["name"], "Family archive 1990s",
+        "the renamed name kept"
+    );
+    assert_eq!(listed["open"], false, "not opened yet this launch");
+    assert_eq!(
+        desktop.register(&folder),
+        location,
+        "the folder keeps its location across launches"
+    );
+    let body = json!({ "location_id": location, "library_id": library });
+    let (status, opened) = desktop.command("/api/v1/libraries/openings", body);
+    assert_eq!(status, 200, "{opened}");
+    let (status, facts) = desktop.get(&format!("/api/v1/libraries/{library}/facts"));
+    assert_eq!(status, 200, "{facts}");
+    assert_eq!(facts["name"], "Family archive 1990s");
+    if cfg!(any(target_os = "linux", target_os = "macos")) {
+        assert!(facts["free_bytes"].as_u64().is_some(), "{facts}");
+    } else {
+        assert_eq!(facts["free_bytes_reason"], "volume_unreadable");
+    }
+    let text = format!("{recent}{facts}");
+    assert!(!text.contains("loc-"), "no location ID: {text}");
+    desktop.stop();
 }

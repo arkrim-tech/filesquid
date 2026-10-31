@@ -351,3 +351,107 @@ fn only_in_hand(world: &mut DesktopWorld) {
     assert_eq!(rig.imported().len(), 1, "no further file read");
     assert_eq!(rig.file_objects(), 1);
 }
+
+#[when("the owner edits both picked files")]
+fn edit_picked(world: &mut DesktopWorld) {
+    let dir = scenario(world).dir.clone().expect("dir");
+    let folder = dir.join("Holidays");
+    std::fs::write(folder.join("Beach day.jpg"), b"jpeg, edited").expect("a");
+    std::fs::write(folder.join("Notes.txt"), b"notes, edited").expect("b");
+}
+
+/// The plan ID of the last `planned` answer.
+fn last_plan(world: &mut DesktopWorld) -> String {
+    let answers = &scenario(world).answers;
+    let plan = answers
+        .iter()
+        .rev()
+        .find_map(|(_, answer)| answer["plan_id"].as_str());
+    plan.expect("a plan").to_string()
+}
+
+#[when(expr = "the app asks to review a folder import under the operation {string}")]
+async fn review_folder(world: &mut DesktopWorld, operation: String) {
+    let answer = rig(world).plan(LIBRARY, &operation, "folder").await;
+    scenario(world).answers.push(answer);
+}
+
+#[then(expr = "the plan should count {int} new files and {int} bytes to copy with nothing staged")]
+async fn plan_counts(world: &mut DesktopWorld, files: u64, bytes: u64) {
+    let (status, answer) = last_answer(world);
+    assert_eq!(status, 200, "{answer}");
+    assert_eq!(answer["import"], "planned", "{answer}");
+    assert_eq!(answer["plan"]["files_new"], files, "{answer}");
+    assert_eq!(answer["plan"]["bytes_to_copy"], bytes, "{answer}");
+    let (_, jobs) = rig(world).get("/api/v1/jobs?kind=import").await;
+    assert_eq!(jobs["jobs"], json!([]), "no job before the confirmation");
+    assert_eq!(rig(world).file_objects(), 0, "nothing staged or committed");
+}
+
+#[when("the owner confirms the plan")]
+async fn confirm(world: &mut DesktopWorld) {
+    let plan = last_plan(world);
+    let answer = rig(world).start(&plan).await;
+    assert_eq!(answer.0, 200, "{}", answer.1);
+    scenario(world).answers.push(answer);
+}
+
+#[when("the owner discards the plan")]
+async fn discard(world: &mut DesktopWorld) {
+    let plan = last_plan(world);
+    let (status, answer) = rig(world).discard(&plan).await;
+    assert_eq!(status, 200, "{answer}");
+}
+
+#[then("confirming the plan should be refused as not found")]
+async fn confirm_refused(world: &mut DesktopWorld) {
+    let plan = last_plan(world);
+    let (status, answer) = rig(world).start(&plan).await;
+    assert_eq!(status, 404, "{answer}");
+    assert!(
+        answer["message"]
+            .as_str()
+            .is_some_and(|m| m.contains("plan_not_found")),
+        "{answer}"
+    );
+}
+
+#[when("the second picked file disappears while the first is in hand")]
+fn second_disappears(world: &mut DesktopWorld) {
+    assert!(rig(world).gate.wait_held(), "the first file is in hand");
+    let dir = scenario(world).dir.clone().expect("dir");
+    std::fs::remove_file(dir.join("Holidays").join("Notes.txt")).expect("gone");
+    rig(world).gate.release();
+}
+
+/// The job's files as the items route answers them.
+async fn items_of(world: &mut DesktopWorld) -> Vec<Value> {
+    let job = job_id(world);
+    let (status, page) = rig(world).get(&format!("/api/v1/jobs/{job}/items")).await;
+    assert_eq!(status, 200, "{page}");
+    page["items"].as_array().expect("items").clone()
+}
+
+#[then(expr = "the second file should have failed as {string} with the job waiting for a retry")]
+async fn second_failed(world: &mut DesktopWorld, code: String) {
+    job_reaches(world, "pending".into(), 2, 2).await;
+    let items = items_of(world).await;
+    assert_eq!(items[0]["state"], "copied", "the first file: {items:?}");
+    assert_eq!(items[1]["state"], "failed", "{items:?}");
+    assert_eq!(items[1]["error_code"], code.as_str());
+}
+
+#[when("the second picked file comes back and the owner retries it")]
+async fn retry_second(world: &mut DesktopWorld) {
+    let dir = scenario(world).dir.clone().expect("dir");
+    std::fs::write(dir.join("Holidays").join("Notes.txt"), b"notes").expect("back");
+    let items = items_of(world).await;
+    let (job, item) = (
+        job_id(world),
+        items[1]["item_id"].as_str().expect("item").to_string(),
+    );
+    let path = format!("/api/v1/jobs/{job}/items/{item}/retry");
+    let (status, answer) = rig(world).post(&path).await;
+    assert_eq!(status, 200, "{answer}");
+    assert_eq!(answer["scheduled"], true, "{answer}");
+}

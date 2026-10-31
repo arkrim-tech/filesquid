@@ -66,6 +66,19 @@ pub struct SourceImport {
     pub host: Host,
 }
 
+/// What one committed import answers the host: the view the routes answer, and the content
+/// committed (its SHA-256 and size), which the host keeps to find files the library already
+/// holds (Task DE-1.8, API-S-036 **Review**). Not part of the API contract.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ImportedOriginal {
+    /// The committed file object's view.
+    pub view: UploadView,
+    /// The SHA-256 of the committed original, lowercase hexadecimal.
+    pub sha256: String,
+    /// Its size in bytes.
+    pub size: u64,
+}
+
 /// The citation of an import: the file's object, version, stored path and the content.
 struct Citation {
     object_id: String,
@@ -112,7 +125,7 @@ where
         source: &D,
         key: &str,
         actor: &str,
-    ) -> Result<Committed<UploadView>, FileError> {
+    ) -> Result<Committed<ImportedOriginal>, FileError> {
         let caller = import_caller(actor, &import);
         let library = self.library(&import.library_id)?;
         let file_id = parse_file_id(&import.file_id)?;
@@ -179,7 +192,7 @@ fn import_caller(actor: &str, import: &SourceImport) -> Caller {
 
 /// The answer of an import an earlier run already committed: nothing new is committed, so
 /// there is nothing to journal for the commit. Pure.
-fn unjournaled(view: UploadView) -> Committed<UploadView> {
+fn unjournaled(view: ImportedOriginal) -> Committed<ImportedOriginal> {
     Committed {
         view,
         entries: Vec::new(),
@@ -195,7 +208,7 @@ async fn imported_before<B, R, S>(
     library: &Library<B, R, S>,
     import: &SourceImport,
     file_id: &FileId,
-) -> Result<Option<UploadView>, FileError>
+) -> Result<Option<ImportedOriginal>, FileError>
 where
     B: StorageBackend,
     R: VersionReservations,
@@ -221,7 +234,7 @@ async fn commit_import<B, R, S>(
     file_id: &FileId,
     citation: &Citation,
     (created, prepared): (&str, Prepared),
-) -> Result<Committed<UploadView>, FileError>
+) -> Result<Committed<ImportedOriginal>, FileError>
 where
     B: StorageBackend,
     R: VersionReservations,
@@ -238,7 +251,12 @@ where
         .await
         .map_err(canonical_error)?;
     let view = view_of(library_id, file_id, receipt.clone());
-    Ok(prepared.finish(view, &receipt))
+    let imported = ImportedOriginal {
+        view,
+        sha256: citation.sha256.clone(),
+        size: citation.size,
+    };
+    Ok(prepared.finish(imported, &receipt))
 }
 
 /// Clear what a failed import left in its object's staging area, so a quarantined import
@@ -347,7 +365,7 @@ fn view_of(
 
 /// The answer of an import whose object already exists: the version its import entry of
 /// `import`'s job cites, or a conflict when no entry of that job is in `record`. Pure.
-fn replayed(import: &SourceImport, record: &FileRecord) -> Result<UploadView, FileError> {
+fn replayed(import: &SourceImport, record: &FileRecord) -> Result<ImportedOriginal, FileError> {
     let job = import
         .job_id
         .clone()
@@ -357,7 +375,7 @@ fn replayed(import: &SourceImport, record: &FileRecord) -> Result<UploadView, Fi
         .iter()
         .find(|entry| entry.acquisition.job_id == Fact::value(job.clone()))
         .ok_or_else(|| FileError::conflict("That file already exists."))?;
-    Ok(UploadView {
+    let view = UploadView {
         library_id: import.library_id.clone(),
         file_id: import.file_id.clone(),
         object_id: entry.acquisition.object_id.clone(),
@@ -365,6 +383,11 @@ fn replayed(import: &SourceImport, record: &FileRecord) -> Result<UploadView, Fi
         created: entry.acquisition.recorded_at.clone(),
         collection_id: None,
         path: None,
+    };
+    Ok(ImportedOriginal {
+        view,
+        sha256: entry.acquisition.sha256.clone(),
+        size: entry.acquisition.size,
     })
 }
 

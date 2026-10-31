@@ -46,6 +46,7 @@ pub mod ipc_observer;
 pub mod libraries;
 pub mod navigation;
 pub mod panic_journal;
+pub mod rebuilds;
 pub mod stdout_log;
 #[cfg(feature = "test-webdriver")]
 pub mod test_fixture;
@@ -70,6 +71,7 @@ use filesquid_api::registry::ProcessHandle;
 use filesquid_api::trace_layer::JournalLayer;
 use filesquid_api::ApiState;
 use filesquid_core::{InstallationId, RepositoryId};
+use filesquid_native::import::items::open_import_stores;
 use filesquid_native::import::plans::SqliteImportPlans;
 use filesquid_native::installation::{
     self, InstallationError, InstallationSource, INSTALLATION_CREATED,
@@ -345,6 +347,17 @@ pub struct DesktopValidation(pub ValidationService<FsBackend>);
 /// managed state for the jobs that later tasks (import, upload, migration) run.
 pub struct DesktopJobs(pub Jobs);
 
+/// Whether this launch reconciled its durable jobs (DE-S-014): only then does it hand an
+/// opened library's unfinished rebuild to the runner (Task DE-1.8).
+pub struct DesktopRecovered(pub bool);
+
+/// The import plans and their per-file progress (Tasks DE-1.2, DE-1.8), opened with the job
+/// service, which answers the job items routes from the second.
+pub struct DesktopImportStores(
+    pub Arc<SqliteImportPlans>,
+    pub Arc<filesquid_native::import::items::SqliteJobItems>,
+);
+
 /// The host's out-of-process libvips media workers (Task DE-0.5; DE-S-016), held in Tauri's
 /// managed state for the thumbnail and preview routes. At most two run at once.
 pub struct DesktopMedia(pub MediaWorkers);
@@ -542,13 +555,15 @@ pub const LIBRARY_ROUTES_OPERATION: &str = "library.routes.install";
 pub struct DesktopLocations(pub Arc<HostLocations>);
 
 /// Install the library and repair routes' host side in `state` (API-S-025, Task DE-1.1): the
-/// library commands over the folders the owner registers ([`HostLocations`] in `data_dir`),
-/// with the repair service of [`local_library_service`] over the persistent repair ledger
+/// library commands over the folders the owner registers ([`HostLocations`] in `data_dir`,
+/// which keeps each library's name, location and last opened time across launches in the
+/// operational store, Task DE-1.8), with the repair service of [`local_library_service`] over the persistent repair ledger
 /// ([`SqliteRepairLedger`] in the operational store), serving each bound library with
-/// `serving`. Answers the folder registry. Opens a database connection.
+/// `serving`. Answers the folder registry. Opens database connections.
 ///
 /// # Errors
-/// The repair ledger could not be opened, or library commands are already installed.
+/// The repair ledger or the library registry could not be opened, or library commands are
+/// already installed.
 pub fn install_library_routes(
     state: &ApiState,
     host: &HostMonitor,
@@ -565,7 +580,10 @@ pub fn install_library_routes(
         "the repair ledger could not be opened".to_string()
     })?;
     let service = local_library_service(host, installation, Arc::new(ledger));
-    let locations = Arc::new(HostLocations::new(&serving.data_dir));
+    let store = filesquid_native::registry_sqlite::SqliteLibraryRegistry::open(
+        &serving.data_dir.join(JOURNAL_FILE),
+    )?;
+    let locations = Arc::new(HostLocations::persistent(&serving.data_dir, store)?);
     let libraries = DesktopLibraries::new(service, locations.clone(), serving);
     if !state.install_libraries(Arc::new(libraries)) {
         return Err("library commands were already installed".to_string());
@@ -575,8 +593,9 @@ pub fn install_library_routes(
 
 /// Install this launch's durable job service `jobs` for the job routes (API-S-037) and the
 /// runner of rebuild jobs over the installed library commands, run on `runtime`, the app's
-/// long-lived runtime (Task API-F2.17; API-S-025 **Rebuild as a job**). Resuming an
-/// unfinished rebuild at launch is the host's next step (Task DE-1.8).
+/// long-lived runtime (Task API-F2.17; API-S-025 **Rebuild as a job**). Setting `stop` (the
+/// app's exit) makes a running rebuild give its lease back with its checkpoint (Task DE-1.8,
+/// [`rebuilds`]).
 ///
 /// # Errors
 /// The library commands are not installed yet, or a job service or a rebuild runner is
@@ -585,6 +604,7 @@ pub fn install_job_routes(
     state: &ApiState,
     jobs: &Jobs,
     runtime: tokio::runtime::Handle,
+    stop: Arc<AtomicBool>,
 ) -> Result<(), String> {
     let libraries = state
         .libraries()
@@ -592,8 +612,9 @@ pub fn install_job_routes(
     if !state.install_jobs(Arc::new(jobs.clone())) {
         return Err("a job service was already installed".to_string());
     }
-    let runner =
-        RebuildRunner::new(jobs.clone(), libraries, Principal::Owner.actor()).with_runtime(runtime);
+    let runner = RebuildRunner::new(jobs.clone(), libraries, Principal::Owner.actor())
+        .with_runtime(runtime)
+        .with_stop(stop);
     if !state.install_job_runner(REBUILD_JOB_KIND, Arc::new(runner)) {
         return Err("a rebuild runner was already installed".to_string());
     }
@@ -755,12 +776,12 @@ fn start_monitor(
     install_library_services(app, &host, &installation, &data_dir, (opened, catalog))
         .inspect_err(|_| host.stop())?;
     let runtime = tauri::async_runtime::handle().inner().clone();
-    install_job_routes(&state, &app.state::<DesktopJobs>().0, runtime)
+    let stop = Arc::new(AtomicBool::new(false));
+    install_job_routes(&state, &app.state::<DesktopJobs>().0, runtime, stop.clone())
         .inspect_err(|_| host.stop())?;
     app.manage(DesktopInstallation(installation));
     open_test_library(app, &data_dir);
     let forwarder = Arc::new(event_channel::register_forwarder(host.monitor().registry()));
-    let stop = Arc::new(AtomicBool::new(false));
     spawn_ticker(host.clone(), stop.clone());
     let backfill = Arc::new(DesktopBackfill::new(task, stop.clone()));
     install_backfill_route(&state, &backfill, recovered).inspect_err(|_| host.stop())?;
@@ -788,7 +809,7 @@ pub fn import_build() -> filesquid_native::import::host::Build {
     }
 }
 
-/// Open the import plans in `data_dir`, start the native import worker (setting `stop`
+/// Start the native import worker over the import stores the job service opened (setting `stop`
 /// suspends it; it runs the unfinished import jobs when the job store was `recovered`), and install
 /// the import route with the native `rfd` dialog (Task DE-1.2) and the worker as the `import`
 /// job runner (Task DE-1.9). Starts a thread; database I/O.
@@ -803,15 +824,17 @@ fn start_imports(
     recovered: bool,
 ) -> Result<Arc<filesquid_native::import::worker::ImportWorker>, String> {
     use filesquid_native::import::worker::{ImportServices, ImportWorker};
-    let plans = Arc::new(SqliteImportPlans::open(&data_dir.join(JOURNAL_FILE))?);
+    let stores = app.state::<DesktopImportStores>();
+    let (plans, items) = (stores.0.clone(), stores.1.clone());
     let jobs = app.state::<DesktopJobs>().0.clone();
     let files = app.state::<DesktopFiles>().0.clone();
     let catalog = app.state::<DesktopCatalog>().0.clone();
     let worker = Arc::new(ImportWorker::spawn(ImportServices {
         jobs: jobs.clone(),
         files: files.clone(),
-        index: catalog,
+        index: catalog.clone(),
         plans: plans.clone(),
+        items: items.clone(),
         journal: host.monitor().journal(),
         build: import_build(),
         actor: Principal::Owner.actor().to_string(),
@@ -820,10 +843,14 @@ fn start_imports(
         retry_unit: filesquid_native::import::job::RETRY_UNIT,
         recover: recovered,
     })?);
+    let registry = app.state::<DesktopLocations>().0.clone();
     let starting = imports::ImportStarting {
         files,
         jobs,
         plans,
+        items,
+        index: catalog,
+        registry,
         worker: worker.clone(),
         dialog: Box::new(imports::RfdSources::new(app.clone())),
     };
@@ -877,7 +904,10 @@ fn prepare_backfill(
     opened: &Arc<OpenedRoots>,
 ) -> Result<(BackfillTask, bool), String> {
     let events = app.state::<ApiState>().events.clone();
-    let jobs = history_backfill::open_jobs(data_dir, host)?.with_events(events);
+    let stores = open_import_stores(&data_dir.join(JOURNAL_FILE))?;
+    let jobs = history_backfill::open_jobs(data_dir, host)?
+        .with_items(stores.1.clone())
+        .with_events(events);
     let recovered = history_backfill::recover_jobs(&jobs).is_ok();
     let task = BackfillTask {
         jobs: jobs.clone(),
@@ -887,6 +917,8 @@ fn prepare_backfill(
         opened: opened.clone(),
     };
     app.manage(DesktopJobs(jobs));
+    app.manage(DesktopImportStores(stores.0, stores.1));
+    app.manage(DesktopRecovered(recovered));
     Ok((task, recovered))
 }
 
@@ -940,6 +972,10 @@ fn install_library_services(
         data_dir: data_dir.to_path_buf(),
         repository: installation_repository(installation)?,
         catalog,
+        rebuilds: app
+            .try_state::<DesktopRecovered>()
+            .filter(|recovered| recovered.0)
+            .map(|_| state.inner().clone()),
     };
     let locations = install_library_routes(&state, host, installation, serving)?;
     let dialog = Box::new(folder_choice::RfdDialog::new(app.clone()));
@@ -1019,6 +1055,9 @@ fn stop_monitor(app: &tauri::AppHandle) {
         monitor.stop.store(true, Ordering::SeqCst);
         monitor.backfill.wait(BACKFILL_STOP_WAIT);
         monitor.imports.wait(IMPORT_STOP_WAIT);
+        if let Some(jobs) = app.try_state::<DesktopJobs>() {
+            rebuilds::wait_for_rebuilds(&jobs.0, rebuilds::REBUILD_STOP_WAIT);
+        }
         monitor.forwarder.complete();
         monitor.host.stop();
     }
