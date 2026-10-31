@@ -46,7 +46,7 @@ struct State {
     folders: BTreeMap<String, Folder>,
     receipts: BTreeMap<String, CommitReceipt>,
     /// Recorded object works of expired files, by file ID: (operation ID, mode, library).
-    pending: BTreeMap<String, (String, ExpiryMode, String)>,
+    pending: BTreeMap<String, (String, ExpiryMode, String, i64)>,
     /// Object works done, in order.
     purged: Vec<(FileId, ExpiryMode)>,
     /// Object works still to refuse (failure injection).
@@ -182,6 +182,7 @@ fn unstored_receipt(commit: CatalogCommit, revision: u64) -> CommitReceipt {
         revision: revision.to_string(),
         created_id: commit.created_id,
         deletion: commit.deletion,
+        restored_into: commit.restored_into,
     }
 }
 
@@ -236,7 +237,7 @@ impl State {
     }
 
     /// Apply one change.
-    fn apply(&mut self, commit_library: &LibraryId, operation: &str, change: CatalogChange) {
+    fn apply(&mut self, commit_library: &LibraryId, operation: (&str, i64), change: CatalogChange) {
         match change {
             CatalogChange::CreateLibrary(record) => self.create_library(record),
             CatalogChange::PutCollection(c) => {
@@ -285,10 +286,8 @@ impl State {
             CatalogChange::ExpireFile { file_id, mode } => {
                 self.purge(&file_id);
                 let library = commit_library.as_str().to_string();
-                self.pending.insert(
-                    file_id.as_str().to_string(),
-                    (operation.to_string(), mode, library),
-                );
+                let work = (operation.0.to_string(), mode, library, operation.1);
+                self.pending.insert(file_id.as_str().to_string(), work);
             }
         }
     }
@@ -407,10 +406,11 @@ impl State {
     fn apply_checked(&mut self, commit: CatalogCommit, revision: u64) -> CommitReceipt {
         let library_id = commit.library_id.clone();
         let operation = commit.operation_id.as_str().to_string();
+        let time = commit.journal.time_ms;
         commit
             .changes
             .into_iter()
-            .for_each(|c| self.apply(&library_id, &operation, c));
+            .for_each(|c| self.apply(&library_id, (&operation, time), c));
         if let Some(library) = self.libraries.get_mut(commit.library_id.as_str()) {
             library.revision = revision;
         }
@@ -420,6 +420,7 @@ impl State {
             revision: revision.to_string(),
             created_id: commit.created_id,
             deletion: commit.deletion,
+            restored_into: commit.restored_into,
         };
         self.journal.push(commit.journal.redacted());
         self.receipts
@@ -599,14 +600,15 @@ impl ObjectPurger for MemoryCatalog {
         state
             .pending
             .iter()
-            .filter(|(_, (_, _, library))| library == library_id.as_str())
+            .filter(|(_, (_, _, library, _))| library == library_id.as_str())
             .take(limit)
-            .map(|(file, (operation_id, mode, _))| {
+            .map(|(file, (operation_id, mode, _, time))| {
                 FileId::new(file.clone())
                     .map(|file_id| PendingPurge {
                         file_id,
                         operation_id: operation_id.clone(),
                         mode: *mode,
+                        purged_at_ms: *time,
                     })
                     .map_err(|_| CatalogError::Failed("empty file ID".into()))
             })

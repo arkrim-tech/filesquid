@@ -199,6 +199,7 @@ fn add_studio(drive: &DriveCatalog) {
         journal: JournalEntry::new("seed", Outcome::Succeeded),
         created_id: None,
         deletion: None,
+        restored_into: Vec::new(),
     };
     drive.catalog.commit(commit).expect("seed");
     drive

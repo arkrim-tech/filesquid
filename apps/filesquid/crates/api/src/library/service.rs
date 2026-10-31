@@ -139,9 +139,15 @@ impl LibraryService {
         self
     }
 
-    /// The recoverable-deletion policy.
-    pub fn deletion_policy(&self) -> DeletionPolicy {
-        self.policy
+    /// The recoverable-deletion policy in force: the installation default retention, from
+    /// the settings store when the host installed one.
+    ///
+    /// # Errors
+    /// `unavailable` or `internal` when the settings store fails.
+    pub fn deletion_policy(&self) -> Result<DeletionPolicy, LibraryError> {
+        Ok(DeletionPolicy {
+            recoverable_days: self.installation_settings()?.default_retention_days,
+        })
     }
 
     /// Run one command for `actor` (an opaque reference such as `user:<id>`), committing
@@ -206,7 +212,6 @@ impl LibraryService {
             .at_ms((self.clock)());
         let operation_id = request.envelope.operation_id().clone();
         let parents = super::navigation_parents(&library_id, &planned.changes);
-        let restored_into = planned.restored_into;
         let receipt = self.catalog.commit(CatalogCommit {
             operation_id: operation_id.clone(),
             library_id,
@@ -215,11 +220,10 @@ impl LibraryService {
             journal,
             created_id: planned.created_id,
             deletion: planned.deletion,
+            restored_into: planned.restored_into,
         })?;
         self.announce(parents);
-        let mut result = committed(&operation_id, receipt);
-        result.restored_into = restored_into;
-        Ok(result)
+        Ok(committed(&operation_id, receipt))
     }
 
     /// Publish the navigation change of a committed command, if a publisher is set and the
@@ -418,7 +422,7 @@ fn committed(operation_id: &OperationId, receipt: CommitReceipt) -> CommandResul
         revision: Some(receipt.revision),
         created_id: receipt.created_id,
         deletion: receipt.deletion,
-        restored_into: Vec::new(),
+        restored_into: receipt.restored_into,
     }
 }
 

@@ -13,7 +13,16 @@
 use crate::SqliteCatalog;
 use filesquid_api::jobs::{Job, JobError, JobSpec, JobState, Jobs, RunningJob};
 use filesquid_api::library::{mint_uuid_v4, LibraryService, EXPIRY_JOB_KIND};
+use std::collections::BTreeSet;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
+
+/// How often the lease helper wakes, in milliseconds.
+const RENEW_POLL_MS: u64 = 250;
+
+/// How often the lease is renewed while one library runs, in milliseconds: well within the
+/// jobs' lease time to live.
+const RENEW_EVERY_MS: u64 = 3_000;
 
 /// The opaque actor of the scheduled expiry.
 pub const EXPIRY_ACTOR: &str = "system";
@@ -34,7 +43,9 @@ pub struct ExpiryJobReport {
 }
 
 /// Run one expiry job over every library `catalog` has open, under `source` (the
-/// installation). Database, filesystem and journal I/O.
+/// installation). A job suspended earlier resumes from its checkpoint, the libraries it
+/// finished; a job of another source is left and a new one submitted. Database, filesystem
+/// and journal I/O.
 ///
 /// # Errors
 /// The job could not be submitted, started, checkpointed or completed (for example its lease
@@ -46,25 +57,109 @@ pub fn run_expiry_job(
     source: &str,
     stop: &AtomicBool,
 ) -> Result<(JobState, ExpiryJobReport), JobError> {
-    let job = match jobs.unfinished_of(EXPIRY_JOB_KIND, 1)?.into_iter().next() {
-        Some(job) => job,
-        None => submit(jobs, source)?,
-    };
-    let mut running = jobs.start(&job.id, source)?;
+    let mut running = start_job(jobs, source)?;
+    let mut done = done_libraries(running.checkpoint_text());
     let libraries = catalog
         .open_libraries()
         .map_err(|err| JobError::Unavailable(format!("{err:?}")))?;
     let total = u64::try_from(libraries.len()).unwrap_or(u64::MAX);
     let mut report = ExpiryJobReport::default();
-    for library in &libraries {
+    let remaining: Vec<_> = libraries
+        .iter()
+        .filter(|l| !done.contains(l.as_str()))
+        .collect();
+    for library in remaining {
         if stop.load(Ordering::SeqCst) || running.requested().is_some() {
             return running.suspend().map(|state| (state, report));
         }
-        expire_one(service, catalog, library, &mut report);
+        let finished = expire_renewing(service, catalog, library, &running, &mut report);
         report.libraries += 1;
-        running.checkpoint(&report.libraries.to_string(), report.libraries, Some(total))?;
+        if finished {
+            done.insert(library.as_str().to_string());
+        }
+        let progress = u64::try_from(done.len()).unwrap_or(u64::MAX);
+        running.checkpoint(&checkpoint(&done), progress, Some(total))?;
     }
     finish(running, &report).map(|()| (JobState::Completed, report))
+}
+
+/// Start this installation's unfinished expiry job, or a new one when there is none or the
+/// unfinished one belongs to another source.
+fn start_job(jobs: &Jobs, source: &str) -> Result<RunningJob, JobError> {
+    let job = match jobs.unfinished_of(EXPIRY_JOB_KIND, 1)?.into_iter().next() {
+        Some(job) => job,
+        None => submit(jobs, source)?,
+    };
+    match jobs.start(&job.id, source) {
+        Err(JobError::SourceChanged) => {
+            let fresh = submit(jobs, source)?;
+            jobs.start(&fresh.id, source)
+        }
+        started => started,
+    }
+}
+
+/// The libraries a checkpoint lists as finished; none for a missing or unreadable one (every
+/// library is visited again, which only finds nothing due).
+fn done_libraries(checkpoint: Option<&str>) -> BTreeSet<String> {
+    let parsed = checkpoint.and_then(|text| serde_json::from_str::<serde_json::Value>(text).ok());
+    parsed
+        .as_ref()
+        .and_then(|value| value.get("done"))
+        .and_then(serde_json::Value::as_array)
+        .map(|ids| {
+            ids.iter()
+                .filter_map(|id| id.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// The checkpoint of the libraries in `done`.
+fn checkpoint(done: &BTreeSet<String>) -> String {
+    serde_json::json!({ "done": done }).to_string()
+}
+
+/// Expire `library` while a helper thread renews the job's lease every third of its time to
+/// live, so a long library is never fenced; answer whether the library finished (a failed
+/// one is retried by the next run and not checkpointed as done).
+fn expire_renewing(
+    service: &LibraryService,
+    catalog: &SqliteCatalog,
+    library: &filesquid_core::LibraryId,
+    running: &RunningJob,
+    report: &mut ExpiryJobReport,
+) -> bool {
+    let working = AtomicBool::new(true);
+    let step = Duration::from_millis(RENEW_POLL_MS);
+    std::thread::scope(|scope| {
+        scope.spawn(|| renew_while(running, &working, step));
+        let finished = expire_one(service, catalog, library, report);
+        working.store(false, Ordering::SeqCst);
+        finished
+    })
+}
+
+/// Renew `running`'s lease about every [`RENEW_EVERY_MS`] until `working` is cleared. A
+/// refused renewal ends the helper; the run finds the fence at its next checkpoint.
+fn renew_while(running: &RunningJob, working: &AtomicBool, step: Duration) {
+    let mut since = 0;
+    while working.load(Ordering::SeqCst) {
+        std::thread::sleep(step);
+        since += RENEW_POLL_MS;
+        if since < RENEW_EVERY_MS {
+            continue;
+        }
+        since = 0;
+        if let Err(err) = running.renew() {
+            tracing::warn!(
+                operation = EXPIRY_JOB_KIND,
+                error_code = err.error_code(),
+                "the expiry job's lease could not be renewed"
+            );
+            return;
+        }
+    }
 }
 
 /// Submit a new expiry job of `source`.
@@ -77,19 +172,20 @@ fn submit(jobs: &Jobs, source: &str) -> Result<Job, JobError> {
     })
 }
 
-/// Expire `library` and add its counts to `report`; a failure is counted and logged (the
-/// service journals what it refused).
+/// Expire `library` and add its counts to `report`; answer whether it finished. A failure is
+/// counted and logged (the service journals what it refused).
 fn expire_one(
     service: &LibraryService,
     catalog: &SqliteCatalog,
     library: &filesquid_core::LibraryId,
     report: &mut ExpiryJobReport,
-) {
+) -> bool {
     match service.expire_library(EXPIRY_ACTOR, library, catalog) {
         Ok(done) => {
             report.expired += done.expired as u64;
             report.objects_done += done.objects_done as u64;
             report.objects_failed += done.objects_failed as u64;
+            true
         }
         Err(err) => {
             report.libraries_failed += 1;
@@ -98,6 +194,7 @@ fn expire_one(
                 error_code = err.error_code(),
                 "a library's expiry failed; the next run tries again"
             );
+            false
         }
     }
 }

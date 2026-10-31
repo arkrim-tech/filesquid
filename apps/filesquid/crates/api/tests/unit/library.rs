@@ -1192,6 +1192,7 @@ fn raw_commit(
         journal: JournalEntry::new("library.test", Outcome::Succeeded),
         created_id: None,
         deletion: None,
+        restored_into: Vec::new(),
     }
 }
 

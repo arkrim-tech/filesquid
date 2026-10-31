@@ -224,6 +224,9 @@ pub struct CatalogCommit {
     /// deleted keeps its earlier times, which the deleted view reports per file; `None` when
     /// the command newly deleted no file.
     pub deletion: Option<Deletion>,
+    /// The collections a restore created (ADR 041 Decision 9), kept in the receipt so a
+    /// replay names them again; empty for every other command.
+    pub restored_into: Vec<super::command::RestoredInto>,
 }
 
 /// What a committed operation answered; a replay of its operation ID answers it again.
@@ -239,6 +242,8 @@ pub struct CommitReceipt {
     /// Deletion and purge-after times of the files the command newly deleted, if any (see
     /// [`CatalogCommit::deletion`]).
     pub deletion: Option<Deletion>,
+    /// The collections a restore created (see [`CatalogCommit::restored_into`]).
+    pub restored_into: Vec<super::command::RestoredInto>,
 }
 
 /// A failure of the injected catalog. Details go to stdout only.

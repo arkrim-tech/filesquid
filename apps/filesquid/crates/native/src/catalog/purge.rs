@@ -42,9 +42,6 @@ use filesquid_ocfl::read::{version_history, StorageRoot};
 use filesquid_ocfl::storage::{StorageBackend, StorageKey};
 use rusqlite::{params, Connection};
 
-/// Most snapshot versions read, newest first, to find the version a purge committed.
-const MAX_PURGE_VERSION_SCAN: usize = 1_000;
-
 /// Where a purge can be stopped as a crash would stop it, for crash-recovery tests.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PurgeStep {
@@ -146,7 +143,7 @@ fn pending(conn: &Connection, limit: usize) -> Result<Vec<PendingPurge>, Catalog
     let limit = i64::try_from(limit).unwrap_or(i64::MAX);
     let mut stmt = conn
         .prepare(
-            "SELECT file_id, operation_id, mode FROM pending_purges
+            "SELECT file_id, operation_id, mode, recorded_at_ms FROM pending_purges
              ORDER BY recorded_at_ms, file_id LIMIT ?1",
         )
         .map_err(sql)?;
@@ -156,11 +153,12 @@ fn pending(conn: &Connection, limit: usize) -> Result<Vec<PendingPurge>, Catalog
                 r.get::<_, String>(0)?,
                 r.get::<_, String>(1)?,
                 r.get::<_, String>(2)?,
+                r.get::<_, i64>(3)?,
             ))
         })
         .map_err(sql)?;
     rows.map(|row| {
-        let (file, operation_id, mode) = row.map_err(sql)?;
+        let (file, operation_id, mode, purged_at_ms) = row.map_err(sql)?;
         let file_id = FileId::new(file).map_err(|_| failed("empty identifier in the catalog"))?;
         let mode = match mode.as_str() {
             "delete_all_version_history" => ExpiryMode::DeleteAllVersionHistory,
@@ -170,6 +168,7 @@ fn pending(conn: &Connection, limit: usize) -> Result<Vec<PendingPurge>, Catalog
             file_id,
             operation_id,
             mode,
+            purged_at_ms,
         })
     })
     .collect()
@@ -229,8 +228,11 @@ impl ObjectWork<'_> {
             return Ok(Vec::new());
         }
         if drive(is_tombstone(backend.as_ref(), &object_root))? {
+            // An earlier run created the tombstone and stopped before its journal entries
+            // were stored: journal the creation again (its PROV-O record and journal extract
+            // are in the tombstone's own version).
             self.forget_payload()?;
-            return Ok(Vec::new());
+            return Ok(vec![self.tombstone_entry(now_ms())]);
         }
         let former = self.saved_or_read(&object_root)?;
         self.stop_at(PurgeStep::PayloadSaved)?;
@@ -310,15 +312,12 @@ impl ObjectWork<'_> {
         let facts = ExpiryFacts {
             operation_id: self.purge.operation_id.clone(),
             actor: self.actor.to_string(),
+            purged_at: format_rfc3339_ms(self.purge.purged_at_ms),
             time: format_rfc3339_ms(time_ms),
             purge_activity: self.purge_activity()?,
         };
         let record = tombstone_record(&object_id, former, &facts);
-        let entry = JournalEntry::new(TOMBSTONE_OPERATION, Outcome::Succeeded)
-            .actor(self.actor)
-            .operation_id(self.purge.operation_id.as_str())
-            .target(self.purge.file_id.as_str())
-            .at_ms(time_ms);
+        let entry = self.tombstone_entry(time_ms);
         let message = OperationRecord {
             operation_id: self.purge.operation_id.clone(),
             kind: Some("tombstone".to_string()),
@@ -343,8 +342,19 @@ impl ObjectWork<'_> {
         Ok(plan.published(&receipt))
     }
 
+    /// The journal entry of the tombstone's creation at `time_ms`: the purge's operation ID
+    /// and the file's opaque ID only.
+    fn tombstone_entry(&self, time_ms: i64) -> JournalEntry {
+        JournalEntry::new(TOMBSTONE_OPERATION, Outcome::Succeeded)
+            .actor(self.actor)
+            .operation_id(self.purge.operation_id.as_str())
+            .target(self.purge.file_id.as_str())
+            .at_ms(time_ms)
+    }
+
     /// The PROV-O activity of the purge: that of the snapshot version its operation
-    /// committed, found newest first within [`MAX_PURGE_VERSION_SCAN`] versions, else that of
+    /// committed, found newest first among every version of the snapshot's inventory (already read, so the
+    /// search is bounded by it), else that of
     /// the operation on the snapshot object with no version known. Filesystem I/O.
     fn purge_activity(&self) -> Result<String, CatalogError> {
         let backend = self.root.backend();
@@ -363,7 +373,6 @@ async fn purge_version<B: StorageBackend>(backend: &B, operation: &str) -> Optio
     version_history(object.inventory())
         .into_iter()
         .rev()
-        .take(MAX_PURGE_VERSION_SCAN)
         .find(|info| {
             info.message
                 .as_deref()

@@ -56,6 +56,9 @@ pub struct PendingPurge {
     pub operation_id: String,
     /// What to do with its object.
     pub mode: ExpiryMode,
+    /// When the purge expired it (Unix milliseconds, UTC): the time the tombstone records for
+    /// the original's deletion, however late the object work runs.
+    pub purged_at_ms: i64,
 }
 
 /// The host's object work of expired files.
@@ -113,7 +116,7 @@ impl LibraryService {
         purger: &dyn ObjectPurger,
     ) -> Result<ExpiryReport, LibraryError> {
         let mut report = ExpiryReport::default();
-        self.finish_pending(actor, library_id, purger, &mut report)?;
+        self.finish_pending(actor, library_id, purger, None, &mut report)?;
         let mode = self.installation_settings()?.expiry;
         let due = self.due_files(library_id)?;
         if due.is_empty() {
@@ -121,22 +124,31 @@ impl LibraryService {
         }
         let operation_id = self.commit_expiry(actor, library_id, &due, mode)?;
         report.expired = due.len();
+        self.finish_pending(actor, library_id, purger, Some(&operation_id), &mut report)?;
         report.operation_id = Some(operation_id);
-        self.finish_pending(actor, library_id, purger, &mut report)?;
         Ok(report)
     }
 
-    /// Do every recorded object work of `library_id`, counting what was done and what
-    /// failed; each failure is journaled once as `failed`.
+    /// Do the recorded object works of `library_id` (only those of `operation`, when named,
+    /// so work an earlier pass of this run tried is not tried twice), within one budget of
+    /// [`MAX_PENDING_PURGES`] per run, counting what was done and what failed; each failure
+    /// is journaled once as `failed`.
     fn finish_pending(
         &self,
         actor: &str,
         library_id: &LibraryId,
         purger: &dyn ObjectPurger,
+        operation: Option<&str>,
         report: &mut ExpiryReport,
     ) -> Result<(), LibraryError> {
+        let spent = report.objects_done + report.objects_failed;
+        let budget = MAX_PENDING_PURGES.saturating_sub(spent);
         let pending = purger.pending_purges(library_id, MAX_PENDING_PURGES)?;
-        for purge in pending {
+        let mine = pending
+            .into_iter()
+            .filter(|purge| operation.is_none_or(|op| purge.operation_id == op))
+            .take(budget);
+        for purge in mine {
             match purger.purge_object(library_id, &purge, actor) {
                 Ok(()) => report.objects_done += 1,
                 Err(err) => {
@@ -242,6 +254,7 @@ impl LibraryService {
                 .at_ms(self.now_ms()),
             created_id: None,
             deletion: None,
+            restored_into: Vec::new(),
         })?;
         self.announce_everything();
         Ok(operation_id)

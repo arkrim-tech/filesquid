@@ -186,6 +186,7 @@ pub fn navigation() -> NavigationService {
             journal: JournalEntry::new("library.create", Outcome::Succeeded),
             created_id: None,
             deletion: None,
+            restored_into: Vec::new(),
         };
         catalog.commit(commit).expect("seed");
     }

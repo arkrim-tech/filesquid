@@ -208,6 +208,7 @@ fn apply_changes(
         revision: revision.to_string(),
         created_id: commit.created_id.clone(),
         deletion: commit.deletion,
+        restored_into: commit.restored_into.clone(),
     };
     Ok((receipt, purged))
 }
@@ -313,8 +314,9 @@ fn store_receipt(
 ) -> Result<(), CatalogError> {
     tx.execute(
         "INSERT INTO receipts
-         (operation_id, revision, created_id, deleted_at_ms, purge_after_ms, deletion_cause)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+         (operation_id, revision, created_id, deleted_at_ms, purge_after_ms, deletion_cause,
+          restored_into)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
         params![
             operation_id,
             receipt.revision,
@@ -322,10 +324,24 @@ fn store_receipt(
             receipt.deletion.map(|d| d.deleted_at_ms),
             receipt.deletion.map(|d| d.purge_after_ms),
             rows::cause_column(receipt.deletion),
+            restored_column(receipt)?,
         ],
     )
     .map_err(sql)?;
     Ok(())
+}
+
+/// The stored form of a receipt's restored collections: JSON, or `NULL` when none. Pure.
+///
+/// # Errors
+/// An encoding failure.
+fn restored_column(receipt: &CommitReceipt) -> Result<Option<String>, CatalogError> {
+    match receipt.restored_into.is_empty() {
+        true => Ok(None),
+        false => serde_json::to_string(&receipt.restored_into)
+            .map(Some)
+            .map_err(|e| failed(format!("encode restored collections: {e}"))),
+    }
 }
 
 /// Refuse a record that names a library other than this file's. Pure.

@@ -113,39 +113,74 @@ pub(crate) fn receipt(
     library_id: &LibraryId,
     operation_id: &str,
 ) -> Result<Option<CommitReceipt>, CatalogError> {
-    conn.query_row(
-        "SELECT revision, created_id, deleted_at_ms, purge_after_ms, deletion_cause
-         FROM receipts WHERE operation_id = ?1",
-        params![operation_id],
-        |r| {
-            Ok(CommitReceipt {
-                library_id: library_id.clone(),
-                revision: r.get(0)?,
-                created_id: r.get(1)?,
-                deletion: deletion(r.get(2)?, r.get(3)?, r.get(4)?),
-            })
-        },
-    )
-    .optional()
-    .map_err(sql)
+    type Raw = (
+        String,
+        Option<String>,
+        Option<i64>,
+        Option<i64>,
+        Option<String>,
+        Option<String>,
+    );
+    let raw: Option<Raw> = conn
+        .query_row(
+            "SELECT revision, created_id, deleted_at_ms, purge_after_ms, deletion_cause,
+                 restored_into
+             FROM receipts WHERE operation_id = ?1",
+            params![operation_id],
+            |r| {
+                Ok((
+                    r.get(0)?,
+                    r.get(1)?,
+                    r.get(2)?,
+                    r.get(3)?,
+                    r.get(4)?,
+                    r.get(5)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(sql)?;
+    let Some((revision, created_id, deleted, purge, cause, restored)) = raw else {
+        return Ok(None);
+    };
+    let restored_into = match restored {
+        Some(text) => serde_json::from_str(&text)
+            .map_err(|_| failed("a receipt's restored collections are unreadable"))?,
+        None => Vec::new(),
+    };
+    Ok(Some(CommitReceipt {
+        library_id: library_id.clone(),
+        revision,
+        created_id,
+        deletion: deletion(deleted, purge, cause)?,
+        restored_into,
+    }))
 }
 
 /// A deletion from its two stored times (both present or both absent) and its stored cause
-/// (`NULL` for one by one). Pure.
+/// (`NULL` or `one_by_one` for one by one). Pure.
+///
+/// # Errors
+/// [`CatalogError::Failed`] for a cause this host does not know, so a newer or damaged
+/// catalog is never misreported.
 fn deletion(
     deleted_at_ms: Option<i64>,
     purge_after_ms: Option<i64>,
     cause: Option<String>,
-) -> Option<Deletion> {
+) -> Result<Option<Deletion>, CatalogError> {
     let cause = match cause.as_deref() {
+        None | Some("one_by_one") => DeletionCause::OneByOne,
         Some("with_collection") => DeletionCause::WithCollection,
-        _ => DeletionCause::OneByOne,
+        Some(_) => return Err(failed("a stored deletion cause is unknown")),
     };
-    Some(Deletion {
-        deleted_at_ms: deleted_at_ms?,
-        purge_after_ms: purge_after_ms?,
+    let (Some(deleted_at_ms), Some(purge_after_ms)) = (deleted_at_ms, purge_after_ms) else {
+        return Ok(None);
+    };
+    Ok(Some(Deletion {
+        deleted_at_ms,
+        purge_after_ms,
         cause,
-    })
+    }))
 }
 
 /// The stored form of a deletion cause: `NULL` for one by one. Pure.
@@ -312,7 +347,7 @@ fn file_entry(library_id: &LibraryId, row: FileRow) -> Result<Keyed<FileEntry>, 
     );
     let state = FileState {
         hidden,
-        deletion: deletion(deleted, purge, cause),
+        deletion: deletion(deleted, purge, cause)?,
     };
     Ok(Keyed {
         key: PageKey { order, id: raw_id },

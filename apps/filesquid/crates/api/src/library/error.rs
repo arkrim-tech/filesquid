@@ -19,16 +19,17 @@ pub enum LibraryError {
         /// Message shown to people.
         message: &'static str,
     },
-    /// The named entity (`library`, `collection`, `virtual_collection` or `file`) does not
-    /// exist in the named library, or is not visible to the caller.
     /// A `409 conflict` refusal with its own code, such as `restore_name_exhausted`; the
-    /// operation changed nothing.
+    /// operation changed nothing. The code is journaled; the answer is `conflict` with a
+    /// message that names the cause.
     Refused {
-        /// Stable code (journaled and answered).
+        /// Stable code (journaled).
         code: &'static str,
         /// What people see.
         message: &'static str,
     },
+    /// The named entity (`library`, `collection`, `virtual_collection` or `file`) does not
+    /// exist in the named library, or is not visible to the caller.
     NotFound(&'static str),
     /// The expected revision no longer matches the library; reread and decide.
     Conflict,

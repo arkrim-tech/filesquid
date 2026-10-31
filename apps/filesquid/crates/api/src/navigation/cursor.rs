@@ -21,9 +21,11 @@ pub(crate) enum Rank {
     Library = 0,
     Collection = 1,
     VirtualCollection = 2,
-    /// The repository's one Recently deleted node, after its libraries.
-    RecentlyDeleted = 3,
-    Folder = 4,
+    Folder = 3,
+    /// The repository's one Recently deleted node, after its libraries. Its rank is new, so
+    /// cursors issued before it existed keep their meaning; ranks are compared only among the
+    /// children of one parent, and no parent has both folders and this node.
+    RecentlyDeleted = 4,
 }
 
 impl Rank {
@@ -33,8 +35,8 @@ impl Rank {
             "0" => Some(Self::Library),
             "1" => Some(Self::Collection),
             "2" => Some(Self::VirtualCollection),
-            "3" => Some(Self::RecentlyDeleted),
-            "4" => Some(Self::Folder),
+            "3" => Some(Self::Folder),
+            "4" => Some(Self::RecentlyDeleted),
             _ => None,
         }
     }

@@ -8,7 +8,7 @@
 //! ([`LibraryService`]), and how an expired file's object is deleted or rewritten as a
 //! tombstone is the catalog's ([`SqliteCatalog`]).
 
-use filesquid_api::jobs::Jobs;
+use filesquid_api::jobs::{Job, JobError, JobRunner, Jobs};
 use filesquid_api::library::LibraryService;
 use filesquid_api::navigation::NavigationPublisher;
 use filesquid_api::ApiState;
@@ -17,7 +17,7 @@ use filesquid_native::workers::expiry::run_expiry_job;
 use filesquid_native::{HostMonitor, SqliteCatalog, SqliteRetentionSettings, JOURNAL_FILE};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 use std::time::Duration;
 
 /// Time between two expiry runs.
@@ -94,18 +94,97 @@ impl ExpiryTask {
     }
 }
 
-/// Run `task` at launch and then every [`EXPIRY_INTERVAL`] on a blocking thread, until `stop`
-/// is set at app exit (bounded by the app's lifetime).
-pub fn spawn_expiry(task: ExpiryTask, stop: Arc<AtomicBool>) {
-    let task = Arc::new(task);
+/// Longest the app's exit waits for an expiry run in progress.
+pub const EXPIRY_STOP_WAIT: Duration = Duration::from_secs(10);
+
+/// The running expiry of this host: its task, whether a run is in progress, and the app's
+/// exit flag. It is also the `library.expiry` job's [`JobRunner`], so a resumed job runs.
+pub struct ExpiryHandle {
+    /// What a run does.
+    task: ExpiryTask,
+    /// True while a run is in progress.
+    running: AtomicBool,
+    /// The app's exit flag.
+    stop: Arc<AtomicBool>,
+    /// This handle, for the thread a resumed job runs on.
+    me: Weak<ExpiryHandle>,
+}
+
+impl ExpiryHandle {
+    /// A handle of `task` that stops when `stop` is set.
+    pub fn new(task: ExpiryTask, stop: Arc<AtomicBool>) -> Arc<Self> {
+        Arc::new_cyclic(|me| Self {
+            task,
+            running: AtomicBool::new(false),
+            stop,
+            me: me.clone(),
+        })
+    }
+
+    /// Run once now unless a run is already in progress; answer whether this call ran.
+    /// Database, filesystem and journal I/O.
+    pub fn run_now(&self) -> bool {
+        if self.running.swap(true, Ordering::SeqCst) {
+            return false;
+        }
+        self.task.run_once(&self.stop);
+        self.running.store(false, Ordering::SeqCst);
+        true
+    }
+
+    /// Whether a run is in progress.
+    pub fn is_running(&self) -> bool {
+        self.running.load(Ordering::SeqCst)
+    }
+
+    /// Wait at most `limit` for a run in progress to end (the exit sets the stop flag first,
+    /// so the run suspends its job between libraries).
+    pub fn wait(&self, limit: Duration) {
+        let deadline = std::time::Instant::now() + limit;
+        while self.is_running() && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        if self.is_running() {
+            tracing::warn!(
+                operation = filesquid_api::library::EXPIRY_JOB_KIND,
+                error_code = "stop_timeout",
+                "the expiry run did not stop in time"
+            );
+        }
+    }
+}
+
+impl JobRunner for ExpiryHandle {
+    /// Run the resumed expiry job on its own thread; a run already in progress takes it.
+    fn resume(&self, _job: &Job) -> Result<(), JobError> {
+        if self.is_running() {
+            return Ok(());
+        }
+        let me = self
+            .me
+            .upgrade()
+            .ok_or_else(|| JobError::Unavailable("the expiry is stopping".into()))?;
+        std::thread::Builder::new()
+            .name("filesquid-expiry".into())
+            .spawn(move || {
+                me.run_now();
+            })
+            .map(drop)
+            .map_err(|err| JobError::Unavailable(err.to_string()))
+    }
+}
+
+/// Run `handle` at launch and then every [`EXPIRY_INTERVAL`] on a blocking thread, until its
+/// stop flag is set at app exit (bounded by the app's lifetime).
+pub fn spawn_expiry(handle: Arc<ExpiryHandle>) {
     tauri::async_runtime::spawn(async move {
-        while !stop.load(Ordering::SeqCst) {
-            let (run, flag) = (task.clone(), stop.clone());
-            let ran = tauri::async_runtime::spawn_blocking(move || run.run_once(&flag)).await;
+        while !handle.stop.load(Ordering::SeqCst) {
+            let run = handle.clone();
+            let ran = tauri::async_runtime::spawn_blocking(move || run.run_now()).await;
             if ran.is_err() {
                 tracing::error!(operation = "library.expiry", "the expiry run panicked");
             }
-            wait_or_stop(&stop).await;
+            wait_or_stop(&handle.stop).await;
         }
     });
 }

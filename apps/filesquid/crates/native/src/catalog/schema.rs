@@ -151,6 +151,7 @@ const SCHEMA_V5: &str = "
 ALTER TABLE files ADD COLUMN deletion_cause TEXT;
 ALTER TABLE files ADD COLUMN removed_home_title TEXT;
 ALTER TABLE receipts ADD COLUMN deletion_cause TEXT;
+ALTER TABLE receipts ADD COLUMN restored_into TEXT;
 CREATE TABLE IF NOT EXISTS pending_purges (
     file_id TEXT PRIMARY KEY,
     operation_id TEXT NOT NULL,

@@ -871,6 +871,7 @@ fn removing_a_collection_that_still_holds_files_is_refused_before_anything_is_pu
         journal: JournalEntry::new("library.collection.delete", Outcome::Succeeded),
         created_id: None,
         deletion: None,
+        restored_into: Vec::new(),
     };
     let stale = fx.catalog.commit(removal("1".into())).expect_err("stale");
     assert_eq!(
@@ -1208,6 +1209,7 @@ fn a_relocation_into_a_removed_collection_is_collection_not_found_even_at_its_ow
         journal: JournalEntry::new("library.collection.delete", Outcome::Succeeded),
         created_id: None,
         deletion: Some(deletion),
+        restored_into: Vec::new(),
     };
     fx.catalog.commit(removal).expect("removed");
     let home: &dyn HomeCollections = fx.catalog.as_ref();

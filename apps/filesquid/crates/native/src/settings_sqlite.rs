@@ -1,11 +1,12 @@
 //! The installation's Recently deleted settings in the desktop's operational store
 //! (`filesquid.sqlite`; Task API-F2.15, API-S-019, ADR 041 Decisions 10 and 11): the default
 //! retention period and the expiry setting, one row, read by every library and changed only
-//! by the admin (the route checks it). A change is stored, then its journal entry is
-//! appended to the host's journal before the change is answered, so no change is ever
-//! acknowledged unjournaled; the entry carries no value.
+//! by the admin (the route checks it). A change's journal entry is appended to the host's
+//! journal before the row is written, so no change is ever stored or acknowledged
+//! unjournaled; a write that then fails is journaled again as `failed`. No entry carries a
+//! value.
 
-use filesquid_api::journal::{JournalEntry, JournalStore};
+use filesquid_api::journal::{JournalEntry, JournalStore, Level, Outcome};
 use filesquid_api::library::{CatalogError, ExpiryMode, InstallationSettings, RetentionSettings};
 use rusqlite::{params, Connection, OpenFlags, OptionalExtension};
 use std::path::Path;
@@ -63,6 +64,21 @@ impl SqliteRetentionSettings {
         })
     }
 
+    /// Write `settings` to the one settings row. Database I/O.
+    fn write_row(&self, settings: &InstallationSettings) -> Result<(), CatalogError> {
+        let conn = self.lock()?;
+        conn.execute(
+            "INSERT INTO recently_deleted_settings (singleton, default_retention_days, expiry)
+             VALUES (1, ?1, ?2)
+             ON CONFLICT(singleton) DO UPDATE SET
+                 default_retention_days = excluded.default_retention_days,
+                 expiry = excluded.expiry",
+            params![settings.default_retention_days, settings.expiry.as_str()],
+        )
+        .map(drop)
+        .map_err(unavailable)
+    }
+
     /// The connection, or a store failure for a poisoned lock.
     fn lock(&self) -> Result<MutexGuard<'_, Connection>, CatalogError> {
         self.conn.lock().map_err(|_| unavailable("lock poisoned"))
@@ -100,19 +116,23 @@ impl RetentionSettings for SqliteRetentionSettings {
         if !settings.is_valid() {
             return Err(CatalogError::Failed("retention period out of range".into()));
         }
-        let conn = self.lock()?;
-        conn.execute(
-            "INSERT INTO recently_deleted_settings (singleton, default_retention_days, expiry)
-             VALUES (1, ?1, ?2)
-             ON CONFLICT(singleton) DO UPDATE SET
-                 default_retention_days = excluded.default_retention_days,
-                 expiry = excluded.expiry",
-            params![settings.default_retention_days, settings.expiry.as_str()],
-        )
-        .map_err(unavailable)?;
+        // The journal entry is appended first, so a stored change is never unjournaled (the
+        // journal shares this file, so the two cannot be one transaction without the append
+        // waiting on this connection's lock). A change the store then refuses is journaled
+        // again as `failed`, so the journal never claims a change that was not made.
         self.journal
-            .append(&[journal.redacted()])
-            .map(drop)
-            .map_err(|_| CatalogError::Unavailable("the journal refused the change".into()))
+            .append(&[journal.clone().redacted()])
+            .map_err(|_| CatalogError::Unavailable("the journal refused the change".into()))?;
+        let stored = self.write_row(settings);
+        if let Err(err) = &stored {
+            let failure = JournalEntry::new(journal.operation.clone(), Outcome::Failed)
+                .actor(journal.actor.clone())
+                .level(Level::Error)
+                .error_code("unavailable");
+            if self.journal.append(&[failure]).is_err() {
+                tracing::error!(error = ?err, "a refused settings change could not be journaled");
+            }
+        }
+        stored
     }
 }

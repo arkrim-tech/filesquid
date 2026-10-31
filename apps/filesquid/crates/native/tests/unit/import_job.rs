@@ -282,6 +282,7 @@ fn add_collection(catalog: &SqliteCatalog, id: &LibraryId) {
         ),
         created_id: None,
         deletion: None,
+        restored_into: Vec::new(),
     };
     catalog.commit(commit).expect("collection");
 }
@@ -1000,6 +1001,7 @@ async fn a_deleted_file_s_path_counts_as_taken() {
         ),
         created_id: None,
         deletion: Some(deletion),
+        restored_into: Vec::new(),
     };
     rig.catalog.commit(delete).expect("deleted");
     let job = rig.submit(&single, "op-again");

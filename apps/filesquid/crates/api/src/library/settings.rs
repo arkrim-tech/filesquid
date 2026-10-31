@@ -98,6 +98,9 @@ impl RetentionSettings for MemorySettings {
         settings: &InstallationSettings,
         journal: JournalEntry,
     ) -> Result<(), CatalogError> {
+        if !settings.is_valid() {
+            return Err(CatalogError::Failed("retention period out of range".into()));
+        }
         let mut state = self
             .state
             .lock()

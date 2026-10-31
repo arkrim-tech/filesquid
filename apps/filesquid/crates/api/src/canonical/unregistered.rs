@@ -52,7 +52,7 @@ pub async fn unregistered_file_objects<B: StorageBackend>(
         .collect();
     let mut count: u64 = 0;
     for object in candidates {
-        if !super::tombstone::is_tombstone(backend, object).await {
+        if !super::tombstone::is_tombstone_in(&root, object).await {
             count += 1;
         }
     }

@@ -83,6 +83,8 @@ pub fn search_scope(
         .check_readable(principal, node.unwrap_or(&repository))
         .map_err(file_error)?;
     let catalog = navigation.catalog().as_ref();
+    // Recently deleted holds deleted files only, whatever the query asks (ADR 041 Decision 8).
+    let deleted = deleted || matches!(node, Some(NodeRef::RecentlyDeleted(_)));
     let (targets, mut complete) = targets(navigation, principal, node, deleted)?;
     let visibility = match deleted {
         true => VisibilityFilter::Deleted,

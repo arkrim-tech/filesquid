@@ -103,6 +103,8 @@ pub enum PinKind {
     VirtualCollection,
     /// A folder.
     Folder,
+    /// The repository's one Recently deleted node (Task API-F2.15).
+    RecentlyDeleted,
 }
 
 /// One pinned destination: its opaque node handle and kind, never its name.
@@ -124,7 +126,8 @@ impl PinnedDestination {
             Some(NodeRef::Collection(_)) => PinKind::Collection,
             Some(NodeRef::VirtualCollection(_)) => PinKind::VirtualCollection,
             Some(NodeRef::Folder { .. }) => PinKind::Folder,
-            Some(NodeRef::RecentlyDeleted(_)) | None => return false,
+            Some(NodeRef::RecentlyDeleted(_)) => PinKind::RecentlyDeleted,
+            None => return false,
         };
         named == self.kind
     }

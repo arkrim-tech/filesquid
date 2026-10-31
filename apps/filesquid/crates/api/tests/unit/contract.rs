@@ -442,6 +442,7 @@ fn install_recently_deleted(state: &ApiState, monitor: &Monitor) {
             journal: JournalEntry::new("seed", filesquid_api::journal::Outcome::Succeeded),
             created_id: None,
             deletion: None,
+            restored_into: Vec::new(),
         })
         .expect("seed");
     let service = LibraryService::new(catalog, monitor.journal())
@@ -858,6 +859,7 @@ fn preference_samples() -> Vec<(&'static str, Vec<Value>)> {
         PinKind::Collection,
         PinKind::VirtualCollection,
         PinKind::Folder,
+        PinKind::RecentlyDeleted,
     ];
     let navigation = NavigationPreferences {
         version: 1,

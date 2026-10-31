@@ -210,6 +210,7 @@ fn commit(
         journal: JournalEntry::new("library.seed", Outcome::Succeeded),
         created_id: None,
         deletion: None,
+        restored_into: Vec::new(),
     };
     catalog.commit(commit).expect("seed commit");
 }

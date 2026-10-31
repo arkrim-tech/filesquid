@@ -55,6 +55,10 @@ pub const MAX_FORMER_PROVENANCE: usize = 20_000;
 /// Largest former PROV-O file copied, in bytes.
 pub const MAX_PROVENANCE_BYTES: u64 = 4 * 1024 * 1024;
 
+/// Most former PROV-O bytes one tombstone copies in all; an object with more cannot be
+/// tombstoned and its object work is reported, never truncated.
+pub const MAX_PROVENANCE_TOTAL_BYTES: u64 = 64 * 1024 * 1024;
+
 /// Most stored keys one object deletion removes.
 pub const MAX_OBJECT_KEYS: usize = 1_000_000;
 
@@ -148,7 +152,10 @@ pub struct ExpiryFacts {
     pub operation_id: String,
     /// Who expired it.
     pub actor: String,
-    /// When (RFC 3339 UTC).
+    /// When the purge expired the file (RFC 3339 UTC): the time of the original's deletion
+    /// event, however late the object work runs.
+    pub purged_at: String,
+    /// When the tombstone is created (RFC 3339 UTC).
     pub time: String,
     /// The PROV-O activity of the purge: the activity of the library snapshot version the
     /// purge committed.
@@ -166,9 +173,9 @@ pub fn activity_id(operation_id: &str, object_id: &str, version: &str) -> String
 /// of the tombstone's own first version. Pure.
 pub fn tombstone_record(object_id: &str, former: &Former, facts: &ExpiryFacts) -> TombstoneRecord {
     let created = activity_id(&facts.operation_id, object_id, "v1");
-    let event = |kind, activity: String| TombstoneEvent {
+    let event = |kind, time: &String, activity: String| TombstoneEvent {
         kind,
-        time: facts.time.clone(),
+        time: time.clone(),
         actor: facts.actor.clone(),
         operation_id: facts.operation_id.clone(),
         activity,
@@ -178,14 +185,18 @@ pub fn tombstone_record(object_id: &str, former: &Former, facts: &ExpiryFacts) -
         object_id: object_id.to_string(),
         versions: former.versions.clone(),
         events: vec![
-            event(OperationKind::Purge, facts.purge_activity.clone()),
-            event(OperationKind::Tombstone, created),
+            event(
+                OperationKind::Purge,
+                &facts.purged_at,
+                facts.purge_activity.clone(),
+            ),
+            event(OperationKind::Tombstone, &facts.time, created),
         ],
         purge: PurgeRecord {
             reason: "expiry".to_string(),
             expiry: ExpiryMode::KeepVersionHistory,
             operation_id: facts.operation_id.clone(),
-            purged_at: facts.time.clone(),
+            purged_at: facts.purged_at.clone(),
         },
     }
 }
@@ -196,6 +207,15 @@ pub async fn is_tombstone<B: StorageBackend>(backend: &B, object_root: &str) -> 
     let Ok(root) = StorageRoot::open(backend).await else {
         return false;
     };
+    is_tombstone_in(&root, object_root).await
+}
+
+/// As [`is_tombstone`], in a storage root already opened, so a scan of many objects lists
+/// the root once. Storage I/O.
+pub async fn is_tombstone_in<B: StorageBackend>(
+    root: &StorageRoot<'_, B>,
+    object_root: &str,
+) -> bool {
     let Ok(object) = root.open_object(object_root).await else {
         return false;
     };
@@ -228,9 +248,11 @@ pub async fn read_former<B: StorageBackend>(
         let state = object.state(&info.version)?;
         let mut files = Vec::with_capacity(state.len());
         for file in state.files() {
-            let size = match object.content_key(file) {
-                Ok(key) => backend.head(&key).await.ok().map(|meta| meta.size),
-                Err(_) => None,
+            let key = object.content_key(file)?;
+            let size = match backend.head(&key).await {
+                Ok(meta) => Some(meta.size),
+                Err(filesquid_ocfl::storage::StorageError::NotFound { .. }) => None,
+                Err(err) => return Err(storage(err)),
             };
             files.push(FormerFile {
                 path: file.path.clone(),
@@ -258,6 +280,7 @@ async fn read_provenance<B: StorageBackend>(
 ) -> Result<Vec<(String, Vec<u8>)>, CanonicalError> {
     let state = object.state(object.head())?;
     let mut files = Vec::new();
+    let mut total: u64 = 0;
     for file in state.files().filter(|f| f.path.starts_with(PROVENANCE_DIR)) {
         if files.len() >= MAX_FORMER_PROVENANCE {
             return Err(CanonicalError::Failed(
@@ -265,7 +288,9 @@ async fn read_provenance<B: StorageBackend>(
             ));
         }
         let name = file.path.trim_start_matches(PROVENANCE_DIR).to_string();
-        let bytes = read_small(object, backend, file, MAX_PROVENANCE_BYTES).await?;
+        let room = MAX_PROVENANCE_TOTAL_BYTES.saturating_sub(total);
+        let bytes = read_small(object, backend, file, MAX_PROVENANCE_BYTES.min(room)).await?;
+        total = total.saturating_add(bytes.len() as u64);
         files.push((name, bytes));
     }
     Ok(files)
@@ -290,6 +315,11 @@ pub async fn delete_object<B: StorageBackend>(
             .map_err(storage)?;
         if page.keys.is_empty() {
             return Ok(deleted);
+        }
+        // Every page is listed from the start, because the keys of the page before are gone;
+        // the bound is checked before a key of the page is deleted.
+        if deleted + page.keys.len() > MAX_OBJECT_KEYS {
+            break;
         }
         for key in &page.keys {
             backend.delete(key).await.map_err(storage)?;

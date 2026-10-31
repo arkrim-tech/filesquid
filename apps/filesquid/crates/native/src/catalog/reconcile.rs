@@ -170,8 +170,8 @@ fn restore_receipts(
     let mut stmt = tx
         .prepare(
             "INSERT OR IGNORE INTO receipts
-             (operation_id, revision, created_id, deleted_at_ms, purge_after_ms)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
+             (operation_id, revision, created_id, deleted_at_ms, purge_after_ms, deletion_cause)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
         )
         .map_err(sql)?;
     for op in operations {
@@ -181,6 +181,7 @@ fn restore_receipts(
             op.created_id,
             op.deletion.map(|d| d.deleted_at_ms),
             op.deletion.map(|d| d.purge_after_ms),
+            super::rows::cause_column(op.deletion),
         ])
         .map_err(sql)?;
     }
