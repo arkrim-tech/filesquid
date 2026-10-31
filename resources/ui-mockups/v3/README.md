@@ -174,7 +174,7 @@ Status after the owner's answers: **redrawn** (content changed for an answer), *
 | Logs view; light and dark | [38](./38-logs-view.svg), [38 dark](./38-logs-view-dark.svg) | UI-F2.16; UI-S-021 | updated |
 | Download logs | [39](./39-logs-export.svg) | UI-F2.16; API-S-031; owner answer 8 | updated |
 
-**Counts:** 64 files: 16 redrawn for an answer (01, 02, 04, 09, 16, 16 dark, 19, 32, 41, 41 dark, 47, 55; 12, 22 and 22 dark for the owner's decisions of 2026-10-31; 31 and 31 dark also have their health word at 22 px), 46 updated, 2 new (57, 58). No screen was retired.
+**Counts:** 64 files: 15 redrawn for an answer (01, 02, 04, 09, 16, 16 dark, 19, 32, 41, 41 dark, 47, 55; 12, 22 and 22 dark for the owner's decisions of 2026-10-31), 47 updated (31 and 31 dark also have their health word at 22 px), 2 new (57, 58). No screen was retired.
 
 ### Strings
 
