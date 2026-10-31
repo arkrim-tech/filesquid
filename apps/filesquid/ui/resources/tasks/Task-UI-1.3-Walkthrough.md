@@ -161,3 +161,46 @@ The new proofs, then the whole preview suite (existing tests included):
 
   188 passed (1.4m)
 ```
+
+### Pre-commit hook, ordinary run on the head commit (`bash scripts/pre-commit.sh`)
+
+```text
+✅ MVP progress bar passed.
+✅ Task cleanup passed.
+✅ Documentation validation passed.
+✅ Change scope validation passed (188 assertions).
+ℹ️  Test scope: npm:apps/filesquid/ui
+⏭️  Skipped: Clippy (no Rust crate changed)
+⏭️  Skipped: Clippy (desktop, test-instrumented) (no Rust crate changed)
+✅ ESLint passed (19s).
+✅ TypeScript passed (20s).
+ Test Files  96 passed (96)
+      Tests  2293 passed | 1 skipped (2294)
+✅ Vitest passed (125s).
+✅ Lint and test validation passed (test scope: npm:apps/filesquid/ui).
+✅ All Pre-Commit Hooks Passed! Test scope: npm:apps/filesquid/ui (208s)
+```
+
+### Pre-commit hook with `FILESQUID_E2E=1` (production build served by the real filesquid-server, then the performance suite)
+
+Vitest, ESLint and tsc pass; the Rust-served suite passes 41 of 42 and the performance suite 29 of 30. The two failures are not in code this task touches: `tests/e2e/accessibility.spec.ts:67` compares the shell's accessibility tree to a stored snapshot that does not match the shell as built (it lacks the footer `contentinfo` and the Storage used caption paragraph, and Playwright 1.64 adds link URLs), and `tests/performance/70-load.perf.spec.ts:87` timed out at sample 275 while other agents loaded the machine (load average 7 to 10 on 4 cores). This task changes no shell file; I did not re-run either on origin/main. Both are reported to the orchestrator.
+
+```text
+ℹ️  Test scope: npm:apps/filesquid/ui
+✅ ESLint passed (6s).
+✅ TypeScript passed (9s).
+ Test Files  96 passed (96)
+      Tests  2293 passed | 1 skipped (2294)
+✅ Vitest passed (53s).
+  ✘   2 [chromium] › tests/e2e/accessibility.spec.ts:67:1 › landmarks, headings and control names come from the label table (5.3s)
+    Error: expect(locator).toMatchAriaSnapshot(expected) failed
+  1 failed
+  41 passed (49.3s)
+  188 passed (1.1m)
+  ✘  25 [chromium] › tests/performance/70-load.perf.spec.ts:87:1 › background work: opening folders under the same stream (1.8m)
+    Error: sample 275 never reached its predicate within 20000 ms
+  1 failed
+  29 passed (17.7m)
+❌ Playwright e2e failed (1180s).
+❌ pre-commit failed: Lint and Test Validation (test scope: npm:apps/filesquid/ui)
+```
