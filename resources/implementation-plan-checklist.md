@@ -1,9 +1,9 @@
 # Implementation Plan Checklist: FileSquid
 
 <!-- mvp-progress:start -->
-![MVP progress: 84% complete](./assets/mvp-progress.svg)
+![MVP progress: 85% complete](./assets/mvp-progress.svg)
 
-**MVP progress: 84%**, about 1001 of 1192 estimated hours. 20 of 28 tasks are done and 6 more are under way. Each segment of the bar is one task below, as wide as its estimated hours in the implementation plan; an open task fills by the share of its module rows that are ticked. Below the bar, In progress lists the open tasks being worked on (global tasks with at least one module row ticked, including those whose module rows are all ticked but whose own box is still open, and tasks with an open pull request); the count of tasks under way is the number of distinct open tasks listed there. Up next lists the next five new module tasks whose listed dependencies are done or in progress. Regenerate with `python3 scripts/docs/update_mvp_progress.py` after ticking boxes or opening a pull request; the check run by `scripts/verify_docs.sh` does not call GitHub and uses the pull requests recorded in the block. In a clone that registers the `mvp-progress` git merge driver (see the README), merging two pull requests that both redraw it merges their ticks and redraws it when it can, and otherwise leaves a conflict.
+**MVP progress: 85%**, about 1010 of 1192 estimated hours. 21 of 28 tasks are done and 5 more are under way. Each segment of the bar is one task below, as wide as its estimated hours in the implementation plan; an open task fills by the share of its module rows that are ticked. Below the bar, In progress lists the open tasks being worked on (global tasks with at least one module row ticked, including those whose module rows are all ticked but whose own box is still open, and tasks with an open pull request); the count of tasks under way is the number of distinct open tasks listed there. Up next lists the next five new module tasks whose listed dependencies are done or in progress. Regenerate with `python3 scripts/docs/update_mvp_progress.py` after ticking boxes or opening a pull request; the check run by `scripts/verify_docs.sh` does not call GitHub and uses the pull requests recorded in the block. In a clone that registers the `mvp-progress` git merge driver (see the README), merging two pull requests that both redraw it merges their ticks and redraws it when it can, and otherwise leaves a conflict.
 
 **In progress**
 
@@ -17,8 +17,6 @@
     - [API-F2.15](../apps/filesquid/crates/api/resources/plan.md#phase-f2-activity-and-health-monitoring-global-task-fs-24-and-drive-parity-operations-global-task-fs-25-api-f24-in-global-task-fs-27-after-the-mvp) Recently deleted filter, restore, retention and expiry settings, and retirement of "unfiled"
     - [UI-F2.19](../apps/filesquid/ui/resources/plan.md#phase-f2-default-ui-global-tasks-fs-21-fs-22-fs-24-fs-25-11-12-after-the-mvp-ui-f26-in-global-task-fs-23-ui-f210-and-ui-f212-in-global-task-fs-27-ui-f213-in-global-task-fs-26-ui-f25-in-global-task-fs-c1-phase-c) Preview top bar and zoom chip
     - [UI-F2.17](../apps/filesquid/ui/resources/plan.md#phase-f2-default-ui-global-tasks-fs-21-fs-22-fs-24-fs-25-11-12-after-the-mvp-ui-f26-in-global-task-fs-23-ui-f210-and-ui-f212-in-global-task-fs-27-ui-f213-in-global-task-fs-26-ui-f25-in-global-task-fs-c1-phase-c) Uploads and imports always target a collection or folder
-- [Task FS-2.8](./implementation-plan.md#task-fs-2.8) PROV-O history: 8 of 9 module rows ticked
-    - [DE-0.10](../apps/filesquid/crates/desktop/resources/plan.md#phase-f0-catalog-jobs-ocfl-coordinator-global-task-05) Installation UUID, native journal columns, outbox events and coordinator commit linkage
 - [Task FS-2.9](./implementation-plan.md#task-fs-2.9) Durable journal, Logs view and file panel tabs: 6 of 9 module rows ticked
     - [DE-0.11](../apps/filesquid/crates/desktop/resources/plan.md#phase-f0-catalog-jobs-ocfl-coordinator-global-task-05) Host journal sealing and journal rebuild
     - [UI-F2.15](../apps/filesquid/ui/resources/plan.md#phase-f2-default-ui-global-tasks-fs-21-fs-22-fs-24-fs-25-11-12-after-the-mvp-ui-f26-in-global-task-fs-23-ui-f210-and-ui-f212-in-global-task-fs-27-ui-f213-in-global-task-fs-26-ui-f25-in-global-task-fs-c1-phase-c) File panel tabs: File info, Description and Provenance
@@ -31,8 +29,8 @@
 
 - [DE-F3.1](../apps/filesquid/crates/desktop/resources/plan.md#phase-f3-installers-and-performance-global-tasks-fs-31-fs-34-and-after-the-mvp-fs-311) macOS early-access DMG and the FileSquid overlay (part of [Task FS-3.1](./implementation-plan.md#task-fs-3.1))
 
-Generated 2026-10-30T22:32:16Z (RFC 3339, UTC) from the ticked boxes, the module plans and the open pull requests at that time.
-<!-- generated-at: 2026-10-30T22:32:16Z -->
+Generated 2026-10-31T16:46:19Z (RFC 3339, UTC) from the ticked boxes, the module plans and the open pull requests at that time.
+<!-- generated-at: 2026-10-31T16:46:19Z -->
 <!-- in-progress-prs: none -->
 <!-- mvp-progress:end -->
 
@@ -42,7 +40,7 @@ Order follows the **Dependencies** fields and the [release sequence](./implement
 
 ## MVP
 
-FileSquid MVP (early access) on the macOS desktop: phases F0 to F3, closed by gate Task FS-3.9 (20 of 28 done). PROV-O history (Task FS-2.8) and the durable journal with the Logs view and file panel tabs (Task FS-2.9) are in the MVP and do not depend on the `c2pa` module ([ADR 040](./architecture/040-prov-o-history.md)). C2PA is not in the MVP ([ADR 037](./architecture/037-c2pa-in-release-2.md)).
+FileSquid MVP (early access) on the macOS desktop: phases F0 to F3, closed by gate Task FS-3.9 (21 of 28 done). PROV-O history (Task FS-2.8) and the durable journal with the Logs view and file panel tabs (Task FS-2.9) are in the MVP and do not depend on the `c2pa` module ([ADR 040](./architecture/040-prov-o-history.md)). C2PA is not in the MVP ([ADR 037](./architecture/037-c2pa-in-release-2.md)).
 
 1. [x] [Task FS-0.0](./implementation-plan.md#task-fs-0.0) FileSquid product switch
     - [x] [API-F0.1](../apps/filesquid/crates/api/resources/plan.md#phase-f0-crate-health-route-and-transport-spike-global-task-fs-00) Health router, contract seed and transport spike S1
@@ -165,14 +163,14 @@ FileSquid MVP (early access) on the macOS desktop: phases F0 to F3, closed by ga
     - [x] [UI-F2.11](../apps/filesquid/ui/resources/plan.md#phase-f2-default-ui-global-tasks-fs-21-fs-22-fs-24-fs-25-11-12-after-the-mvp-ui-f26-in-global-task-fs-23-ui-f210-and-ui-f212-in-global-task-fs-27-ui-f213-in-global-task-fs-26-ui-f25-in-global-task-fs-c1-phase-c) Versions panel labels, download and history size
     - [ ] [UI-F2.19](../apps/filesquid/ui/resources/plan.md#phase-f2-default-ui-global-tasks-fs-21-fs-22-fs-24-fs-25-11-12-after-the-mvp-ui-f26-in-global-task-fs-23-ui-f210-and-ui-f212-in-global-task-fs-27-ui-f213-in-global-task-fs-26-ui-f25-in-global-task-fs-c1-phase-c) Preview top bar and zoom chip
     - [ ] [UI-F2.17](../apps/filesquid/ui/resources/plan.md#phase-f2-default-ui-global-tasks-fs-21-fs-22-fs-24-fs-25-11-12-after-the-mvp-ui-f26-in-global-task-fs-23-ui-f210-and-ui-f212-in-global-task-fs-27-ui-f213-in-global-task-fs-26-ui-f25-in-global-task-fs-c1-phase-c) Uploads and imports always target a collection or folder
-24. [ ] [Task FS-2.8](./implementation-plan.md#task-fs-2.8) PROV-O history
+24. [x] [Task FS-2.8](./implementation-plan.md#task-fs-2.8) PROV-O history
     - [x] [CO-0.11](../apps/filesquid/crates/core/resources/plan.md#phase-f2-prov-o-history-contracts-global-task-fs-28) PROV-O history contract types
     - [x] [IO-1.5](../apps/filesquid/crates/ocfl/resources/plan.md#phase-f2-version-bound-files-for-prov-o-history-global-task-fs-28) Version-bound logical files in the change model
     - [x] [PV-0.1](../apps/filesquid/crates/prov/resources/plan.md#phase-f2-prov-o-history-engine-global-task-fs-28) Crate, PROV-O model and profile `filesquid-prov/1`
     - [x] [MD-0.9](../apps/filesquid/crates/metadata/resources/plan.md#phase-f2-commit-options-for-prov-o-history-global-task-fs-28) Commit options on the `ocfl` store
     - [x] [PV-0.2](../apps/filesquid/crates/prov/resources/plan.md#phase-f2-prov-o-history-engine-global-task-fs-28) `ocfl` feature: records in OCFL objects and reconstruction
     - [x] [API-F2.8](../apps/filesquid/crates/api/resources/plan.md#phase-f2-prov-o-history-global-task-fs-28) Journal and commit linkage for PROV-O history
-    - [ ] [DE-0.10](../apps/filesquid/crates/desktop/resources/plan.md#phase-f0-catalog-jobs-ocfl-coordinator-global-task-05) Installation UUID, native journal columns, outbox events and coordinator commit linkage
+    - [x] [DE-0.10](../apps/filesquid/crates/desktop/resources/plan.md#phase-f0-catalog-jobs-ocfl-coordinator-global-task-05) Installation UUID, native journal columns, outbox events and coordinator commit linkage
     - [x] [API-F2.9](../apps/filesquid/crates/api/resources/plan.md#phase-f2-prov-o-history-global-task-fs-28) PROV-O records, history routes and backfill
     - [x] [API-F2.20](../apps/filesquid/crates/api/resources/plan.md#phase-f2-prov-o-history-global-task-fs-28) Repair consent statement names the repair's history version
 25. [ ] [Task FS-2.9](./implementation-plan.md#task-fs-2.9) Durable journal, Logs view and file panel tabs

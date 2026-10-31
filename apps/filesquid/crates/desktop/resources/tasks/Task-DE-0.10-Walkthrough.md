@@ -1,6 +1,6 @@
 # Task DE-0.10 Walkthrough: Installation UUID, native journal columns, outbox events and coordinator commit linkage
 
-Branch: `feat/prov-o-history` (global Task FS-2.8; ADR 040 Decisions 4 and 6; [ADR 021](../../../../../../resources/architecture/021-uuid-v4-identifiers.md)).
+Branches: `feat/prov-o-history` (the first slices), then `feat/de-0.10-installation-uuid-journal-outbox` (closing the task once DE-0.3, DE-0.8, DE-1.2 and API-F2.8 were done). Global Task FS-2.8; ADR 040 Decisions 4 and 6; [ADR 021](../../../../../../resources/architecture/021-uuid-v4-identifiers.md).
 
 ## Requirements
 
@@ -27,7 +27,108 @@ DE-0.3 reached `main` while this task was open, so the catalog's snapshot commit
 - Reconcile replays the journal entries of every version a behind (or lost) catalog missed into its outbox; the stores keep a pre-allocated ID once (`ON CONFLICT(id) DO NOTHING`), so nothing is stored twice.
 - Without a provenance context, or when the IDs cannot be allocated, the version is still published with its message; the outbox stores `ocfl.commit` and the operation's entry linked by operation ID and object version, plus a `prov.record` warning (error code only) when the IDs were unavailable.
 
-File objects (DE-1.2) do not exist yet; they use the same recorder when they land. DE-0.8, a listed dependency, is not done.
+File objects (DE-1.2) did not exist yet when this section was written; they now commit through the same recorder (see "Closing the task" below).
+
+## Closing the task (branch `feat/de-0.10-installation-uuid-journal-outbox`)
+
+With every dependency done, the branch audited each clause of DE-S-011 and DE-S-012 against `main` (6def085) and closed the four gaps it found. The file objects of DE-1.2 already committed through the file service's provenance (`install_file_provenance`, Task FS-2.8 host wiring): installation `user`, `filesquid.operation.v1` message of kind `import`, `provenance/v1.jsonld` and `provenance/v1.journal.jsonl`, and the `ocfl.commit` entry the import job journals.
+
+- **Installation file schema (DE-S-012).** `installation.json` is now `{"schema": 1, "installation_id": "<uuid>", "created": "<RFC 3339 UTC>"}`. The operational store's `host_installation` table gains a `created` column through an idempotent forward migration, so a copy restored from the other keeps the original creation time. A file of another schema, or with a `created` that is not RFC 3339 UTC, is refused as malformed without naming a path or the value. A file an earlier build wrote (no `schema`) is still read as that installation and upgraded to schema 1; if that upgrade write fails, the launch goes on with a stdout warning, since the file still names the installation.
+- **Import commits a crash left unjournaled (DE-S-011).** The import job journals a commit's `ocfl.commit` entry after the OCFL commit, through the bounded writer queue. A crash in between used to lose that entry: the resumed job's replay of the import answered the object with no entries. `FileService::import_original` now answers a replayed import with the entries its version recorded (`provenance/v1.journal.jsonl`), under the IDs the commit named, so the resumed job journals them. The store keeps a preset ID once (`ON CONFLICT DO NOTHING`), so a second replay adds nothing. A journal file that cannot be read is logged (stdout) and skipped: the import itself is committed, and the rebuild from files (CL-1.9) reads the same file.
+- **One announcement per stored entry.** The journal writer now stores through `append_new` and announces and counts only the entries the store stored now, as `AnnouncingJournal` already did. A replayed entry the store already held raises no second `journal.entry` event and does not count twice in the metrics.
+- **BDD.** [`desktop_installation_F-067.feature`](../../tests/features/desktop_installation_F-067.feature) has six scenarios through the real launch path (`open_host_monitor`, `load_installation`, `install_file_provenance`). They cover the first launch, restoring either copy, losing both, a malformed file, and the import crash repaired with the recorded ID. Every journal check asserts opaque IDs only: no UUID value, no path, no file name (owner decision 2026-10-31, API-S-036).
+
+The import replay changes one existing assertion. `unit_import_file::an_import_commit_is_linked_to_the_journal_and_carries_its_record` used to require that a replay answers no entries. It now requires the replay to answer exactly the entries the commit answered (same IDs) and to leave the head at `v1`.
+
+### TDD: failing runs on this branch
+
+```text
+$ cargo test -p filesquid-native --features desktop --locked --test unit_import_file
+test a_crash_before_the_commit_was_journaled_is_repaired_once_with_the_recorded_id ... FAILED
+test an_import_commit_is_linked_to_the_journal_and_carries_its_record ... FAILED
+test result: FAILED. 8 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.25s
+$ cargo test -p filesquid-api --lib --locked journal_writer
+test journal_writer::tests::a_rejected_write_is_one_json_line_per_record_on_stdout ... ok
+test journal_writer::tests::a_replayed_entry_the_store_already_holds_is_announced_once ... FAILED
+test result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 76 filtered out; finished in 0.09s
+$ cargo test -p filesquid-native --features desktop --locked --test unit_installation
+test a_file_of_another_schema_is_refused_without_naming_a_path ... FAILED
+test the_file_holds_schema_1_the_uuid_and_its_creation_time ... FAILED
+test result: FAILED. 10 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
+```
+
+### Test output on this branch
+
+```text
+$ cargo test -p filesquid-api --lib --locked journal_writer
+test journal_writer::tests::a_rejected_write_is_one_json_line_per_record_on_stdout ... ok
+test journal_writer::tests::a_replayed_entry_the_store_already_holds_is_announced_once ... ok
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 76 filtered out; finished in 0.00s
+$ cargo test -p filesquid-native --features desktop --locked --lib installation
+test installation::tests::a_file_with_a_creation_time_that_is_not_utc_is_malformed ... ok
+test installation::tests::a_restored_or_foreign_store_copy_is_kept ... ok
+test installation::tests::a_store_table_of_an_earlier_build_gains_the_creation_time ... ok
+test installation::tests::a_created_store_copy_is_forgotten_so_the_next_launch_creates_again ... ok
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+$ cargo test -p filesquid-native --features desktop --locked --test unit_installation --test unit_import_file --test unit_import_job --test unit_journal
+     Running tests/unit/import_file.rs
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+     Running tests/unit/import_job.rs
+test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 8.46s
+     Running tests/unit/installation.rs
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+     Running tests/unit/journal.rs
+test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+$ cargo test -p filesquid-desktop --features test-webdriver --locked --test features -- --name "installation|import's commit|lost copy|Losing both|malformed installation"
+Feature: The desktop's installation identity and the journal linkage of its commits
+  Scenario: The first launch creates the installation UUID once
+   ✔  Given a desktop data directory with no installation UUID
+   ✔  When the desktop launches twice
+   ✔  Then both launches should read the same UUID v4
+   ✔  And the installation file should hold schema 1, the UUID and an RFC 3339 UTC creation time
+   ✔  And the journal should record "host.installation.created" once
+   ✔  And no journal entry should name the installation UUID or the data directory
+  Scenario Outline: A lost copy is restored from the other
+   ✔  Given a desktop that has launched once
+   ✔  When its installation file is lost and the desktop launches again
+   ✔  Then the launch should read the same UUID as before
+   ✔  And the installation file should be as it was after the first launch
+   ✔  And the journal should record "host.installation.restored" once
+  Scenario Outline: A lost copy is restored from the other
+   ✔  Given a desktop that has launched once
+   ✔  When its operational store is lost and the desktop launches again
+   ✔  Then the launch should read the same UUID as before
+   ✔  And the installation file should be as it was after the first launch
+   ✔  And the journal should record "host.installation.restored" once
+  Scenario: Losing both copies makes a new installation, and journals it
+   ✔  Given a desktop that has launched once
+   ✔  When both copies are lost and the desktop launches again
+   ✔  Then the launch should read a new UUID v4
+   ✔  And the journal should record "host.installation.created" once
+  Scenario: A malformed installation file is refused without naming a path
+   ✔  Given a desktop data directory whose installation file holds no UUID v4
+   ✔  When the desktop launches
+   ✔  Then the launch should be refused with an error that names no path
+   ✔  And the journal should record "host.installation" failed with the error code "malformed"
+  Scenario: A crash between an import's commit and its journal entry is repaired with the recorded ID
+   ✔  Given a desktop with an open library whose commits record their history
+   ✔  And a file was imported but the app stopped before its commit reached the journal
+   ✔  When the import is replayed twice after the restart
+   ✔  Then the journal should hold that import's "ocfl.commit" entry once, under the ID its version recorded
+   ✔  And that entry should name the import's operation and object version and no path
+[Summary]
+1 feature
+6 scenarios (6 passed)
+29 steps (29 passed)
+```
+
+The full-suite hook run on the head commit is recorded in the pull request (`Test scope:` line).
+
+## Sync Execution Report
+
+- `apps/filesquid/crates/api/resources/srs.md` API-S-036: a replayed import answers the journal entries its commit recorded, under the same IDs (DE-S-011).
+- `apps/filesquid/crates/desktop/resources/srs.md` DE-S-011: for a file-object import the resumed job's replay writes them; the writer announces and counts a replayed entry once.
+- DE-S-012 already specified the schema 1 file; the code now matches it. No PRD, product-vision or ADR change: the behaviour is the one ADR 040 Decision 6 and SRS-F-067 already require.
 
 ```text
 $ cargo test -p filesquid-native --features desktop --test unit_canonical_commit
@@ -56,9 +157,13 @@ test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 
 ## SRS traceability
 
+DE-S-011 is "Native journal and commit linkage"; DE-S-012 is "Installation UUID"; SRS-F-067 is "PROV-O history of every version and change".
+
 | Requirement | Tests |
 |---|---|
-| DE-S-012 | `filesquid-native` `unit_installation` (8 tests) and the in-module rollback tests of `installation.rs` (2); desktop `integration_library_catalog::the_installation_uuid_is_created_once_and_journaled` |
+| DE-S-012 Installation UUID | `filesquid-native` `unit_installation` (12 tests, including `the_file_holds_schema_1_the_uuid_and_its_creation_time`, `a_restored_copy_keeps_the_creation_time`, `a_file_of_another_schema_is_refused_without_naming_a_path`, `a_file_from_an_earlier_build_is_still_read`) and the in-module tests of `installation.rs` (4, including the store migration); desktop `integration_library_catalog::the_installation_uuid_is_created_once_and_journaled`; BDD `desktop_installation_F-067.feature` scenarios 1 to 4 |
+| DE-S-011 Native journal and commit linkage: import commit repaired after a crash | native `unit_import_file::a_crash_before_the_commit_was_journaled_is_repaired_once_with_the_recorded_id`, `an_import_commit_is_linked_to_the_journal_and_carries_its_record`; BDD `desktop_installation_F-067.feature` scenario 5 |
+| DE-S-011 Native journal and commit linkage: one announcement per stored entry | api `journal_writer::tests::a_replayed_entry_the_store_already_holds_is_announced_once` |
 | DE-S-011 journal columns and migration | `unit_journal::both_stores_keep_the_operation_id_and_object_reference`, `an_older_journal_gains_the_linkage_columns_on_open`, `both_stores_assign_ids_before_the_entries_are_written` |
 | DE-S-011 outbox events | desktop `integration_library_catalog::catalog_commits_raise_journal_entry_events` |
 | DE-S-011 commit linkage, history in the same version | desktop `integration_library_catalog::a_catalog_commit_carries_its_history_in_the_same_version`; native `unit_canonical_commit::an_unrecorded_catalog_still_links_its_commits` |

@@ -14,8 +14,10 @@
 //! An import always creates a new file object, under the identifier the host minted when it
 //! planned the import. Repeating the import of the same job (a run that crashed between the
 //! commit and its checkpoint) answers the object that job already committed instead of
-//! creating a second one; an object of another job or an upload under that identifier is a
-//! conflict.
+//! creating a second one, with the journal entries its version recorded
+//! (`provenance/v1.journal.jsonl`) under the IDs the commit named, so a crash before they
+//! reached the journal is repaired and a store that already holds them keeps them once
+//! (DE-S-011); an object of another job or an upload under that identifier is a conflict.
 
 use super::error::FileError;
 use super::media;
@@ -25,9 +27,10 @@ use super::upload::{canonical_error, parse_file_id};
 use super::view::UploadView;
 use crate::canonical::original::original_path_for;
 use crate::canonical::{
-    commit_staged_original, file_object_id, file_object_root, read_file_original, BoundMeta,
-    OwnerReadable,
+    commit_staged_original, file_object_id, file_object_root, read_file_original,
+    read_version_journal, BoundMeta, OwnerReadable,
 };
+use crate::journal::JournalEntry;
 use filesquid_core::{FileId, OperationId, OperationKind};
 use filesquid_metadata::fact::Fact;
 use filesquid_metadata::file_record::FileRecord;
@@ -109,7 +112,9 @@ where
     /// The commit is linked to the journal like every file write ([`super::Committed`]): kind
     /// `import` under the import job's operation ID, with the commit's entries (`ocfl.commit`)
     /// for the job to journal beside its own `import.file` entry. An import an earlier run
-    /// already committed answers no entries (API-S-036, API-S-028).
+    /// already committed commits nothing and answers the entries its version recorded, under
+    /// the same IDs, so a crash before they were journaled is repaired by the replay
+    /// (API-S-036, API-S-028, DE-S-011).
     ///
     /// # Errors
     /// `invalid_request` with `size_mismatch` in its message when the source is not the size
@@ -130,7 +135,7 @@ where
         let library = self.library(&import.library_id)?;
         let file_id = parse_file_id(&import.file_id)?;
         if let Some(answer) = imported_before(&library, &import, &file_id).await? {
-            return Ok(unjournaled(answer));
+            return Ok(answer);
         }
         let root = file_object_root(&file_id).map_err(canonical_error)?;
         let object_id = file_object_id(&file_id);
@@ -144,7 +149,7 @@ where
             let _writing = library.writes.lock().await;
             if let Some(answer) = imported_before(&library, &import, &file_id).await? {
                 clear_staged(&model).await;
-                return Ok(unjournaled(answer));
+                return Ok(answer);
             }
             let prepared = self.prepare(&Write {
                 caller: &caller,
@@ -190,17 +195,48 @@ fn import_caller(actor: &str, import: &SourceImport) -> Caller {
     }
 }
 
-/// The answer of an import an earlier run already committed: nothing new is committed, so
-/// there is nothing to journal for the commit. Pure.
-fn unjournaled(view: ImportedOriginal) -> Committed<ImportedOriginal> {
-    Committed {
-        view,
-        entries: Vec::new(),
-    }
+/// The entries the import commit of `file_id` recorded in its version
+/// (`provenance/v1.journal.jsonl`), under the IDs the commit named; none when the commit
+/// recorded none (no provenance installed). A file or line that cannot be read is logged
+/// (stdout, without its content) and skipped: the import itself is committed, and the rebuild
+/// from files (CL-1.9) reads the same file again. Storage I/O.
+async fn recorded_entries<B: StorageBackend>(backend: &B, file_id: &FileId) -> Vec<JournalEntry> {
+    let lines = match read_import_journal(backend, file_id).await {
+        Ok(lines) => lines,
+        Err(err) => {
+            tracing::warn!(error = ?err, "an import's recorded journal entries could not be read");
+            return Vec::new();
+        }
+    };
+    lines
+        .iter()
+        .filter_map(|line| match serde_json::from_str::<JournalEntry>(line) {
+            Ok(entry) => Some(entry),
+            Err(err) => {
+                tracing::warn!(error = %err, "a recorded journal entry could not be parsed");
+                None
+            }
+        })
+        .collect()
 }
 
-/// The answer of an import whose file object already exists in `library`: see [`replayed`].
-/// `None` when it does not exist yet. Storage I/O.
+/// The journal lines of version `v1` of the file object of `file_id`. Storage I/O.
+///
+/// # Errors
+/// The object or its journal file could not be read.
+async fn read_import_journal<B: StorageBackend>(
+    backend: &B,
+    file_id: &FileId,
+) -> Result<Vec<String>, crate::canonical::CanonicalError> {
+    let root = file_object_root(file_id)?;
+    let object = filesquid_ocfl::read::Object::open(backend, &root).await?;
+    let first = filesquid_ocfl::inventory::VersionNum::first();
+    read_version_journal(backend, &object, &OwnerReadable, &first).await
+}
+
+/// The answer of an import whose file object already exists in `library` (see [`replayed`]),
+/// with the journal entries its commit recorded ([`recorded_entries`]). `None` when it does
+/// not exist yet. Storage I/O.
 ///
 /// # Errors
 /// As [`replayed`]; a read failure.
@@ -208,7 +244,7 @@ async fn imported_before<B, R, S>(
     library: &Library<B, R, S>,
     import: &SourceImport,
     file_id: &FileId,
-) -> Result<Option<ImportedOriginal>, FileError>
+) -> Result<Option<Committed<ImportedOriginal>>, FileError>
 where
     B: StorageBackend,
     R: VersionReservations,
@@ -218,9 +254,12 @@ where
     let existing = read_file_original(backend, &OwnerReadable, file_id)
         .await
         .map_err(canonical_error)?;
-    existing
-        .map(|original| replayed(import, &original.record))
-        .transpose()
+    let Some(original) = existing else {
+        return Ok(None);
+    };
+    let view = replayed(import, &original.record)?;
+    let entries = recorded_entries(backend, file_id).await;
+    Ok(Some(Committed { view, entries }))
 }
 
 /// Build the record of `import` citing the staged original `citation`, recorded at `created`,

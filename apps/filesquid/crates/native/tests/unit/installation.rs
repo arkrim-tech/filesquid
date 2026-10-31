@@ -146,3 +146,89 @@ fn concurrent_launches_agree_on_one_installation() {
     assert_eq!(again.id, ids[0]);
     std::fs::remove_dir_all(&dir).expect("cleanup");
 }
+
+/// The file copy of `dir`, parsed.
+fn file_json(dir: &Path) -> serde_json::Value {
+    let text = std::fs::read_to_string(file(dir)).expect("installation.json");
+    serde_json::from_str(&text).expect("installation.json is JSON")
+}
+
+/// DE-S-012: the file is `{"schema": 1, "installation_id": "<uuid>", "created": "<RFC 3339
+/// UTC>"}`, and a restart leaves it as it was.
+#[test]
+fn the_file_holds_schema_1_the_uuid_and_its_creation_time() {
+    let dir = data_dir("schema");
+    let first = load_or_create(&dir).expect("first start");
+    let json = file_json(&dir);
+    assert_eq!(json["schema"], 1, "{json}");
+    assert_eq!(json["installation_id"], first.id.as_str(), "{json}");
+    let created = json["created"].as_str().expect("created");
+    assert!(created.ends_with('Z'), "UTC: {created}");
+    assert!(
+        filesquid_api::journal::parse_rfc3339_ms(created).is_some(),
+        "RFC 3339: {created}"
+    );
+    load_or_create(&dir).expect("restart");
+    assert_eq!(file_json(&dir), json, "a restart rewrites nothing");
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+/// DE-S-012: a copy restored from the other keeps the surviving copy's creation time, so the
+/// installation is not reported as created again.
+#[test]
+fn a_restored_copy_keeps_the_creation_time() {
+    let dir = data_dir("created-kept");
+    load_or_create(&dir).expect("first start");
+    let json = file_json(&dir);
+    std::fs::remove_file(file(&dir)).unwrap();
+    load_or_create(&dir).expect("file restored from the store");
+    assert_eq!(file_json(&dir), json, "the store kept the creation time");
+    for name in [
+        "filesquid.sqlite",
+        "filesquid.sqlite-wal",
+        "filesquid.sqlite-shm",
+    ] {
+        let _ = std::fs::remove_file(dir.join(name));
+    }
+    load_or_create(&dir).expect("store restored from the file");
+    std::fs::remove_file(file(&dir)).unwrap();
+    load_or_create(&dir).expect("file restored from the restored store");
+    assert_eq!(file_json(&dir), json, "the restored store kept it too");
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+/// DE-S-012: a file of another schema is malformed, refused naming no path.
+#[test]
+fn a_file_of_another_schema_is_refused_without_naming_a_path() {
+    let dir = data_dir("other-schema");
+    let uuid = "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d";
+    let text = format!(
+        "{{\"schema\":2,\"installation_id\":\"{uuid}\",\"created\":\"2026-10-31T00:00:00.000Z\"}}"
+    );
+    std::fs::write(file(&dir), text).unwrap();
+    let err = load_or_create(&dir).expect_err("another schema");
+    assert!(
+        matches!(err, InstallationError::Malformed { copy: "file" }),
+        "{err:?}"
+    );
+    let message = err.to_string();
+    assert!(
+        !message.contains(dir.to_string_lossy().as_ref()),
+        "{message}"
+    );
+    assert!(!message.contains(uuid), "{message}");
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+/// A file an earlier build wrote (no `schema`, no `created`) is still read as that
+/// installation, so an upgrade never mints a second one.
+#[test]
+fn a_file_from_an_earlier_build_is_still_read() {
+    let dir = data_dir("earlier-build");
+    let uuid = "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d";
+    std::fs::write(file(&dir), format!("{{\"installation_id\":\"{uuid}\"}}\n")).unwrap();
+    let found = load_or_create(&dir).expect("read");
+    assert_eq!(found.id.as_str(), uuid);
+    assert_eq!(found.source, InstallationSource::RestoredStore);
+    std::fs::remove_dir_all(dir).unwrap();
+}

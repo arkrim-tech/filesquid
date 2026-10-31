@@ -360,6 +360,11 @@ const INSTALLATION: &str = "4c2e7a10-8b3d-4f5e-9a6b-1c2d3e4f5a6b";
 
 /// Install provenance on `files`, allocating journal IDs from a memory journal.
 fn with_provenance(files: &HostFiles) {
+    with_provenance_from(files, Arc::new(MemoryJournal::new("desktop")));
+}
+
+/// Install provenance on `files`, allocating journal IDs from `ids`.
+fn with_provenance_from(files: &HostFiles, ids: Arc<dyn filesquid_api::journal::JournalStore>) {
     let context = filesquid_api::history::ProvenanceContext {
         installation: filesquid_core::InstallationId::parse(INSTALLATION).expect("installation"),
         host: filesquid_api::history::HostFacts {
@@ -368,7 +373,6 @@ fn with_provenance(files: &HostFiles) {
             version: "0.1.0".into(),
         },
     };
-    let ids = Arc::new(MemoryJournal::new("desktop"));
     assert!(files.install_provenance(context, ids));
 }
 
@@ -408,8 +412,84 @@ async fn an_import_commit_is_linked_to_the_journal_and_carries_its_record() {
         .await
         .expect("replayed");
     assert_eq!(again.view, committed.view, "the same object");
-    assert!(
-        again.entries.is_empty(),
-        "a replay commits and journals nothing"
+    assert_eq!(
+        again.entries, committed.entries,
+        "a replay commits nothing and answers the entries its version recorded, same IDs"
     );
+    assert_eq!(
+        object_head(&backend).await,
+        "v1",
+        "nothing new is committed"
+    );
+}
+
+/// The head version of the imported file's object. Storage I/O.
+async fn object_head(backend: &FsBackend) -> String {
+    filesquid_ocfl::read::Object::open(backend, &format!("files/{FILE_ID}"))
+        .await
+        .expect("object")
+        .head()
+        .to_string()
+}
+
+/// DE-S-011: a crash after an import's OCFL commit but before its `ocfl.commit` entry reached
+/// the journal is repaired when the resumed job replays the import: the entry is journaled
+/// from the version's record under the ID the commit named, once, however often the import is
+/// replayed, and announced once.
+#[tokio::test]
+async fn a_crash_before_the_commit_was_journaled_is_repaired_once_with_the_recorded_id() {
+    use filesquid_api::journal::{JournalQuery, JournalStore};
+    let dir = TempDir::new("crash-journal");
+    let (files, _backend) = library(&dir.0).await;
+    let store = Arc::new(
+        filesquid_native::SqliteJournal::open(&dir.0.join("filesquid.sqlite"), "desktop")
+            .expect("journal"),
+    );
+    with_provenance_from(&files, store.clone());
+    let build = build();
+    let path = source(&dir.0, "a.txt", b"alpha");
+    let committed = import_file(&files, &request(&path, &build))
+        .await
+        .expect("imported");
+    let recorded = committed.entries.clone();
+    drop(committed); // the crash: the commit is published, its entries never journaled
+    let events = EventBus::new();
+    let mut announced = events.subscribe();
+    let writer = JournalWriter::start(
+        store.clone(),
+        WriterConfig::default(),
+        events,
+        Arc::new(Metrics::default()),
+    );
+    for _ in 0..2 {
+        let replayed = import_file(&files, &request(&path, &build))
+            .await
+            .expect("replayed");
+        replayed
+            .entries
+            .into_iter()
+            .for_each(|entry| writer.sender().send(entry));
+        writer.sender().flush();
+    }
+    writer.shutdown();
+    let held = store
+        .query(&JournalQuery::default())
+        .expect("query")
+        .entries;
+    let commits: Vec<_> = held
+        .iter()
+        .filter(|e| e.operation == "ocfl.commit")
+        .collect();
+    assert_eq!(commits.len(), 1, "{held:?}");
+    let first = recorded
+        .iter()
+        .find(|e| e.operation == "ocfl.commit")
+        .expect("the commit's entry");
+    assert_eq!(commits[0].id, first.id, "the ID the commit named");
+    assert_eq!(commits[0].operation_id.as_deref(), Some("op-1"));
+    let mut count = 0;
+    while let Ok(event) = announced.try_recv() {
+        count += usize::from(event.data["operation"] == "ocfl.commit");
+    }
+    assert_eq!(count, 1, "announced once");
 }
