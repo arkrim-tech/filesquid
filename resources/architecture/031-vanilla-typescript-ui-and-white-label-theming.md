@@ -62,7 +62,7 @@ CSS custom properties and label tables are the smallest mechanism that lets one 
 
 - Custom elements, Shadow DOM and CSS custom properties work in the three desktop webviews (WebKitGTK, WKWebView, WebView2) and current browsers. UI tests on each confirm it.
 - Collection-scale views (virtualised grids, keyboard and screen-reader support) can be built as custom elements with the pattern in Decision 6. Performance is measured under [ADR 007](./007-durable-jobs-and-interactive-performance.md), not assumed.
-- Tauri CLI `--config` accepts JSON strings or paths to JSON, JSON5 or TOML files, merged with the default configuration in the order given, later values overwriting earlier ones ([Tauri CLI reference](https://v2.tauri.app/reference/cli/)). The exact overlay path and the pinned CLI version MUST be verified when the ImageSquid overlay is built (plan stage G).
+- Tauri CLI `--config` accepts JSON strings or paths to JSON, JSON5 or TOML files, merged with the default configuration in the order given, later values overwriting earlier ones ([Tauri CLI reference](https://v2.tauri.app/reference/cli/)). The FileSquid overlay path and the pinned CLI version MUST be verified in [DE-F3.1](../../apps/filesquid/crates/desktop/resources/plan.md). The ImageSquid overlay is ImageSquid's own plan (IS-F0.1), not the FileSquid MVP or [DE-F3.3](../../apps/filesquid/crates/desktop/resources/plan.md).
 - Vite 8.x and TypeScript 7.x are current on npm at writing (`npm info vite version`: 8.3.4; `npm info typescript version`: 7.0.2). Exact versions are pinned in each package lockfile.
 
 ## Alternatives Considered
