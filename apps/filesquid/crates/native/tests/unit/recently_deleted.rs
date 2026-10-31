@@ -398,3 +398,34 @@ fn a_deletion_stopped_part_way_is_finished_by_the_next_run() {
     assert_eq!(done.objects_done, 1);
     assert_tombstone(&fx, &lib, &file);
 }
+
+#[test]
+fn the_expiry_runs_as_a_durable_job_over_every_open_library() {
+    use filesquid_api::jobs::{JobState, Jobs, MemoryJobStore};
+    use filesquid_api::monitor::{Monitor, MonitorConfig, StaticHostChecks};
+    use filesquid_native::workers::expiry::run_expiry_job;
+    let (fx, lib, file) = deleted_file("f215-job");
+    let monitor = Monitor::start(
+        Arc::new(filesquid_api::journal::MemoryJournal::new("desktop")),
+        Arc::new(StaticHostChecks::healthy()),
+        MonitorConfig::new("desktop"),
+        filesquid_api::EventBus::new(),
+    );
+    let jobs = Jobs::new(
+        Arc::new(MemoryJobStore::new()),
+        monitor.journal(),
+        monitor.registry().clone(),
+        "test-launch",
+    );
+    let service = later_service(&fx, ExpiryMode::KeepVersionHistory);
+    let stop = std::sync::atomic::AtomicBool::new(false);
+    let (state, report) =
+        run_expiry_job(&jobs, &service, &fx.catalog, "installation:test", &stop).expect("run");
+    assert_eq!(state, JobState::Completed);
+    assert_eq!((report.libraries, report.expired, report.objects_done), (1, 1, 1));
+    assert_tombstone(&fx, &lib, &file);
+    let (_, again) =
+        run_expiry_job(&jobs, &service, &fx.catalog, "installation:test", &stop).expect("rerun");
+    assert_eq!(again.expired, 0, "a second run finds nothing due");
+    drop(monitor);
+}

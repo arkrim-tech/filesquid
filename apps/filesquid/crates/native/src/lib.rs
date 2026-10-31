@@ -60,6 +60,8 @@ pub mod registry_sqlite;
 #[cfg(feature = "desktop")]
 pub mod repair_ledger;
 #[cfg(feature = "desktop")]
+pub mod settings_sqlite;
+#[cfg(feature = "desktop")]
 pub mod workers;
 
 #[cfg(feature = "desktop")]
@@ -86,3 +88,5 @@ pub use locations::{HostLocations, HostRoot, OpenedBackfill, OpenedRoots};
 pub use preferences_sqlite::{SqlitePreferences, MAX_PREFERENCE_USERS};
 #[cfg(feature = "desktop")]
 pub use repair_ledger::SqliteRepairLedger;
+#[cfg(feature = "desktop")]
+pub use settings_sqlite::SqliteRetentionSettings;

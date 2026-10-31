@@ -57,6 +57,15 @@ pub enum PurgeStep {
 }
 
 impl SqliteCatalog {
+    /// The libraries this catalog has open (attached), in identifier order: the ones an
+    /// expiry run can reach. Reads memory only.
+    ///
+    /// # Errors
+    /// A poisoned lock.
+    pub fn open_libraries(&self) -> Result<Vec<LibraryId>, CatalogError> {
+        Ok(self.lock()?.values().map(|library| library.id.clone()).collect())
+    }
+
     /// Stop every object work at `step` as a crash would, or at none (crash-recovery tests;
     /// a host never sets it).
     pub fn fail_purges_at(&self, step: Option<PurgeStep>) {

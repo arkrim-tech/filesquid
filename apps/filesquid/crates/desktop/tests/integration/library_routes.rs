@@ -972,3 +972,49 @@ fn recent_libraries_and_their_facts_survive_a_restart_without_a_path() {
     assert!(!text.contains("loc-"), "no location ID: {text}");
     desktop.stop();
 }
+
+/// Task API-F2.15: the desktop installs the Recently deleted library service with its
+/// settings in the operational store, the settings routes answer through the scheme, and one
+/// expiry job run completes over the attached libraries.
+#[test]
+fn recently_deleted_settings_and_the_expiry_job_are_wired() {
+    use filesquid_desktop_lib::recently_deleted::{install_recently_deleted, ExpiryTask};
+    let dir = fresh_dir("recently-deleted");
+    let desktop = Desktop::launch(dir.join("data"));
+    install_navigation(&desktop.state, desktop.catalog.clone(), &installation()).expect("nav");
+    let service = install_recently_deleted(
+        &desktop.state,
+        &desktop.host,
+        desktop.catalog.clone(),
+        &desktop.dir,
+    )
+    .expect("installed");
+    assert!(
+        install_recently_deleted(&desktop.state, &desktop.host, desktop.catalog.clone(), &desktop.dir)
+            .is_err(),
+        "installed once"
+    );
+    let folder = dir.join("Library A");
+    std::fs::create_dir_all(&folder).expect("folder");
+    let location = desktop.register(&folder);
+    let (status, body) = desktop.command("/api/v1/libraries", json!({ "location_id": location }));
+    assert_eq!(status, 200, "{body}");
+    let (status, view) = desktop.get("/api/v1/settings/recently-deleted");
+    assert_eq!(status, 200, "{view}");
+    assert_eq!(view["default_retention_days"], 30);
+    assert_eq!(view["expiry"], "keep_version_history");
+    assert_eq!(view["may_change"], true);
+    assert_eq!(view["libraries"].as_array().expect("libraries").len(), 1);
+    let set = json!({ "default_retention_days": 45, "expiry": "keep_version_history" });
+    let (status, changed) = desktop.send("PUT", "/api/v1/settings/recently-deleted", Some(set), true);
+    assert_eq!(status, 200, "{changed}");
+    assert_eq!(changed["default_retention_days"], 45);
+    let jobs = open_jobs(&desktop.dir, &desktop.host).expect("jobs");
+    let task = ExpiryTask::new(service, desktop.catalog.clone(), jobs.clone(), &installation());
+    task.run_once(&AtomicBool::new(false));
+    let finished = jobs
+        .unfinished_of(filesquid_api::library::EXPIRY_JOB_KIND, 1)
+        .expect("jobs");
+    assert!(finished.is_empty(), "the run completed its job");
+    desktop.stop();
+}

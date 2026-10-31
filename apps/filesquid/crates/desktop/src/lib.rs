@@ -47,6 +47,7 @@ pub mod libraries;
 pub mod navigation;
 pub mod panic_journal;
 pub mod rebuilds;
+pub mod recently_deleted;
 pub mod stdout_log;
 #[cfg(feature = "test-webdriver")]
 pub mod test_fixture;
@@ -773,12 +774,16 @@ fn start_monitor(
     navigation::install_navigation(&state, catalog.clone(), &installation)
         .inspect_err(|_| host.stop())?;
     app.manage(DesktopCatalog(catalog.clone()));
-    install_library_services(app, &host, &installation, &data_dir, (opened, catalog))
+    let trash = recently_deleted::install_recently_deleted(&state, &host, catalog.clone(), &data_dir)
+        .inspect_err(|_| host.stop())?;
+    install_library_services(app, &host, &installation, &data_dir, (opened, catalog.clone()))
         .inspect_err(|_| host.stop())?;
     let runtime = tauri::async_runtime::handle().inner().clone();
     let stop = Arc::new(AtomicBool::new(false));
-    install_job_routes(&state, &app.state::<DesktopJobs>().0, runtime, stop.clone())
-        .inspect_err(|_| host.stop())?;
+    let jobs = app.state::<DesktopJobs>().0.clone();
+    install_job_routes(&state, &jobs, runtime, stop.clone()).inspect_err(|_| host.stop())?;
+    let expiry = recently_deleted::ExpiryTask::new(trash, catalog, jobs, &installation);
+    recently_deleted::spawn_expiry(expiry, stop.clone());
     app.manage(DesktopInstallation(installation));
     open_test_library(app, &data_dir);
     let forwarder = Arc::new(event_channel::register_forwarder(host.monitor().registry()));
