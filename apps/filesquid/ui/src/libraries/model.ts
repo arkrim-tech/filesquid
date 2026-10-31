@@ -38,6 +38,31 @@ export type RepairAnswer = components["schemas"]["RepairAnswer"];
 /** One object's repair outcome. */
 export type ObjectRepair = components["schemas"]["ObjectRepair"];
 
+/** A library's facts (API-S-038): its name, the free bytes of its volume and its revision. */
+export type LibraryFacts = components["schemas"]["LibraryFacts"];
+/** Why a library's free space is unknown. */
+export type FreeBytesReason = components["schemas"]["FreeBytesReason"];
+/** One library this host opened, as the recent-libraries route lists it (API-S-038). */
+export type RecentLibrary = components["schemas"]["RecentLibrary"];
+/** The libraries this host opened that the caller may read: at most 20, newest first. */
+export type RecentLibraries = components["schemas"]["RecentLibraries"];
+/** One durable job as the job routes and the `job.update` event show it (API-S-037). */
+export type JobView = components["schemas"]["JobView"];
+/** The answer of a job control route. */
+export type JobControlAnswer = components["schemas"]["JobControlAnswer"];
+
+/**
+ * The collection a create-collection command made. Not yet in the API contract: no route
+ * creates a collection (see `ClientLibrarySource.createCollection`), so this is the shape the
+ * UI asks the platform engineer to deliver, checked by `parseCollection` like any answer.
+ */
+export interface CollectionView {
+  /** The new collection's ID, opaque. */
+  readonly collection_id: string;
+  /** Its title, as created. */
+  readonly title: string;
+}
+
 /** The statement the consent dialog shows, as the contract names it. */
 export const REPAIR_STATEMENT_ID = "version_inventory_repair.v2";
 /**
@@ -64,11 +89,23 @@ export const MAX_LOCATION_ID_BYTES = 128;
 /** Hash of the library start page. */
 export const LIBRARY_ROUTE = "#/library";
 
+/** Which flow a rebuild job page belongs to: Recover from a copy, or a library's own Rebuild. */
+export type RebuildMode = "recover" | "rebuild";
+
+/** Most bytes a job ID in a route may have (the library ID bound). */
+export const MAX_JOB_ID_BYTES = 128;
+
 /** The pages of the library flow, as a hash names them. */
 export type LibraryRoute =
   | { readonly kind: "start" }
   | { readonly kind: "library"; readonly id: string }
-  | { readonly kind: "repair"; readonly id: string };
+  | { readonly kind: "repair"; readonly id: string }
+  | {
+      readonly kind: "job";
+      readonly mode: RebuildMode;
+      readonly id: string;
+      readonly job: string;
+    };
 
 /**
  * What the elements need from the library routes (the live one is `ClientLibrarySource`).
@@ -79,8 +116,28 @@ export type LibraryRoute =
 export interface LibrarySource {
   /** Ask the host to let the owner choose a folder; answers its location ID or `cancelled`. */
   chooseLocation(purpose: ChoicePurpose): Promise<LocationChoice>;
-  /** Create a library on the folder registered as `locationId`, expecting revision `0`. */
-  create(locationId: string): Promise<LibraryView>;
+  /**
+   * Create a library on the folder registered as `locationId`, expecting revision `0`, with the
+   * name the owner gave (API-S-038); without one the host names it "Untitled library".
+   */
+  create(locationId: string, name?: string): Promise<LibraryView>;
+  /**
+   * Create a collection in an open library (the first-use flow, UI-S-034), expecting the
+   * library's `expectedRevision`; answers the collection it made.
+   */
+  createCollection(
+    libraryId: string,
+    title: string,
+    expectedRevision: string,
+  ): Promise<CollectionView>;
+  /**
+   * The libraries this host opened that the caller may read, newest first, at most 20
+   * (API-S-038). A host without a library registry answers 503, which the page treats as "no
+   * recent libraries and no first use".
+   */
+  recent(): Promise<RecentLibraries>;
+  /** One library's facts: name, free space and revision (API-S-038). */
+  facts(libraryId: string): Promise<LibraryFacts>;
   /** Open the library in the folder registered as `locationId`, expecting revision `0`. */
   open(locationId: string): Promise<LibraryView>;
   /**
@@ -119,6 +176,28 @@ export function libraryHref(libraryId: string): string {
 }
 
 /**
+ * The address of the page that follows a recovered copy's rebuild job (mockup 04). Pure.
+ *
+ * @param libraryId The library ID, escaped for the hash.
+ * @param jobId The rebuild job's ID, escaped for the hash.
+ * @returns `#/library/<id>/recover/<job>`.
+ */
+export function libraryRecoverHref(libraryId: string, jobId: string): string {
+  return `${libraryHref(libraryId)}/recover/${encodeURIComponent(jobId)}`;
+}
+
+/**
+ * The address of the page that follows a library's own rebuild job. Pure.
+ *
+ * @param libraryId The library ID, escaped for the hash.
+ * @param jobId The rebuild job's ID, escaped for the hash.
+ * @returns `#/library/<id>/rebuild/<job>`.
+ */
+export function libraryRebuildHref(libraryId: string, jobId: string): string {
+  return `${libraryHref(libraryId)}/rebuild/${encodeURIComponent(jobId)}`;
+}
+
+/**
  * The address of a library's repair offer, the one the Monitor's W010 note links to
  * (`bindMonitorRoute`'s `repairHref`). Pure.
  *
@@ -134,15 +213,27 @@ function byteLength(value: string): number {
   return new TextEncoder().encode(value).length;
 }
 
-/** Decode one hash segment into a library ID, or undefined (a warning is logged) when invalid. */
-function decodeLibraryId(segment: string): string | undefined {
+/** Decode one hash segment into an ID of at most `limit` bytes, or undefined when invalid. */
+function decodeId(segment: string, limit: number): string | undefined {
   try {
     const id = decodeURIComponent(segment);
-    return id === "" || byteLength(id) > MAX_LIBRARY_ID_BYTES ? undefined : id;
+    return id === "" || byteLength(id) > limit ? undefined : id;
   } catch (error) {
     console.warn("FileSquid ignored a library route whose ID does not decode", error);
     return undefined;
   }
+}
+
+/** Read `<tail>/<job>` of `#/library/<id>/<tail>/<job>` as a rebuild job page, or undefined. */
+function parseJobRoute(
+  id: string,
+  tail: string,
+  job: string | undefined,
+): LibraryRoute | undefined {
+  if (tail !== "recover" && tail !== "rebuild") return undefined;
+  if (job === undefined) return undefined;
+  const jobId = decodeId(job, MAX_JOB_ID_BYTES);
+  return jobId === undefined ? undefined : { kind: "job", mode: tail, id, job: jobId };
 }
 
 /**
@@ -156,12 +247,13 @@ function decodeLibraryId(segment: string): string | undefined {
 export function parseLibraryHash(hash: string): LibraryRoute | undefined {
   if (hash === LIBRARY_ROUTE) return { kind: "start" };
   if (!hash.startsWith(`${LIBRARY_ROUTE}/`)) return undefined;
-  const [segment, tail, ...rest] = hash.slice(LIBRARY_ROUTE.length + 1).split("/");
+  const [segment, tail, job, ...rest] = hash.slice(LIBRARY_ROUTE.length + 1).split("/");
   if (segment === undefined || rest.length > 0) return undefined;
-  if (tail !== undefined && tail !== "repair") return undefined;
-  const id = decodeLibraryId(segment);
+  const id = decodeId(segment, MAX_LIBRARY_ID_BYTES);
   if (id === undefined) return undefined;
-  return tail === "repair" ? { kind: "repair", id } : { kind: "library", id };
+  if (tail === undefined) return { kind: "library", id };
+  if (tail === "repair" && job === undefined) return { kind: "repair", id };
+  return parseJobRoute(id, tail, job);
 }
 
 /**

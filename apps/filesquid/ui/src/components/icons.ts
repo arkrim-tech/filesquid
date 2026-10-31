@@ -43,7 +43,8 @@ export type IconName =
   | "list"
   | "grid"
   | "calendar"
-  | "check";
+  | "check"
+  | "pause";
 
 /** The path data of each icon on the 24-unit grid. */
 const PATHS: Readonly<Record<IconName, string>> = {
@@ -86,6 +87,7 @@ const PATHS: Readonly<Record<IconName, string>> = {
   calendar:
     "M5 5h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2zM3 10h18M8 3v4M16 3v4",
   check: "M5 12.5l4.5 4.5L19 7.5",
+  pause: "M9 5v14M15 5v14",
 };
 
 /** Default size of an icon in CSS pixels. */

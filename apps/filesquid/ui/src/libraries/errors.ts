@@ -11,7 +11,7 @@ import type { LabelKey, LabelTable } from "../theme/labels";
 
 /** The step that failed. */
 export type LibraryAction =
-  "choose" | "create" | "open" | "copy" | "rebuild" | "candidates" | "repair";
+  "choose" | "create" | "collection" | "open" | "copy" | "rebuild" | "candidates" | "repair";
 
 /** What to show: a state for `<fs-states>`, or a sentence for the alert line. */
 export type Failure =
@@ -28,6 +28,7 @@ const HTTP_UNAVAILABLE = 503;
 const CONFLICT: Record<LibraryAction, LabelKey> = {
   choose: "libraryConflictChoice",
   create: "libraryConflictCreate",
+  collection: "libraryFailed",
   open: "libraryConflictOpen",
   copy: "libraryConflictCopy",
   rebuild: "libraryFailed",

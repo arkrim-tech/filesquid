@@ -8,7 +8,12 @@
 import {
   MAX_LOCATION_ID_BYTES,
   MAX_REPAIR_OBJECTS,
+  type CollectionView,
+  type FreeBytesReason,
+  type JobControlAnswer,
+  type JobView,
   type JournalRebuild,
+  type LibraryFacts,
   type LibraryView,
   type LocationChoice,
   type ObjectFindings,
@@ -16,6 +21,8 @@ import {
   type RebuildJobAnswer,
   type RebuildReport,
   type RebuiltObject,
+  type RecentLibraries,
+  type RecentLibrary,
   type RepairAnswer,
   type RepairCandidate,
   type RepairCandidates,
@@ -80,21 +87,6 @@ export function parseLibraryView(value: unknown): LibraryView {
 }
 
 /**
- * Check the revision in a library's facts (API-S-038): the open library's revision, or null
- * for a remembered library that is not open now. Only the revision is read.
- *
- * @param value The parsed JSON answer of `GET /api/v1/libraries/{library}/facts`.
- * @returns The revision, or null when the library is not open.
- * @throws TypeError when the answer is not an object or the revision is neither text nor null.
- */
-export function parseLibraryRevision(value: unknown): string | null {
-  if (!isRecord(value)) throw breaks("library facts");
-  const { revision } = value;
-  if (revision !== null && !isText(revision)) throw breaks("library facts");
-  return revision;
-}
-
-/**
  * Check the answer of a rebuild command: its pending job (API-S-025, API-F2.19).
  *
  * @param value The parsed JSON `result` of the pending outcome.
@@ -109,6 +101,75 @@ export function parseRebuildJob(value: unknown): RebuildJobAnswer {
   const job = jobView(value.job);
   if (job === undefined) throw breaks("rebuild job");
   return { outcome: "pending", job_id: jobId, job, scheduled };
+}
+
+/** The reasons of the contract's `FreeBytesReason`. */
+const FREE_BYTES_REASONS: readonly string[] = ["volume_unreadable", "not_local"];
+
+/** The free bytes of a volume and why they may be unknown, or undefined when malformed. */
+function freeSpace(
+  value: Record<string, unknown>,
+): Pick<LibraryFacts, "free_bytes" | "free_bytes_reason"> | undefined {
+  const { free_bytes: bytes, free_bytes_reason: reason } = value;
+  if (bytes !== null && !isCount(bytes)) return undefined;
+  if (reason !== null && !isOneOf<FreeBytesReason>(reason, FREE_BYTES_REASONS)) return undefined;
+  return { free_bytes: bytes, free_bytes_reason: reason };
+}
+
+/**
+ * Check a library's facts (API-S-038).
+ *
+ * @param value The parsed JSON answer of `GET /api/v1/libraries/{library}/facts`.
+ * @returns The facts, built again from the checked fields (never a path or location ID).
+ * @throws TypeError when a field is missing or of the wrong type.
+ */
+export function parseLibraryFacts(value: unknown): LibraryFacts {
+  if (!isRecord(value)) throw breaks("library facts");
+  const { library_id: id, name, revision } = value;
+  const space = freeSpace(value);
+  if (!isText(id) || !isText(name) || space === undefined) throw breaks("library facts");
+  if (revision !== null && !isText(revision)) throw breaks("library facts");
+  return { library_id: id, name, ...space, revision };
+}
+
+/** The most libraries the recent-libraries route lists (API-S-038). */
+export const MAX_RECENT_LIBRARIES = 20;
+
+/** One recent library, or undefined when malformed. */
+function recentLibrary(value: unknown): RecentLibrary | undefined {
+  if (!isRecord(value)) return undefined;
+  const { library_id: id, name, last_opened: opened, open } = value;
+  const space = freeSpace(value);
+  const named = isText(id) && isText(name) && isDateTime(opened);
+  if (!named || typeof open !== "boolean" || space === undefined) return undefined;
+  return { library_id: id, name, last_opened: opened, open, ...space };
+}
+
+/**
+ * Check the recent-libraries list (API-S-038).
+ *
+ * @param value The parsed JSON answer of `GET /api/v1/libraries/recent`.
+ * @returns The libraries, newest first, at most 20.
+ * @throws TypeError when the answer is not a list of at most 20 well-formed libraries.
+ */
+export function parseRecentLibraries(value: unknown): RecentLibraries {
+  if (!isRecord(value) || !Array.isArray(value.libraries)) throw breaks("recent libraries");
+  if (value.libraries.length > MAX_RECENT_LIBRARIES) throw breaks("recent libraries");
+  return { libraries: each(value.libraries, recentLibrary, "recent libraries") };
+}
+
+/**
+ * Check the collection a create-collection command made (UI-S-034).
+ *
+ * @param value The parsed JSON `result` of the committed outcome.
+ * @returns The collection's ID and title.
+ * @throws TypeError when either is missing.
+ */
+export function parseCollection(value: unknown): CollectionView {
+  if (!isRecord(value)) throw breaks("collection");
+  const { collection_id: id, title } = value;
+  if (!isText(id) || !isText(title)) throw breaks("collection");
+  return { collection_id: id, title };
 }
 
 /** The job states of the contract's `JobState`. */
@@ -178,6 +239,31 @@ function jobView(value: unknown): RebuildJobAnswer["job"] | undefined {
     ...(total === undefined ? {} : { total }),
     ...(code === undefined ? {} : { error_code: code }),
   };
+}
+
+/**
+ * Check one durable job (API-S-037), as the job routes and the `job.update` event show it.
+ *
+ * @param value The parsed JSON job view.
+ * @returns The job view, built again from its checked fields.
+ * @throws TypeError when the view breaks the contract.
+ */
+export function parseJobView(value: unknown): JobView {
+  const job = jobView(value);
+  if (job === undefined) throw breaks("job");
+  return job;
+}
+
+/**
+ * Check the answer of a job control route (API-S-037).
+ *
+ * @param value The parsed JSON answer of pause, resume or cancel.
+ * @returns The job and whether it was handed to its worker to run now.
+ * @throws TypeError when the job breaks the contract or `scheduled` is not a boolean.
+ */
+export function parseJobControl(value: unknown): JobControlAnswer {
+  if (!isRecord(value) || typeof value.scheduled !== "boolean") throw breaks("job control");
+  return { job: parseJobView(value.job), scheduled: value.scheduled };
 }
 
 /** An RFC 3339 date-time: full date, `T`, full time with optional fraction, `Z` or an offset. */
