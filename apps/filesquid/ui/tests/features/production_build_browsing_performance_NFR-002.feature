@@ -50,6 +50,8 @@ Feature: Production-build browsing performance
   # row misses the result gate (p95 about 120 to 135 ms against 100 ms) because the navigation tree draws every node of a level,
   # up to its cap of 10,000 nodes. The Playwright test names these records a known gap: its other assertions stay strict and it
   # turns red the day every one of the records holds, as the cue to remove the gap. The Small catalog meets the gate (p95 about 70 ms).
+  # Owner decision 2026-10-30, verbatim: "Okay implement all these recommendations": the tree is virtualised by Task UI-F3.4, which
+  # removes this known gap (see virtualised_navigation_tree_UI-S-035.feature); the cap of 10,000 nodes a level stays for the MVP.
 
   Scenario: A prepared image paints the correct image within 100 milliseconds
     Given a folder of 60 different 1280 x 720 images is open in the viewer with the file panel
@@ -79,6 +81,8 @@ Feature: Production-build browsing performance
       | grid   |
 
   # Edge cases
+  # The two limits below are provisional (owner decision 2026-10-30): no PRD requirement states them, and Task DE-F3.2 revisits
+  # them in the packaged macOS app. Every other limit of UI-S-035 is confirmed.
   Scenario: A twelve-megapixel original has its own limit
     Given a folder of six 4000 x 3000 JPEG originals is open in the viewer
     When I step through it 120 times after 20 warm-up steps
