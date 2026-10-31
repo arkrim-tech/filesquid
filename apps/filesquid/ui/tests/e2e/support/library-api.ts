@@ -11,7 +11,7 @@
  * than the request (409). It records every request, so a test can prove what was sent, and
  * what was not.
  */
-import type { Page } from "@playwright/test";
+import type { Page, WebSocketRoute } from "@playwright/test";
 import { FAMILY, serveNavigation } from "./navigation-api";
 
 /** The library the fake serves. */
@@ -52,9 +52,50 @@ export interface LibraryApi {
    * the facts of any other ID are 404 `not_found`.
    */
   libraries: Map<string, string | null>;
+  /** Each known library's name, last opened time and free bytes (API-S-038); defaults apply. */
+  meta: Map<string, LibraryMeta>;
+  /** Collections created, in order: `{ library, title }`. */
+  readonly collections: { library: string; title: string }[];
+  /** Make the next create-collection command refuse with this HTTP status. */
+  collectionRefusal?: number;
+  /** The rebuild job the job routes answer (UI-1.3); a test steers its state. */
+  job: JobState;
   /** Requests of one path, in order. */
   to(path: string): Seen[];
+  /** Push one event to every open event channel (for example `job.update`). */
+  push(topic: string, data: unknown): void;
 }
+
+/** What the fake knows of a library besides its revision (API-S-038). */
+export interface LibraryMeta {
+  readonly name: string;
+  /** RFC 3339 time. */
+  readonly lastOpened: string;
+  /** The free bytes of its volume, or null when it cannot be read. */
+  readonly freeBytes: number | null;
+}
+
+/** The rebuild job as the fake serves it (the fields of the contract's `JobView`). */
+export interface JobState {
+  state: "pending" | "running" | "completed" | "failed" | "cancelled";
+  paused: boolean;
+  control?: "pause" | "cancel";
+  done: number;
+  total?: number;
+  /** The report of a completed job. */
+  result: unknown;
+  errorCode?: string;
+}
+
+/** The job ID the fake serves. */
+export const JOB = "job-e2e-1";
+
+/** The meta of a library the fake does not know more about. */
+const UNKNOWN_META: LibraryMeta = {
+  name: "Untitled library",
+  lastOpened: "2026-10-31T08:00:00Z",
+  freeBytes: null,
+};
 
 /** An API error body. */
 const error = (code: string) => ({ code, message: "refused", retryable: code === "unavailable" });
@@ -73,23 +114,31 @@ function candidates(ids: string[]) {
   };
 }
 
+/** The job view of the fake's job (the contract's `JobView`); `result` only once completed. */
+function jobView(job: JobState, withResult = true) {
+  return {
+    id: JOB,
+    kind: "library.rebuild",
+    operation_id: "op-e2e-rebuild",
+    state: job.state,
+    paused: job.paused,
+    ...(job.control === undefined ? {} : { control: job.control }),
+    done: job.done,
+    ...(job.total === undefined ? {} : { total: job.total }),
+    attempts: 1,
+    ...(job.errorCode === undefined ? {} : { error_code: job.errorCode }),
+    created: "2026-10-31T10:41:09Z",
+    updated: "2026-10-31T10:42:09Z",
+    result: withResult && job.state === "completed" ? job.result : null,
+  };
+}
+
 /** The pending rebuild job a rebuild command answers (API-S-025). */
-function rebuildJob(operationId: string) {
+function rebuildJob(job: JobState) {
   return {
     outcome: "pending",
-    job_id: "job-e2e-1",
-    job: {
-      id: "job-e2e-1",
-      kind: "library.rebuild",
-      operation_id: operationId,
-      state: "pending",
-      paused: false,
-      done: 0,
-      attempts: 0,
-      created: "2026-10-29T12:00:00Z",
-      updated: "2026-10-29T12:00:00Z",
-      result: null,
-    },
+    job_id: JOB,
+    job: jobView({ ...job, state: "pending", paused: false, control: undefined }, false),
     scheduled: true,
   };
 }
@@ -100,6 +149,7 @@ const COMMAND_ROUTES = [
   "/api/v1/libraries/openings",
   "/api/v1/libraries/snapshot-copies",
   "/api/v1/libraries/rebuilds",
+  "/api/v1/libraries/collections",
 ];
 
 /** The envelope of a command body, or undefined when the body carries no valid one. */
@@ -161,24 +211,34 @@ async function serveShell(page: Page): Promise<void> {
       },
     }),
   );
-  await page.routeWebSocket(/\/api\/v1\/events$/, () => undefined);
+  await page.routeWebSocket(/\/api\/v1\/events$/, (ws) => void sockets.push(ws));
 }
 
+/** The open event channels of the fake's page. */
+const sockets: WebSocketRoute[] = [];
+
 /**
- * Serve the library routes and the shell's own routes.
+ * Serve the library routes, the job routes and the shell's own routes.
  *
  * @param page - The page under test.
  * @returns The record of requests and the switches that steer the answers.
  */
 export async function serveLibraries(page: Page): Promise<LibraryApi> {
+  sockets.length = 0;
   const api: LibraryApi = {
     seen: [],
     chooser: "chosen",
     needing: [...OBJECTS],
     libraries: new Map([[LIB, "1"]]),
+    meta: new Map(),
+    collections: [],
+    job: { state: "running", paused: false, done: 1204, total: 2418, result: null },
     to: (path) => api.seen.filter((request) => request.path === path),
+    push: (topic, data) =>
+      sockets.forEach((socket) => socket.send(JSON.stringify({ topic, data }))),
   };
   await serveShell(page);
+  await serveJobs(page, api);
   await page.route(/\/api\/v1\/libraries(\/|\?|$)/, async (route) => {
     const request = route.request();
     const url = new URL(request.url());
@@ -191,6 +251,44 @@ export async function serveLibraries(page: Page): Promise<LibraryApi> {
     await route.fulfill({ status: answer.status, json: answer.json });
   });
   return api;
+}
+
+/** The job routes (API-S-037): read one job, pause, resume and cancel it. */
+async function serveJobs(page: Page, api: LibraryApi): Promise<void> {
+  await page.route(/\/api\/v1\/jobs\/[^/?]+(\/(pause|resume|cancel))?$/, async (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    api.seen.push({ path: url.pathname, method: request.method(), body: request.postData() });
+    const control = /\/(pause|resume|cancel)$/.exec(url.pathname)?.[1];
+    if (control === undefined) {
+      return route.fulfill({ status: 200, json: jobView(api.job) });
+    }
+    if (control === "pause") api.job.paused = true;
+    if (control === "resume") api.job.paused = false;
+    if (control === "cancel") api.job.state = "cancelled";
+    return route.fulfill({
+      status: 200,
+      json: { job: jobView(api.job), scheduled: control === "resume" },
+    });
+  });
+}
+
+/** The meta of a library, or the defaults. */
+function metaOf(api: LibraryApi, id: string): LibraryMeta {
+  return api.meta.get(id) ?? UNKNOWN_META;
+}
+
+/** A recent library as `GET /api/v1/libraries/recent` lists it (API-S-038). */
+function recentEntry(api: LibraryApi, id: string, revision: string | null) {
+  const meta = metaOf(api, id);
+  return {
+    library_id: id,
+    name: meta.name,
+    last_opened: meta.lastOpened,
+    open: revision !== null,
+    free_bytes: meta.freeBytes,
+    free_bytes_reason: meta.freeBytes === null ? "volume_unreadable" : null,
+  };
 }
 
 /** `GET /api/v1/libraries/{library}/facts` (API-S-038). */
@@ -218,20 +316,34 @@ function factsAnswer(
   const id = decodeURIComponent(match[1] ?? "");
   const revision = api.libraries.get(id);
   if (revision === undefined) return { status: 404, json: error("not_found") };
+  const { name, freeBytes } = metaOf(api, id);
   const facts = {
     library_id: id,
-    name: "Untitled library",
-    free_bytes: null,
-    free_bytes_reason: "volume_unreadable",
+    name,
+    free_bytes: freeBytes,
+    free_bytes_reason: freeBytes === null ? "volume_unreadable" : null,
     revision,
   };
   return { status: 200, json: facts };
 }
 
 /** The method, required fields and optional fields of each route, as the contract defines them. */
-const ROUTE_SHAPES: Record<string, { method: string; required: string[]; optional: string[] }> = {
+const ROUTE_SHAPES: Record<
+  string,
+  { method: string; required: string[]; optional: string[]; query?: string[] }
+> = {
   "/api/v1/libraries/location-choices": { method: "POST", required: ["purpose"], optional: [] },
-  "/api/v1/libraries": { method: "POST", required: ["location_id"], optional: ["library_id"] },
+  "/api/v1/libraries": {
+    method: "POST",
+    required: ["location_id"],
+    optional: ["library_id", "name"],
+  },
+  "/api/v1/libraries/recent": { method: "GET", required: [], optional: [], query: [] },
+  "/api/v1/libraries/collections": {
+    method: "POST",
+    required: ["library_id", "title"],
+    optional: [],
+  },
   "/api/v1/libraries/openings": {
     method: "POST",
     required: ["location_id"],
@@ -271,7 +383,8 @@ function refusedShape(
   if (method !== shape.method) return { status: 405, json: error("method_not_allowed") };
   if (method === "GET") {
     const keys = [...url.searchParams.keys()];
-    const ok = keys.length === 1 && keys[0] === "library_id";
+    const wanted = shape.query ?? ["library_id"];
+    const ok = keys.length === wanted.length && keys.every((key) => wanted.includes(key));
     return ok ? undefined : { status: 400, json: error("invalid_request") };
   }
   const command = COMMAND_ROUTES.includes(url.pathname);
@@ -297,9 +410,14 @@ function answerFor(
   if (path.endsWith("/location-choices")) return choose(api, record);
   if (path.endsWith("/repair-candidates")) return ok(candidates(api.needing));
   if (path.endsWith("/repairs")) return repairAnswer(api, record);
+  if (path.endsWith("/recent")) {
+    const libraries = [...api.libraries].map(([id, revision]) => recentEntry(api, id, revision));
+    return ok({ libraries });
+  }
   const operation = envelopeOf(body)?.operation_id ?? "";
   const input = (record.input ?? {}) as Record<string, unknown>;
-  if (path.endsWith("/rebuilds")) return outcome(operation, "pending", rebuildJob(operation));
+  if (path.endsWith("/collections")) return collectionAnswer(api, operation, input);
+  if (path.endsWith("/rebuilds")) return outcome(operation, "pending", rebuildJob(api.job));
   if (path.endsWith("/snapshot-copies")) {
     return outcome(operation, "committed", {
       objects: 2,
@@ -310,12 +428,32 @@ function answerFor(
   }
   const libraryId = typeof input.library_id === "string" ? input.library_id : LIB;
   api.libraries.set(libraryId, "1");
+  if (typeof input.name === "string") {
+    api.meta.set(libraryId, { ...metaOf(api, libraryId), name: input.name });
+  }
   return outcome(operation, "committed", {
     library_id: libraryId,
     spec_version: "1.1",
     objects: 2,
     revision: "1",
   });
+}
+
+/** The create-collection command's answer: the collection made, or a scripted refusal. */
+function collectionAnswer(
+  api: LibraryApi,
+  operation: string,
+  input: Record<string, unknown>,
+): { status: number; json: unknown } {
+  const status = api.collectionRefusal;
+  if (status !== undefined) {
+    api.collectionRefusal = undefined;
+    return { status, json: error("internal") };
+  }
+  const library = String(input.library_id);
+  const title = String(input.title);
+  api.collections.push({ library, title });
+  return outcome(operation, "committed", { collection_id: "col-e2e-1", title });
 }
 
 /** The location-choices answer for the chooser's current mode. */

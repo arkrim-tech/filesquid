@@ -141,7 +141,13 @@ describe("ClientLibrarySource", () => {
   });
 
   it("reads a library's current revision from its facts, the initial one when it is not open", async () => {
-    const facts = { library_id: "lib 1", name: "n", free_bytes: null, revision: "4" };
+    const facts = {
+      library_id: "lib 1",
+      name: "n",
+      free_bytes: null,
+      free_bytes_reason: "volume_unreadable",
+      revision: "4",
+    };
     const open = setup(facts, 200, "none");
     await expect(open.source.revision("lib 1")).resolves.toBe("4");
     expect(open.seen).toEqual([
