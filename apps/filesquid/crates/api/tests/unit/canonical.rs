@@ -114,6 +114,7 @@ fn snapshot_file(id: &str, home: &str) -> SnapshotFile {
         },
         path: None,
         object_id: None,
+        removed_home_title: None,
     }
 }
 

@@ -2,7 +2,7 @@
 //!
 //! A cursor names the parent it was issued for (a short digest of the parent's handle, so one
 //! parent's cursor is refused at another), and the last position scanned: its kind rank (`library`, `collection`,
-//! `virtual_collection`, `folder`, the fixed order of the listing) and its key (the catalog's
+//! `virtual_collection`, `recently_deleted`, `folder`, the fixed order of the listing) and its key (the catalog's
 //! `order:id` for the first three, the folder's name for a folder). It is `c1.` and lowercase
 //! hex, and decodes only when it is exactly what [`Position::encode`] writes.
 
@@ -21,7 +21,9 @@ pub(crate) enum Rank {
     Library = 0,
     Collection = 1,
     VirtualCollection = 2,
-    Folder = 3,
+    /// The repository's one Recently deleted node, after its libraries.
+    RecentlyDeleted = 3,
+    Folder = 4,
 }
 
 impl Rank {
@@ -31,7 +33,8 @@ impl Rank {
             "0" => Some(Self::Library),
             "1" => Some(Self::Collection),
             "2" => Some(Self::VirtualCollection),
-            "3" => Some(Self::Folder),
+            "3" => Some(Self::RecentlyDeleted),
+            "4" => Some(Self::Folder),
             _ => None,
         }
     }

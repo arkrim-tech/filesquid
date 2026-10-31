@@ -61,6 +61,11 @@ pub struct SnapshotFile {
     /// entities written before Task DE-1.7.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub object_id: Option<String>,
+    /// The title its home collection had when that collection was deleted (Task API-F2.15,
+    /// ADR 041 Decision 8), so a rebuilt index still names it in Recently deleted; absent
+    /// while the home collection exists.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub removed_home_title: Option<String>,
 }
 
 impl SnapshotFile {

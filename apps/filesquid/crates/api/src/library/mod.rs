@@ -18,8 +18,11 @@
 //! - A repeated operation ID of a command that changed something answers its first outcome
 //!   without a second change; a command that changes nothing stores no receipt, so its retry
 //!   is planned again.
-//! - Deleting a collection or virtual collection keeps its files; removing a file from a
-//!   virtual collection keeps its collection and other memberships.
+//! - Deleting a collection deletes its files in place with it (ADR 041 Decision 8); deleting
+//!   a virtual collection keeps its files; removing a file from a virtual collection keeps
+//!   its collection and other memberships. No file is ever "unfiled".
+//! - A restore puts a file back in its object and logical path, in a new "untitled
+//!   collection" when its home collection is gone (ADR 041 Decision 9).
 //! - A deleted file is recoverable until its purge-after time, [`RECOVERABLE_DAYS`] days by
 //!   default; an earlier permanent deletion needs a [`PurgeConfirmation`] of the exact scope. Ordinary listings never show hidden or
 //!   deleted files.
@@ -43,6 +46,7 @@ mod plan;
 mod policy;
 mod query;
 mod service;
+mod settings;
 
 pub(crate) use announce::{navigation_parents, NavigationParents};
 pub use catalog::{
@@ -50,15 +54,17 @@ pub use catalog::{
     Keyed, LibraryCatalog, LibraryRecord, LibraryState, PageKey, COLLECTION_HOLDS_FILES,
 };
 pub use command::{
-    CommandRequest, CommandResult, LibraryCommand, MAX_EXPRESSION_BYTES, MAX_FILES_PER_COMMAND,
-    MAX_NAME_BYTES, NEW_LIBRARY_REVISION,
+    CommandRequest, CommandResult, LibraryCommand, RestoredInto, MAX_EXPRESSION_BYTES,
+    MAX_FILES_PER_COMMAND, MAX_NAME_BYTES, MAX_UNTITLED_TITLES, NEW_LIBRARY_REVISION,
+    UNTITLED_COLLECTION_TITLE,
 };
 pub use error::LibraryError;
 pub use ids::{is_uuid_v4, mint_uuid_v4};
 pub use memory::MemoryCatalog;
 pub use policy::{
-    Deletion, DeletionPolicy, FileState, PurgeConfirmation, VisibilityFilter, MAX_RETENTION_DAYS,
-    RECOVERABLE_DAYS,
+    is_retention, Deletion, DeletionCause, DeletionPolicy, ExpiryMode, FileState,
+    PurgeConfirmation, VisibilityFilter, MAX_RETENTION_DAYS, MIN_RETENTION_DAYS, RECOVERABLE_DAYS,
 };
 pub use query::{Cursor, LibraryQuery, Page, QueryAnswer, QueryRequest};
 pub use service::LibraryService;
+pub use settings::{InstallationSettings, MemorySettings, RetentionSettings, SETTINGS_OPERATION};

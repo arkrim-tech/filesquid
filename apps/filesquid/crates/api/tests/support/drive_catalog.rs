@@ -105,8 +105,9 @@ impl DriveCatalog {
         self.insert(file, id);
     }
 
-    /// Place `file` in no existing collection (an unfiled file).
-    pub fn unfiled_file(&self, file: &str) {
+    /// Place `file` in a collection outside this fixture's library view (a home the
+    /// fixture's collection does not hold).
+    pub fn outside_file(&self, file: &str) {
         self.insert(file, CollectionId::new("removed").expect("collection"));
     }
 
@@ -127,6 +128,7 @@ impl DriveCatalog {
             deletion: Some(Deletion {
                 deleted_at_ms: 1_000,
                 purge_after_ms: 2_000,
+                cause: Default::default(),
             }),
         };
         let change = CatalogChange::SetFileState {

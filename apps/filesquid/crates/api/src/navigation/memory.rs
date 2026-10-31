@@ -30,7 +30,6 @@ impl std::fmt::Debug for MemoryFolderIndex {
 fn key(scope: &FolderScope) -> String {
     match scope {
         FolderScope::Collection(id) => format!("c:{}", id.as_str()),
-        FolderScope::Unfiled(id) => format!("u:{}", id.as_str()),
     }
 }
 

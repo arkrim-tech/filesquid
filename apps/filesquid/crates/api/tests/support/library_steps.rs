@@ -132,13 +132,17 @@ fn library_lists(w: &mut MonitorWorld, count: usize) {
     );
 }
 
-#[then(expr = "the unfiled listing should show {int} files")]
-fn unfiled_lists(w: &mut MonitorWorld, count: usize) {
-    assert_eq!(
-        w.library
-            .count(FileScope::Unfiled, VisibilityFilter::Ordinary),
-        count
-    );
+#[then(expr = "no file should be listed outside its home collection")]
+fn no_file_outside_home(w: &mut MonitorWorld) {
+    let known: Vec<CollectionId> = w.library.collections.values().cloned().collect();
+    let fx = w.library.fx();
+    for id in fx.list_files(FileScope::Library, VisibilityFilter::Deleted) {
+        let entry = fx.catalog.file(&id).expect("read").expect("file");
+        assert!(
+            known.contains(entry.file.home_collection_id()),
+            "every deleted file keeps its home collection"
+        );
+    }
 }
 
 #[then(expr = "every deleted file should keep its home collection {string}")]

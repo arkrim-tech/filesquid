@@ -8,7 +8,8 @@
 //! The journal is filtered by actor before anything is kept, so another user's activity
 //! never shapes the caller's order (SRS-F-062).
 
-use super::drive::{FolderKind, FolderRow, MyTimes, ViewKind, MAX_VIEW_FILES};
+use super::drive::{DeletedRow, FolderKind, FolderRow, MyTimes, ViewKind, MAX_VIEW_FILES};
+use super::search_scope::MAX_SEARCH_LIBRARIES;
 use super::error::FileError;
 use super::nodes::file_error;
 use super::MAX_SIZE_OBJECTS;
@@ -18,8 +19,11 @@ use super::{
 };
 use crate::auth::Principal;
 use crate::journal::{JournalQuery, JournalStore, Outcome, MAX_PAGE};
+use crate::home::HomeCollections;
+use crate::journal::format_rfc3339_ms;
 use crate::library::{
-    CatalogError, FileListing, FileScope, Keyed, LibraryCatalog, PageKey, VisibilityFilter,
+    CatalogError, FileEntry, FileListing, FileScope, Keyed, LibraryCatalog, PageKey,
+    VisibilityFilter,
 };
 use crate::navigation::{NavigationService, NodeRef};
 use filesquid_core::{FileId, LibraryId};
@@ -52,57 +56,250 @@ const MODIFYING: [&str; 8] = [
 /// Operations that open a file: they set "opened by me".
 const OPENING: [&str; 2] = [crate::content::ISSUED_OPERATION, FILE_DOWNLOAD_OPERATION];
 
-/// The files and folder rows one view covers.
+/// The files of one library a view covers.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ViewScope {
-    /// The library the node belongs to.
+pub struct LibraryFiles {
+    /// The library.
     pub library_id: String,
     /// The files, in catalog order.
     pub files: Vec<FileId>,
+    /// For a deleted view, what Recently deleted shows of each deleted file, by file ID.
+    pub deleted: HashMap<String, DeletedRow>,
+}
+
+/// The files and folder rows one view covers: one library's files for a library, collection
+/// or virtual-collection node, or the deleted files of every readable library for the
+/// repository's Recently deleted node (ADR 041 Decision 8).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ViewScope {
+    /// The files, grouped by library, in catalog order.
+    pub libraries: Vec<LibraryFiles>,
     /// The folder rows.
     pub folders: Vec<FolderRow>,
     /// False when the node held more files or folders than the bounds.
     pub complete: bool,
 }
 
-/// The files and folder rows `view` of `node` covers for `principal`. May block.
+/// The files and folder rows `view` of `node` covers for `principal`. `home`, when the host
+/// keeps home collections, names each deleted file's folder. May block.
 ///
 /// # Errors
 /// `not_found` for a node that is unknown or unreadable; `invalid_request` for a node that is
-/// not a library, collection or virtual collection; `unavailable` or `internal` when the
-/// catalog fails.
+/// not a library, collection, virtual collection or the Recently deleted node;
+/// `unavailable` or `internal` when the catalog fails.
 pub fn view_scope(
     navigation: &NavigationService,
     principal: &Principal,
     node: &NodeRef,
     view: ViewKind,
+    home: Option<&dyn HomeCollections>,
 ) -> Result<ViewScope, FileError> {
     navigation
         .check_readable(principal, node)
         .map_err(file_error)?;
+    if let NodeRef::RecentlyDeleted(_) = node {
+        return recently_deleted_scope(navigation, principal, home);
+    }
     let catalog = navigation.catalog().as_ref();
-    let (library_id, scope) = file_scope(catalog, node, view)?;
-    let visibility = match view {
-        ViewKind::Deleted => VisibilityFilter::Deleted,
-        _ => VisibilityFilter::Ordinary,
+    let (library_id, scope) = file_scope(catalog, node)?;
+    let library_root = matches!(node, NodeRef::Library(_)) && view == ViewKind::All;
+    let (folders, folders_complete) = match library_root {
+        true => folder_rows(navigation, principal, &library_id)?,
+        false => (Vec::new(), true),
+    };
+    let deleted_view = view == ViewKind::Deleted;
+    let visibility = match deleted_view {
+        true => VisibilityFilter::Deleted,
+        false => VisibilityFilter::Ordinary,
     };
     let listing = FileListing {
         library_id: library_id.clone(),
         scope,
         visibility,
     };
-    let (files, files_complete) = list_files(catalog, &listing)?;
-    let library_root = matches!(node, NodeRef::Library(_)) && view == ViewKind::All;
-    let (folders, folders_complete) = match library_root {
-        true => folder_rows(navigation, principal, &library_id)?,
-        false => (Vec::new(), true),
+    // A library node's own files are its collections' files: its `all` view shows only its
+    // collections and virtual collections as folder rows (no file is ever unfiled).
+    let (entries, files_complete) = match library_root {
+        true => (Vec::new(), true),
+        false => list_files(catalog, &listing, MAX_VIEW_FILES)?,
     };
+    let library = library_files(catalog, &library_id, entries, deleted_view, home)?;
     Ok(ViewScope {
-        library_id: library_id.as_str().to_string(),
-        files,
+        libraries: vec![library],
         folders,
         complete: files_complete && folders_complete,
     })
+}
+
+/// The deleted files of every library of the repository that `principal` may read, at most
+/// [`MAX_VIEW_FILES`] in all and [`MAX_SEARCH_LIBRARIES`] libraries (Recently deleted, ADR 041
+/// Decision 8 as amended 2026-10-23). May block.
+fn recently_deleted_scope(
+    navigation: &NavigationService,
+    principal: &Principal,
+    home: Option<&dyn HomeCollections>,
+) -> Result<ViewScope, FileError> {
+    let catalog = navigation.catalog().as_ref();
+    let repository = navigation.repository_id();
+    let read = |after: Option<&PageKey>, limit| catalog.libraries(repository, after, limit);
+    let rows = read_bounded(read, MAX_SEARCH_LIBRARIES + 1)?;
+    let mut complete = rows.len() <= MAX_SEARCH_LIBRARIES;
+    let mut libraries = Vec::new();
+    let mut room = MAX_VIEW_FILES;
+    for row in rows.into_iter().take(MAX_SEARCH_LIBRARIES) {
+        let library_id = row.item.library.id().clone();
+        if !navigation.may_read(principal, &NodeRef::Library(library_id.clone())) {
+            continue;
+        }
+        let listing = FileListing {
+            library_id: library_id.clone(),
+            scope: FileScope::Library,
+            visibility: VisibilityFilter::Deleted,
+        };
+        let (entries, all) = list_files(catalog, &listing, room)?;
+        complete &= all;
+        room = room.saturating_sub(entries.len());
+        let readable = readable_entries(navigation, principal, entries);
+        libraries.push(library_files(catalog, &library_id, readable, true, home)?);
+        if room == 0 {
+            complete = false;
+            break;
+        }
+    }
+    Ok(ViewScope {
+        libraries,
+        folders: Vec::new(),
+        complete,
+    })
+}
+
+/// The entries whose home collection `principal` may read; a file whose home collection was
+/// deleted is guarded by its library, which the caller already may read.
+fn readable_entries(
+    navigation: &NavigationService,
+    principal: &Principal,
+    entries: Vec<FileEntry>,
+) -> Vec<FileEntry> {
+    entries
+        .into_iter()
+        .filter(|entry| {
+            entry.removed_home_title.is_some()
+                || navigation.may_read(
+                    principal,
+                    &NodeRef::Collection(entry.file.home_collection_id().clone()),
+                )
+        })
+        .collect()
+}
+
+/// The files of `entries` of `library_id`, with the Recently deleted facts of each deleted
+/// one when `deleted_view`. Reads the library's name and each home collection's title.
+fn library_files(
+    catalog: &dyn LibraryCatalog,
+    library_id: &LibraryId,
+    entries: Vec<FileEntry>,
+    deleted_view: bool,
+    home: Option<&dyn HomeCollections>,
+) -> Result<LibraryFiles, FileError> {
+    let mut deleted = HashMap::new();
+    if deleted_view && !entries.is_empty() {
+        let context = DeletedContext::read(catalog, library_id, home)?;
+        for entry in &entries {
+            if let Some(row) = context.row(entry)? {
+                deleted.insert(entry.file.id().as_str().to_string(), row);
+            }
+        }
+    }
+    Ok(LibraryFiles {
+        library_id: library_id.as_str().to_string(),
+        files: entries.into_iter().map(|e| e.file.id().clone()).collect(),
+        deleted,
+    })
+}
+
+/// What the Recently deleted facts of one library's files are read from.
+struct DeletedContext<'a> {
+    /// The catalog, for home collection titles.
+    catalog: &'a dyn LibraryCatalog,
+    /// The library.
+    library_id: LibraryId,
+    /// Its name.
+    library_name: String,
+    /// The host's home collections, for each file's folder.
+    home: Option<&'a dyn HomeCollections>,
+    /// Day count from now, for days left.
+    now_ms: i64,
+}
+
+impl<'a> DeletedContext<'a> {
+    /// The context of `library_id`. Reads the library record.
+    fn read(
+        catalog: &'a dyn LibraryCatalog,
+        library_id: &LibraryId,
+        home: Option<&'a dyn HomeCollections>,
+    ) -> Result<Self, FileError> {
+        let state = catalog
+            .library(library_id)
+            .map_err(catalog_error)?
+            .ok_or_else(FileError::not_found)?;
+        Ok(Self {
+            catalog,
+            library_id: library_id.clone(),
+            library_name: state.record.name,
+            home,
+            now_ms: crate::journal::now_ms(),
+        })
+    }
+
+    /// The Recently deleted row facts of `entry`, or `None` when it is not deleted.
+    fn row(&self, entry: &FileEntry) -> Result<Option<DeletedRow>, FileError> {
+        let Some(deletion) = entry.state.deletion else {
+            return Ok(None);
+        };
+        let home_id = entry.file.home_collection_id();
+        let live = self
+            .catalog
+            .collection(home_id)
+            .map_err(catalog_error)?
+            .filter(|c| c.library_id() == &self.library_id)
+            .map(|c| c.title().to_string());
+        let folder = match self.home {
+            Some(home) => home
+                .placement(&self.library_id, entry.file.id())
+                .map_err(catalog_error)?
+                .and_then(|(_, path)| folder_of(&path)),
+            None => None,
+        };
+        Ok(Some(DeletedRow {
+            library_id: self.library_id.as_str().to_string(),
+            library_name: self.library_name.clone(),
+            deleted_at: format_rfc3339_ms(deletion.deleted_at_ms),
+            purge_after: format_rfc3339_ms(deletion.purge_after_ms),
+            days_left: days_left(deletion.purge_after_ms, self.now_ms),
+            cause: deletion.cause,
+            home_collection_id: home_id.as_str().to_string(),
+            home_collection_deleted: live.is_none(),
+            home_collection_title: live.or_else(|| entry.removed_home_title.clone()),
+            folder,
+        }))
+    }
+}
+
+/// The folder part of a collection logical path, `None` at the collection's root. Pure.
+fn folder_of(path: &str) -> Option<String> {
+    path.rsplit_once('/').map(|(folder, _)| folder.to_string())
+}
+
+/// Whole days left from `now_ms` until `purge_after_ms`, counting a part day as a day; `0`
+/// once it is due (a file of a library that was closed at its time is expired by the next
+/// run after the library is opened). Pure.
+pub fn days_left(purge_after_ms: i64, now_ms: i64) -> i64 {
+    const DAY_MS: i64 = 86_400_000;
+    let left = purge_after_ms.saturating_sub(now_ms);
+    match left > 0 {
+        true => left.saturating_add(DAY_MS - 1) / DAY_MS,
+        false => 0,
+    }
 }
 
 /// The files whose home is the collection `node`, hidden and deleted ones included, at most
@@ -121,7 +318,7 @@ pub fn collection_files(
         .check_readable(principal, node)
         .map_err(file_error)?;
     let catalog = navigation.catalog().as_ref();
-    let (library_id, scope) = file_scope(catalog, node, ViewKind::All)?;
+    let (library_id, scope) = file_scope(catalog, node)?;
     let mut files = Vec::new();
     let mut complete = true;
     for visibility in [
@@ -211,20 +408,13 @@ fn record_time(
     *slot = Some(slot.map_or(time, |kept| kept.max(time)));
 }
 
-/// The library of `node` and the catalog scope `view` lists there.
+/// The library of `node` and the catalog scope it lists.
 fn file_scope(
     catalog: &dyn LibraryCatalog,
     node: &NodeRef,
-    view: ViewKind,
 ) -> Result<(LibraryId, FileScope), FileError> {
     match node {
-        NodeRef::Library(id) => {
-            let scope = match view {
-                ViewKind::All => FileScope::Unfiled,
-                _ => FileScope::Library,
-            };
-            Ok((id.clone(), scope))
-        }
+        NodeRef::Library(id) => Ok((id.clone(), FileScope::Library)),
         NodeRef::Collection(id) => {
             let collection = catalog
                 .collection(id)
@@ -251,18 +441,19 @@ fn file_scope(
     }
 }
 
-/// The files of `listing`, at most [`MAX_VIEW_FILES`], and whether that was all of them.
+/// The entries of `listing`, at most `bound`, and whether that was all of them.
 fn list_files(
     catalog: &dyn LibraryCatalog,
     listing: &FileListing,
-) -> Result<(Vec<FileId>, bool), FileError> {
+    bound: usize,
+) -> Result<(Vec<FileEntry>, bool), FileError> {
     let read = |after: Option<&PageKey>, limit| catalog.files(listing, after, limit);
-    let entries = read_bounded(read, MAX_VIEW_FILES + 1)?;
-    let complete = entries.len() <= MAX_VIEW_FILES;
+    let entries = read_bounded(read, bound + 1)?;
+    let complete = entries.len() <= bound;
     let files = entries
         .into_iter()
-        .take(MAX_VIEW_FILES)
-        .map(|keyed| keyed.item.file.id().clone())
+        .take(bound)
+        .map(|keyed| keyed.item)
         .collect();
     Ok((files, complete))
 }

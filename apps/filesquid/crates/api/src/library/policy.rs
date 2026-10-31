@@ -15,9 +15,18 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 /// 30 days (owner decision 2026-10-22, ADR 041 Decision 10).
 pub const RECOVERABLE_DAYS: u32 = 30;
 
-/// Longest retention period a library may set, in days; the shortest is 1 (ADR 041
-/// Decision 10, proposed bounds).
+/// Longest retention period a library may set, in days; the shortest is
+/// [`MIN_RETENTION_DAYS`] (ADR 041 Decision 10, proposed bounds).
 pub const MAX_RETENTION_DAYS: u32 = 3_650;
+
+/// Shortest retention period, in days (ADR 041 Decision 10, proposed bounds).
+pub const MIN_RETENTION_DAYS: u32 = 1;
+
+/// Whether `days` is a retention period FileSquid accepts: a whole number of days from
+/// [`MIN_RETENTION_DAYS`] to [`MAX_RETENTION_DAYS`]. Pure.
+pub fn is_retention(days: u32) -> bool {
+    (MIN_RETENTION_DAYS..=MAX_RETENTION_DAYS).contains(&days)
+}
 
 /// Milliseconds in one day.
 const DAY_MS: i64 = 86_400_000;
@@ -46,6 +55,57 @@ impl DeletionPolicy {
         Deletion {
             deleted_at_ms,
             purge_after_ms: deleted_at_ms.saturating_add(span),
+            cause: DeletionCause::OneByOne,
+        }
+    }
+}
+
+/// How a file entered the deleted state (ADR 041 Decision 8; the Recently deleted view's
+/// "How" column, mockup 16).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DeletionCause {
+    /// Deleted on its own (a file delete command).
+    #[default]
+    OneByOne,
+    /// Deleted when its home collection was deleted.
+    WithCollection,
+}
+
+impl DeletionCause {
+    /// Whether this is the default cause, which the stored form leaves out. Pure.
+    pub fn is_one_by_one(&self) -> bool {
+        *self == Self::OneByOne
+    }
+
+    /// The cause's wire name. Pure.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::OneByOne => "one_by_one",
+            Self::WithCollection => "with_collection",
+        }
+    }
+}
+
+/// What expiry does to a deleted file's OCFL object when its retention ends (ADR 041
+/// Decision 11): one installation setting that only the admin changes.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExpiryMode {
+    /// The default: the object is rewritten as a tombstone that keeps only its version
+    /// history, its PROV-O records and a purge record.
+    #[default]
+    KeepVersionHistory,
+    /// The object, its index entries and its metadata record are deleted for good.
+    DeleteAllVersionHistory,
+}
+
+impl ExpiryMode {
+    /// The setting's wire name. Pure.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::KeepVersionHistory => "keep_version_history",
+            Self::DeleteAllVersionHistory => "delete_all_version_history",
         }
     }
 }
@@ -62,6 +122,20 @@ pub struct Deletion {
     /// the file before this time.
     #[serde(rename = "purge_after", with = "rfc3339")]
     pub purge_after_ms: i64,
+    /// Whether the file was deleted on its own or with its home collection. Left out of the
+    /// stored form when it is [`DeletionCause::OneByOne`], so earlier records read unchanged.
+    #[serde(default, skip_serializing_if = "DeletionCause::is_one_by_one")]
+    pub cause: DeletionCause,
+}
+
+impl Deletion {
+    /// The same deletion, made by deleting the file's home collection. Pure.
+    pub fn with_collection(self) -> Self {
+        Self {
+            cause: DeletionCause::WithCollection,
+            ..self
+        }
+    }
 }
 
 /// Hide and delete state of one file.

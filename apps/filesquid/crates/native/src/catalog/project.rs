@@ -234,12 +234,14 @@ fn snapshot_file(
         state: keyed.item.state,
         path,
         object_id,
+        removed_home_title: keyed.item.removed_home_title,
     }))
 }
 
 /// The files `changes` delete with their collection: every file of a collection that a
-/// [`CatalogChange::DeleteCollectionFiles`] names and that is not deleted yet, read before the
-/// change applies, so their entities join the commit's version. Database I/O.
+/// [`CatalogChange::DeleteCollectionFiles`] names (each keeps the collection's title, and those
+/// not deleted yet are deleted), read before the change applies, so their entities join the
+/// commit's version. Database I/O.
 pub(crate) fn collection_deletions(
     conn: &Connection,
     changes: &[CatalogChange],
@@ -247,8 +249,7 @@ pub(crate) fn collection_deletions(
     let mut keys = Vec::new();
     let mut stmt = conn
         .prepare(
-            "SELECT id FROM files WHERE home_collection_id = ?1 AND deleted_at_ms IS NULL
-             ORDER BY id LIMIT ?2",
+            "SELECT id FROM files WHERE home_collection_id = ?1 ORDER BY id LIMIT ?2",
         )
         .map_err(sql)?;
     let limit = i64::try_from(MAX_ENTITIES).unwrap_or(i64::MAX);

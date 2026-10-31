@@ -760,9 +760,10 @@ fn command_samples() -> Vec<(&'static str, Vec<Value>)> {
 fn drive_samples() -> Vec<(&'static str, Vec<Value>)> {
     use filesquid_api::files::copy::{CopyRequest, CopyView};
     use filesquid_api::files::drive::{
-        FileRow, FolderKind, FolderRow, ViewKind, ViewPage, ViewRow,
+        DeletedRow, FileRow, FolderKind, FolderRow, ViewKind, ViewPage, ViewRow,
     };
     use filesquid_api::files::CollectionHistorySizeView;
+    use filesquid_api::library::DeletionCause;
     use filesquid_api::preferences::{FolderPlacement, SortDirection, SortKey};
     let request = CopyRequest {
         library_id: LIBRARY.into(),
@@ -796,11 +797,28 @@ fn drive_samples() -> Vec<(&'static str, Vec<Value>)> {
         modified: "2026-10-20T00:00:00.000Z".into(),
         modified_by_me: mine.clone(),
         opened_by_me: mine,
+        deleted: None,
+    };
+    let deleted = FileRow {
+        deleted: Some(DeletedRow {
+            library_id: LIBRARY.into(),
+            library_name: "Family archive".into(),
+            deleted_at: "2026-10-20T00:00:00.000Z".into(),
+            purge_after: "2026-11-19T00:00:00.000Z".into(),
+            days_left: 30,
+            cause: DeletionCause::WithCollection,
+            home_collection_id: "c0ffee00-1234-4abc-8def-0123456789ab".into(),
+            home_collection_title: Some("Site visits".into()),
+            home_collection_deleted: true,
+            folder: Some("2026/October".into()),
+        }),
+        ..file(None)
     };
     let rows = vec![
         ViewRow::Folder(folder.clone()),
         ViewRow::File(file(Some("2026-10-20T01:00:00.000Z".into()))),
         ViewRow::File(file(None)),
+        ViewRow::File(deleted),
     ];
     let page = |next: Option<String>, complete| ViewPage {
         node: "n1.abc".into(),

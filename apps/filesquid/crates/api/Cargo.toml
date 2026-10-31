@@ -275,3 +275,7 @@ path = "tests/unit/canonical.rs"
 [[test]]
 name = "unit_collection_path"
 path = "tests/unit/collection_path.rs"
+
+[[test]]
+name = "unit_recently_deleted"
+path = "tests/unit/recently_deleted.rs"

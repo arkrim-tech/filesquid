@@ -124,7 +124,7 @@ impl PinnedDestination {
             Some(NodeRef::Collection(_)) => PinKind::Collection,
             Some(NodeRef::VirtualCollection(_)) => PinKind::VirtualCollection,
             Some(NodeRef::Folder { .. }) => PinKind::Folder,
-            None => return false,
+            Some(NodeRef::RecentlyDeleted(_)) | None => return false,
         };
         named == self.kind
     }

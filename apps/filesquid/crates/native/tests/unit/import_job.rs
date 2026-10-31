@@ -981,6 +981,7 @@ async fn a_deleted_file_s_path_counts_as_taken() {
     let deletion = filesquid_api::library::Deletion {
         deleted_at_ms: 1_792_281_600_000,
         purge_after_ms: 1_792_281_600_000 + 30 * 86_400_000,
+        cause: Default::default(),
     };
     let delete = CatalogCommit {
         operation_id: OperationId::new("op-delete").expect("op"),

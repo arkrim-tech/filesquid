@@ -129,10 +129,10 @@ async fn files_in_collection(
     }
 }
 
-#[given(expr = "the unfiled file {string}")]
+#[given(expr = "the file {string} of another collection")]
 async fn unfiled(w: &mut MonitorWorld, name: String) {
     let id = w.view.upload(&name, b"z").await;
-    w.view.drive().unfiled_file(&id);
+    w.view.drive().outside_file(&id);
 }
 
 #[given(expr = "{string} and {string} are in {string}")]

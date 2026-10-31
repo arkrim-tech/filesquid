@@ -135,6 +135,8 @@ pub fn touched(change: &CatalogChange) -> Vec<SnapshotKey> {
         CatalogChange::RemoveCollection(id) => SnapshotKey::Collection(id.clone()),
         // Only its files' entities change; only the catalog knows them, so it adds them.
         CatalogChange::DeleteCollectionFiles { .. } => return vec![SnapshotKey::Library],
+        CatalogChange::RehomeFile { file_id, .. } => SnapshotKey::File(file_id.clone()),
+        CatalogChange::SetRetention(_) => return vec![SnapshotKey::Library],
         CatalogChange::PutVirtualCollection(v) => SnapshotKey::VirtualCollection(v.id().clone()),
         CatalogChange::RemoveVirtualCollection(id) => SnapshotKey::VirtualCollection(id.clone()),
         CatalogChange::AddVirtualMember(m) => {

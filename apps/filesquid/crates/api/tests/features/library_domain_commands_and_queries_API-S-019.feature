@@ -18,7 +18,7 @@ Feature: Library domain commands and queries
     Then the ordinary listing should show 0 files
     And the deleted view should show 2 files
     And every deleted file should keep its home collection "Trips"
-    And the unfiled listing should show 0 files
+    And no file should be listed outside its home collection
 
   Scenario: Deleting a collection keeps the times of a file already deleted
     Given a library with a collection "Trips" holding 2 files

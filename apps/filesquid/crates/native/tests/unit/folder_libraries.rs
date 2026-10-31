@@ -163,6 +163,9 @@ fn a_version_2_catalog_is_migrated_to_the_current_version_and_rebuilt_from_its_f
              ALTER TABLE files DROP COLUMN dir_key; ALTER TABLE files DROP COLUMN name;
              ALTER TABLE library DROP COLUMN retention_days;
              ALTER TABLE library DROP COLUMN folder_identity;
+             ALTER TABLE files DROP COLUMN deletion_cause;
+             ALTER TABLE files DROP COLUMN removed_home_title;
+             ALTER TABLE receipts DROP COLUMN deletion_cause; DROP TABLE pending_purges;
              PRAGMA user_version = 2;",
         )
         .expect("downgrade to v2");
@@ -176,7 +179,7 @@ fn a_version_2_catalog_is_migrated_to_the_current_version_and_rebuilt_from_its_f
         .query_row("PRAGMA user_version", [], |r| r.get(0))
         .expect("version");
     assert_eq!(version, CATALOG_SCHEMA_VERSION);
-    assert_eq!(CATALOG_SCHEMA_VERSION, 4);
+    assert_eq!(CATALOG_SCHEMA_VERSION, 5);
     let (path, object): (String, String) = conn
         .query_row(
             "SELECT path, object_id FROM files WHERE id = ?1",
@@ -1047,12 +1050,10 @@ fn files_deleted_with_their_collection_are_deleted_not_unfiled() {
             .map(|keyed| keyed.item.file.id().clone())
             .collect()
     };
-    for visibility in [VisibilityFilter::Ordinary, VisibilityFilter::Deleted] {
-        assert!(
-            listed(FileScope::Unfiled, visibility).is_empty(),
-            "{visibility:?}"
-        );
-    }
+    assert!(
+        listed(FileScope::Library, VisibilityFilter::Ordinary).is_empty(),
+        "no file is ever unfiled"
+    );
     assert_eq!(
         listed(FileScope::Library, VisibilityFilter::Deleted),
         [file]
@@ -1190,6 +1191,7 @@ fn a_relocation_into_a_removed_collection_is_collection_not_found_even_at_its_ow
     let deletion = filesquid_api::library::Deletion {
         deleted_at_ms: 1_000,
         purge_after_ms: 2_000,
+        cause: Default::default(),
     };
     let removal = CatalogCommit {
         operation_id: fx.op(),
@@ -1199,6 +1201,7 @@ fn a_relocation_into_a_removed_collection_is_collection_not_found_even_at_its_ow
             CatalogChange::DeleteCollectionFiles {
                 collection_id: trips.clone(),
                 deletion,
+                title: "Trips".into(),
             },
             CatalogChange::RemoveCollection(trips.clone()),
         ],

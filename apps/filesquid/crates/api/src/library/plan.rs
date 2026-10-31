@@ -9,7 +9,10 @@
 use super::catalog::{
     CatalogChange, FileEntry, FileListing, FileScope, LibraryCatalog, LibraryRecord,
 };
-use super::command::{LibraryCommand, NEW_LIBRARY_REVISION};
+use super::command::{
+    LibraryCommand, RestoredInto, MAX_UNTITLED_TITLES, NEW_LIBRARY_REVISION,
+    UNTITLED_COLLECTION_TITLE,
+};
 use super::ids::mint_uuid_v4;
 use super::policy::{Deletion, DeletionPolicy, FileState, PurgeConfirmation, VisibilityFilter};
 use super::LibraryError;
@@ -20,6 +23,15 @@ use filesquid_core::{
 };
 use serde::de::DeserializeOwned;
 use serde::Serialize;
+use std::collections::{BTreeMap, HashSet};
+
+/// Most collections of one library a restore reads for the titles already taken. A library
+/// with more is read up to here only (AGENTS.md §22); a title past the bound may then be
+/// used twice, which titles allow.
+const MAX_TITLE_SCAN: usize = 100_000;
+
+/// Collections read per page of that scan.
+const TITLE_PAGE: usize = 1_000;
 
 /// The changes one command makes, and what it answers.
 #[derive(Debug, Default)]
@@ -35,6 +47,8 @@ pub(super) struct Planned {
     /// The deletion record of the files a recoverable deletion newly deletes; files already
     /// deleted keep their earlier record.
     pub deletion: Option<Deletion>,
+    /// The collections a restore creates for files whose home collection is gone.
+    pub restored_into: Vec<RestoredInto>,
 }
 
 /// Plans commands against committed catalog state at one instant.
@@ -64,6 +78,15 @@ impl Planner<'_> {
         }
         let library_id = command.library_id().ok_or(LibraryError::Internal)?;
         let retention = self.check_revision(library_id, expected)?;
+        if let LibraryCommand::SetLibraryRetention { retention_days, .. } = command {
+            let changes = (*retention_days != retention)
+                .then_some(CatalogChange::SetRetention(*retention_days))
+                .into_iter()
+                .collect();
+            let mut planned = planned(changes, [library_id.as_str()]);
+            planned.library_id = Some(library_id.clone());
+            return Ok(planned);
+        }
         let policy = match retention {
             Some(recoverable_days) => DeletionPolicy { recoverable_days },
             None => self.policy,
@@ -142,6 +165,7 @@ impl Planner<'_> {
                 confirmation,
                 ..
             } => self.purge(lib, file_ids, confirmation),
+            C::RestoreFiles { file_ids, .. } => self.restore(lib, file_ids),
             other => self.change_states(lib, other, policy),
         }
     }
@@ -234,9 +258,11 @@ impl Planner<'_> {
     }
 
     /// Delete a collection of `lib` and, in the same commit, every one of its files that is
-    /// not already deleted, as `policy` deletes a file (owner decisions 2026-10-22, ADR 041
-    /// Decision 8); a collection without such a file is only removed. A file registered after
-    /// this plan makes the catalog refuse the removal rather than leave it undeleted. Nothing is moved: each file keeps its home collection and logical path. The
+    /// not already deleted, as `policy` deletes a file but with the cause "with its
+    /// collection" (owner decisions 2026-10-22, ADR 041 Decision 8); every file of the
+    /// collection keeps its title. A collection without files is only removed. A file
+    /// registered after this plan makes the catalog refuse the removal rather than leave it
+    /// undeleted. Nothing is moved: each file keeps its home collection and logical path. The
     /// answer carries the deletion times when the collection held a file that was not deleted.
     fn delete_collection(
         &self,
@@ -244,12 +270,14 @@ impl Planner<'_> {
         id: &CollectionId,
         policy: DeletionPolicy,
     ) -> Result<Planned, LibraryError> {
-        self.collection_in(lib, id)?;
-        let deletion = policy.deletion_at(self.now_ms);
-        let holds = self.holds_undeleted(lib, id)?;
-        let files = holds.then(|| CatalogChange::DeleteCollectionFiles {
+        let collection = self.collection_in(lib, id)?;
+        let deletion = policy.deletion_at(self.now_ms).with_collection();
+        let holds = self.holds(lib, id, &[VisibilityFilter::Ordinary, VisibilityFilter::Hidden])?;
+        let any = holds || self.holds(lib, id, &[VisibilityFilter::Deleted])?;
+        let files = any.then(|| CatalogChange::DeleteCollectionFiles {
             collection_id: id.clone(),
             deletion,
+            title: collection.title().to_string(),
         });
         let changes = files
             .into_iter()
@@ -260,22 +288,129 @@ impl Planner<'_> {
         Ok(out)
     }
 
-    /// Whether the collection `id` of `lib` holds a file that is not deleted (ordinary or
-    /// hidden): one bounded page of each view.
-    fn holds_undeleted(&self, lib: &LibraryId, id: &CollectionId) -> Result<bool, LibraryError> {
-        for visibility in [VisibilityFilter::Ordinary, VisibilityFilter::Hidden] {
+    /// Whether the collection `id` of `lib` holds a file in one of `views`: one bounded page
+    /// of each.
+    fn holds(
+        &self,
+        lib: &LibraryId,
+        id: &CollectionId,
+        views: &[VisibilityFilter],
+    ) -> Result<bool, LibraryError> {
+        for visibility in views {
             let listing = FileListing {
                 library_id: lib.clone(),
                 scope: FileScope::Collection {
                     collection_id: id.clone(),
                 },
-                visibility,
+                visibility: *visibility,
             };
             if !self.catalog.files(&listing, None, 1)?.is_empty() {
                 return Ok(true);
             }
         }
         Ok(false)
+    }
+
+    /// Restore recoverably deleted files of `lib` into their own object and logical path:
+    /// in their home collection when it exists, else into one new "untitled collection" per
+    /// gone home collection, all in one commit (ADR 041 Decision 9). A file that is not
+    /// deleted changes nothing; a hidden file stays hidden.
+    fn restore(&self, lib: &LibraryId, file_ids: &[FileId]) -> Result<Planned, LibraryError> {
+        let mut changes = Vec::new();
+        let mut gone: BTreeMap<String, Vec<FileId>> = BTreeMap::new();
+        let mut gone_order: Vec<CollectionId> = Vec::new();
+        for file_id in file_ids {
+            let entry = self.file_in(lib, file_id)?;
+            if entry.state.deletion.is_none() {
+                continue;
+            }
+            let home = entry.file.home_collection_id().clone();
+            let exists = self.catalog.collection(&home)?.is_some_and(|c| c.library_id() == lib);
+            if !exists {
+                let group = gone.entry(home.as_str().to_string()).or_default();
+                if group.is_empty() {
+                    gone_order.push(home);
+                }
+                group.push(file_id.clone());
+            }
+            let state = FileState {
+                deletion: None,
+                ..entry.state
+            };
+            changes.push(CatalogChange::SetFileState {
+                file_id: file_id.clone(),
+                state,
+            });
+        }
+        let made = self.untitled_collections(lib, &gone_order)?;
+        let mut out = planned_files(Vec::new(), None, file_ids);
+        for (from, collection) in gone_order.iter().zip(made) {
+            let new_id = collection.id().clone();
+            out.targets.push(new_id.as_str().to_string());
+            out.restored_into.push(RestoredInto {
+                from_collection_id: from.clone(),
+                collection_id: new_id.clone(),
+                title: collection.title().to_string(),
+            });
+            out.changes.push(CatalogChange::PutCollection(collection));
+            for file_id in gone.get(from.as_str()).into_iter().flatten() {
+                out.changes.push(CatalogChange::RehomeFile {
+                    file_id: file_id.clone(),
+                    collection_id: new_id.clone(),
+                });
+            }
+        }
+        out.changes.extend(changes);
+        Ok(out)
+    }
+
+    /// One new collection of `lib` for each of `count` gone home collections, titled with the
+    /// first free "untitled collection" titles in order.
+    ///
+    /// # Errors
+    /// `restore_name_exhausted` (`409 conflict`) when the 9,999 titles run out.
+    fn untitled_collections(
+        &self,
+        lib: &LibraryId,
+        gone: &[CollectionId],
+    ) -> Result<Vec<Collection>, LibraryError> {
+        if gone.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut taken = self.collection_titles(lib)?;
+        let mut made = Vec::with_capacity(gone.len());
+        for _ in gone {
+            let title = first_untitled(&taken).ok_or(LibraryError::Refused {
+                code: "restore_name_exhausted",
+                message: "Every untitled collection name is taken. Rename or delete one, then restore again.",
+            })?;
+            taken.insert(title.clone());
+            let id = mint_uuid_v4()?;
+            let collection_id = CollectionId::new(id).map_err(|_| LibraryError::Internal)?;
+            let collection = Collection::new(collection_id, lib.clone(), title)
+                .map_err(|_| LibraryError::Internal)?;
+            made.push(collection);
+        }
+        Ok(made)
+    }
+
+    /// The titles of the collections of `lib`, read page by page up to [`MAX_TITLE_SCAN`].
+    fn collection_titles(&self, lib: &LibraryId) -> Result<HashSet<String>, LibraryError> {
+        let mut titles = HashSet::new();
+        let mut after: Option<super::catalog::PageKey> = None;
+        for _ in 0..MAX_TITLE_SCAN / TITLE_PAGE {
+            let page = self.catalog.collections(lib, after.as_ref(), TITLE_PAGE)?;
+            let full = page.len() == TITLE_PAGE;
+            for keyed in page {
+                titles.insert(keyed.item.title().to_string());
+                after = Some(keyed.key);
+            }
+            if !full {
+                return Ok(titles);
+            }
+        }
+        tracing::info!(target: super::LOG_TARGET, "collection title scan stopped at its bound");
+        Ok(titles)
     }
 
     /// Rename a virtual collection of `lib`; the same title changes nothing.
@@ -417,13 +552,20 @@ fn state_transition(
             deletion: s.deletion.or(Some(deletion)),
             ..s
         }),
-        LibraryCommand::RestoreFiles { .. } => Box::new(|s| FileState {
-            deletion: None,
-            ..s
-        }),
         _ => return Err(LibraryError::Internal),
     };
     Ok(next)
+}
+
+/// The first "untitled collection" title that `taken` does not hold: the plain title, then
+/// "untitled collection 2" and so on, at most [`MAX_UNTITLED_TITLES`] tries. Pure.
+fn first_untitled(taken: &HashSet<String>) -> Option<String> {
+    (1..=MAX_UNTITLED_TITLES)
+        .map(|n| match n {
+            1 => UNTITLED_COLLECTION_TITLE.to_string(),
+            n => format!("{UNTITLED_COLLECTION_TITLE} {n}"),
+        })
+        .find(|title| !taken.contains(title))
 }
 
 /// Plan a new library on `repository_id`; the expected revision must be

@@ -226,6 +226,7 @@ impl Desktop {
         let nodes = page["nodes"].as_array().expect("nodes");
         nodes
             .iter()
+            .filter(|n| n["kind"] == "library")
             .map(|n| n["name"].as_str().expect("name").to_string())
             .collect()
     }
@@ -509,14 +510,24 @@ fn the_navigation_lists_the_installations_repository_and_its_libraries() {
     let repository = nodes[0]["node"].as_str().expect("handle").to_string();
     let (status, page) = desktop.get(&format!("/api/v1/navigation?node={repository}"));
     assert_eq!(status, 200, "{page}");
-    let libraries = page["nodes"].as_array().expect("nodes");
+    let libraries: Vec<&serde_json::Value> = page["nodes"]
+        .as_array()
+        .expect("nodes")
+        .iter()
+        .filter(|n| n["kind"] == "library")
+        .collect();
     assert_eq!(libraries.len(), 1, "the repository's library: {page}");
+    assert_eq!(
+        page["nodes"].as_array().expect("nodes").last().expect("node")["kind"],
+        "recently_deleted",
+        "then its one Recently deleted node: {page}"
+    );
     assert_eq!(libraries[0]["name"], UNTITLED_LIBRARY, "{page}");
     let repository = nodes[0]["node"].as_str().expect("handle").to_string();
     let (status, page) = desktop.get(&format!("/api/v1/navigation?node={repository}"));
     assert_eq!(status, 200, "{page}");
     let libraries = page["nodes"].as_array().expect("nodes");
-    assert_eq!(libraries.len(), 1, "{page}");
+    assert_eq!(libraries.len(), 2, "the library, then Recently deleted: {page}");
     assert_eq!(libraries[0]["name"], UNTITLED_LIBRARY, "{page}");
     assert!(page.to_string().contains(&library) || libraries[0]["node"].is_string());
     let filter = owner_event_filter(&desktop.state).expect("filter");
