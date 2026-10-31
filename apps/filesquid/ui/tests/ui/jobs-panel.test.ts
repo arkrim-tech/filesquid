@@ -345,6 +345,26 @@ describe("<fs-jobs-panel> controls (API-S-037)", () => {
     expect(rootOf(panel).querySelector<HTMLElement>(".jobs-button")?.hidden).toBe(false);
   });
 
+  it("lets only the newest reconnect decide whether the jobs are available", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const source = new MemoryJobSource([jobView({ id: "a" })], { a: [] });
+    const real = source.list.bind(source);
+    const { panel } = await mount(source, false);
+    let failOld: () => void = () => undefined;
+    source.list = () =>
+      new Promise((_, reject) => {
+        failOld = () => reject(new TypeError("late failure"));
+      });
+    const older = panel.reconnect();
+    await settle();
+    source.list = real;
+    const newer = panel.reconnect();
+    await newer;
+    failOld();
+    await older;
+    expect(rootOf(panel).querySelector<HTMLElement>(".jobs-button")?.hidden).toBe(false);
+  });
+
   it("words a job that failed as a whole without inventing a file count", async () => {
     const source = new MemoryJobSource([
       jobView({ id: "whole", state: "failed", done: 0, total: 9, error_code: "too_many_files" }),

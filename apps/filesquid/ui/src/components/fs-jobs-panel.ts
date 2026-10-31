@@ -42,6 +42,7 @@ export class FsJobsPanel extends HTMLElement {
   private options?: JobsPanelOptions;
   private opened = false;
   private unavailable = false;
+  private reconnects = 0;
   private readonly alerts = new Map<string, string>();
   private readonly onChange = () => {
     // Any change means the store can read jobs: a read that failed earlier no longer hides them.
@@ -93,14 +94,16 @@ export class FsJobsPanel extends HTMLElement {
   async reconnect(): Promise<void> {
     const store = this.options?.store;
     if (!store) return;
+    const mine = (this.reconnects += 1);
     this.unavailable = false;
     try {
       await store.reconnect();
     } catch (error) {
       console.warn("FileSquid could not read the upload jobs again", error);
-      this.unavailable = true;
+      // Only the newest attempt may say the jobs are unavailable.
+      if (mine === this.reconnects) this.unavailable = true;
     }
-    this.render();
+    if (mine === this.reconnects) this.render();
   }
 
   /** Open the panel. Side effect: moves focus into it. */
