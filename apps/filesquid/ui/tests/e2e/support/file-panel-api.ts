@@ -22,6 +22,7 @@ import type { Page, Route } from "@playwright/test";
 import { DESKTOP_ANSWER_CAP } from "../../../src/files/download-source";
 import { MemoryFileSource } from "../../../src/files/memory-source";
 import { PNG, serveFiles } from "./files-api";
+import { serveProvenance, type ProvenanceApi } from "./provenance-api";
 
 /** The object both fixture files live in, a file object's `urn:uuid` (mockup 35). */
 export const PANEL_OBJECT = "urn:uuid:7f3c9a1e-0b2c-4d5e-8f90-a1b2c341d2b8";
@@ -93,6 +94,8 @@ export interface PanelApi {
   failDetails(status: number, code: string): void;
   /** Hold the details route until the returned function is called (the loading state). */
   holdDetails(): () => void;
+  /** The File info and Provenance routes (facts, technical statements, history, records, export). */
+  readonly provenance: ProvenanceApi;
 }
 
 /** The SHA-256 the inventory's fixity block records for the fixture (mockup 35). */
@@ -199,6 +202,7 @@ export async function servePanel(page: Page, fixture: PanelFixture): Promise<Pan
     ],
   });
   await serveFiles(page, source);
+  const provenance = await serveProvenance(page);
   const extra: Record<string, unknown>[] = [];
   const overrides = new Map<string, string | null>();
   const labelCommits = new Set<string>();
@@ -224,6 +228,7 @@ export async function servePanel(page: Page, fixture: PanelFixture): Promise<Pan
       });
     },
     failDetails: (status, code) => Object.assign(fail, { status, code }),
+    provenance,
     holdDetails: () => {
       let release: () => void = () => undefined;
       hold = new Promise<void>((resolve) => (release = resolve));

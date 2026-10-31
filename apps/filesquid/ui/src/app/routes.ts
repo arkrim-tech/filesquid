@@ -17,6 +17,8 @@ import { locationHash, parseLocationHash, type FileLocation } from "../files/mod
 import type { HistorySource } from "../files/history-source";
 import type { DownloadSource } from "../files/download-source";
 import type { MetadataSource } from "../files/metadata-source";
+import type { FactsSource } from "../files/facts-source";
+import type { ProvenanceSource } from "../files/provenance-source";
 import { bindFilePanel, removeFilePanel } from "./file-panel-route";
 
 /** An element the routed views are mounted in; the app shell also offers `focusMain`. */
@@ -39,6 +41,58 @@ export const RECENTLY_DELETED_ROUTE = "#/recently-deleted";
 
 /** Hash of the Logs view (UI-S-025, UI-S-032); UI-F2.16 binds it. */
 export const LOGS_ROUTE = "#/logs";
+
+/**
+ * The filter a link into the Logs view carries (UI-S-020: View in Logs from the Provenance tab;
+ * UI-S-021: the Logs view opens filtered to a file or operation). The member names are those
+ * of the journal route's filters (API-S-031).
+ */
+export interface LogsFilter {
+  /** The file's UUID (the journal's `file` filter, the same as `object=urn:uuid:<file>`). */
+  readonly file?: string;
+  /** The operation ID (the journal's `operation_id` filter). */
+  readonly operation_id?: string;
+}
+
+/** The filter members a Logs address carries, in address order. */
+const LOGS_FILTER_KEYS = ["file", "operation_id"] as const;
+
+/**
+ * The address of the Logs view with a filter: `#/logs`, or `#/logs?file=<uuid>` or
+ * `#/logs?operation_id=<id>` (both when both are given). Pure.
+ *
+ * @param filter The file and operation to filter to; absent members add nothing.
+ * @returns The hash to link to.
+ */
+export function logsHash(filter: LogsFilter): string {
+  const query = new URLSearchParams();
+  for (const key of LOGS_FILTER_KEYS) {
+    const value = filter[key];
+    if (value !== undefined && value !== "") query.set(key, value);
+  }
+  const text = query.toString();
+  return text === "" ? LOGS_ROUTE : `${LOGS_ROUTE}?${text}`;
+}
+
+/**
+ * The filter of a Logs address, or undefined for any other hash. A filter member that is empty
+ * or not known is left out. Pure.
+ *
+ * @param hash A location hash.
+ * @returns The filter (empty for the bare route), or undefined when the hash is not the Logs
+ *   view's.
+ */
+export function parseLogsHash(hash: string): LogsFilter | undefined {
+  const [route, query = ""] = hash.split("?", 2) as [string, string | undefined];
+  if (route !== LOGS_ROUTE) return undefined;
+  const params = new URLSearchParams(query);
+  const filter: { file?: string; operation_id?: string } = {};
+  for (const key of LOGS_FILTER_KEYS) {
+    const value = params.get(key);
+    if (value) filter[key] = value;
+  }
+  return filter;
+}
 
 /** Hash prefix of the search results (UI-S-030); the URI-encoded query follows. */
 export const SEARCH_ROUTE_PREFIX = "#/search/";
@@ -259,6 +313,10 @@ export interface FilePanelSources {
   readonly history: HistorySource;
   /** Reads the whole file of one version, for Download this version. */
   readonly download: DownloadSource;
+  /** Reads the facts of the file's record, for the File info tab's import rows (UI-F2.15). */
+  readonly facts?: FactsSource;
+  /** Reads the history, its records and its export, for the Provenance tab (UI-F2.15). */
+  readonly provenance?: ProvenanceSource;
 }
 
 /**

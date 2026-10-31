@@ -1,0 +1,114 @@
+# Task UI-F2.15 Walkthrough: File panel tabs: File info, Description and Provenance
+
+Branch `feat/ui-f2.15-file-panel-tabs`, dispatched by global Task [FS-2.9](../../../../../resources/implementation-plan.md#task-fs-2.9). Plan row: [Task UI-F2.15](../plan.md). Mockups (active suite v3): [22-preview-image](../../../../../resources/ui-mockups/v3/22-preview-image.svg) (and [dark](../../../../../resources/ui-mockups/v3/22-preview-image-dark.svg)), [23-preview-video](../../../../../resources/ui-mockups/v3/23-preview-video.svg), [24-preview-unsupported](../../../../../resources/ui-mockups/v3/24-preview-unsupported.svg), [25-panel-states](../../../../../resources/ui-mockups/v3/25-panel-states.svg), [28-panel-metadata](../../../../../resources/ui-mockups/v3/28-panel-metadata.svg), [29-metadata-add-property](../../../../../resources/ui-mockups/v3/29-metadata-add-property.svg), [35-panel-file-info](../../../../../resources/ui-mockups/v3/35-panel-file-info.svg), [36-panel-provenance](../../../../../resources/ui-mockups/v3/36-panel-provenance.svg).
+
+## SRS mapping
+
+| SRS ID and title | What was built | Proof |
+|---|---|---|
+| [UI-S-022](../srs.md) File panel tabs: one file panel with a header button that opens Versions and three tabs with the same look, feel and behaviour (one layout, property/value rows, copy, search and filter, distinct empty, loading and error states, the UI-S-016 contracts); File info, Description and Provenance; no per-file audit log tab; each tab its own custom element sharing one property-table component, independent of another panel | The tabs are exactly File info (`<fs-details-panel>`), Description (`<fs-metadata-panel>`, unchanged) and Provenance (`<fs-provenance-panel>`, new), each in its own named slot, created when first shown, over the one `PropertyTable`, which gained `group`, `display: "note"`, `searchText`, `renderBody`, `footerElement`, `errorExtra` and a public `copyValue`. File info gained the facts projection of `GET /files/facts` and the technical group | `tests/ui/files-route.test.ts`, `tests/ui/file-info-tab.test.ts`, `tests/ui/provenance-panel.test.ts`, `tests/e2e/preview/provenance-panel.spec.ts` |
+| [UI-S-020](../srs.md) Provenance tab: PROV-O history newest first as `prov:` attribute/value rows per activity, entity and agent from the history routes, a View in Logs link for the owner or an administrator only, a JSON-LD export, reconstructed activities marked and unrecorded agents shown as unrecorded | `<fs-provenance-panel>`: activities newest first from `GET /files/{id}/history` (bounded cursor paging), one block each with kind, `prov:Activity`, version chip and UTC time; `prov:startedAtTime`, `prov:endedAtTime`, `prov:wasAssociatedWith` (installation agent, software agent with version, unrecorded agents) from the entry, `prov:used`, `prov:wasGeneratedBy`, `prov:wasDerivedFrom`, `prov:wasInvalidatedBy` from the version's record (`GET /files/{id}/versions/{version}/prov`, read when first expanded); a "Reconstructed" chip; footer View in Logs (desktop host) and JSON-LD (`GET /files/{id}/history/export`) | `tests/unit/provenance-model.test.ts`, `tests/unit/provenance-source.test.ts`, `tests/ui/provenance-panel.test.ts`, `tests/e2e/preview/provenance-panel.spec.ts` |
+| [UI-S-031](../srs.md) Preview and file panel composition (35, 36, 25; 22 to 24) | File info rows of mockup 35 (Uploaded, Source, format and MIME, SHA-256 from the record, technical group or "Nothing could be read from this format."), the Provenance blocks of mockup 36, the states of mockup 25 (loading rows, no match "0 of 4 activities", error with code, Try again and View in Logs, empty), the preview's 8 px media frame beside the 320 px panel | `tests/e2e/preview/provenance-panel.spec.ts` in light and dark (boxes within 2 px, strings, computed styles) |
+| [UI-S-024](../srs.md) Visual constants of the active mockup suite | Every colour through a token; the new stylesheet has no literal colour or size and uses logical properties; focus is `--fs-focus-ring` (not `--fs-primary`, owner 2026-10-31); the media frame is `--fs-radius` (8 px, owner 2026-10-30 and 2026-10-31) | `tests/unit/component-styles.test.ts`, computed-style assertions in the Playwright spec |
+| [UI-S-016](../srs.md) Every `@filesquid/ui` custom element MUST meet these accessibility contracts | Native buttons and links, `aria-expanded` on each activity's toggle, polite status regions for copy and export, alert error states, the 2 px solid ring offset 2 px on the toggles, focus kept on the pressed toggle when the list re-renders, no positive `tabindex`, a load never takes focus | `tests/ui/provenance-panel.test.ts` (audit), the keyboard test of the Playwright spec |
+| [UI-S-003](../srs.md) Panels, including the file panel's tabs, MUST plug into named sidebar slots and MUST NOT depend on each other | The Provenance tab reads only its own routes; the Description panel is never created while Provenance is shown | route test and the "reads only its own routes" Playwright test |
+| [UI-S-012](../srs.md) UIs reach FileSquid only through `FileSquidClient` | `ClientFactsSource` and `ClientProvenanceSource` over `request` and `read`; a reference with no file record, or an object not named by a UUID, is refused before anything is sent | `tests/unit/provenance-source.test.ts` |
+| [UI-S-005](../srs.md) A distribution's label table MUST define every key of the default table | 68 new keys (`filePanel*` import and technical keys, `provenance*`) in `REQUIRED_LABEL_KEYS`, the default and the ImageSquid table; no new token | `tests/unit/theme.test.ts`, `tests/unit/distribution-tables.test.ts` |
+| [UI-S-013](../srs.md) UI tests against production artifacts with strict DOM assertions | Playwright against `vite build` plus `vite preview`, 1440 × 900, light and dark, no console errors | Playwright output below |
+| [API-S-027](../../../crates/api/resources/srs.md) File facts: the projection of the file record without absolute path, import root, host or account | Only the fields of `FileFacts` have rows; the import-relative path only when non-null | `tests/unit/file-info-rows.test.ts` |
+| [API-S-029](../../../crates/api/resources/srs.md) History routes | Paged by cursor, 200 per page, at most 25 pages; the index's `truncated` flag and the page bound are both said under the list | `tests/unit/provenance-model.test.ts`, `tests/ui/provenance-panel.test.ts` |
+
+PRD: [F-067](../../../../../resources/prd.md#f-067-prov-o-history-of-every-version-and-change) PROV-O history of every version and change, [F-055](../../../../../resources/prd.md#f-055-default-ui-and-panel-composition) Default UI and panel composition, [F-046](../../../../../resources/prd.md#f-046-media-metadata-inspection-correction-and-privacy-exports) Media metadata inspection, correction and privacy exports, [F-061](../../../../../resources/prd.md#f-061-activity-journal-and-live-health-monitoring) Activity journal and live health monitoring. Gherkin: [prov_o_history_F-067.feature](../../tests/features/prov_o_history_F-067.feature), [composable_filesquid_ui_F-055.feature](../../tests/features/composable_filesquid_ui_F-055.feature) (written with the feature-writer conventions; the steps are bound by the jsdom and Playwright tests named in each file's header).
+
+## What changed
+
+- **Sources** (`src/files/facts-source.ts`, `src/files/provenance-source.ts`): `FactsSource` / `ClientFactsSource` and `ProvenanceSource` / `ClientProvenanceSource`, each method one call through `FileSquidClient`.
+- **Model** (`src/files/provenance.ts`, `src/files/details.ts`): the history entries newest first, agents classified by identifier, the `filesquid-prov/1` record parsed with a node bound, the `prov:` attribute rows, the kind words of all 22 operation kinds, bounded paging; `detailRows` takes the facts and the technical statements. Pure.
+- **`<fs-provenance-panel>`** (`src/components/fs-provenance-panel.ts`): the Provenance tab.
+- **`PropertyTable`** (`src/components/property-table.ts`): the generic extensions above, and a sticky footer so a long list keeps the footer in view.
+- **`<fs-details-panel>`**: optional `facts` and `statements` sources; each optional read fails soft and is logged.
+- **Routes** (`src/app/routes.ts`, `src/app/file-panel-route.ts`, `src/app/main.ts`, `src/index.ts`): `logsHash` / `parseLogsHash` (`#/logs?file=<uuid>`, `#/logs?operation_id=<id>`, the journal route's filter names; UI-F2.16 parses them), the Provenance tab registered when the file panel sources carry `provenance`, View in Logs only once the host is known to be the desktop.
+- **Labels**: 68 keys in both tables.
+- **Tests**: see the output below; `tests/e2e/support/provenance-api.ts` fakes the new routes inside `servePanel`, and the File info expectations of `file-panel.spec.ts` and `versions-panel.spec.ts` now include the new rows.
+- **Docs**: the package README's File panel section, the plan row's Status, the checklist box, the MVP progress block.
+
+## Decisions and open points
+
+- **Not drawn, because the API has no field for them (nothing invented):** the Fixity row "Verified {time}" and the group "RESOURCES IN THIS FILE" of mockup 35 (a list of a logical file's resources with digests, and a fixity check time). A copy's cross-object `prov:wasDerivedFrom` is not written yet (API-F2.23): the tab shows what the API returns.
+- **Error state without an operation ID.** Mockup 25 draws "{code} · op {id}"; a failed read carries no operation ID, so the state shows the code only.
+- **View in Logs.** The footer link is the file-level one (mockup 36); UI-S-020 asks for a link from each activity, so each expanded activity ends with a compact link for its operation. The Logs view itself is Task UI-F2.16; until it binds `#/logs`, the link only changes the address. The link is shown on the desktop host only (the owner; the Logs row of the sidebar is the desktop's too, UI-S-021); a server administrator gets it when UI-F2.16 and the account store say so.
+- **"owner agent · this installation".** UI-S-031 words the installation agent so; the API does not say whether a record's installation UUID is this installation's, so the words are used as the SRS gives them.
+- **Collapsed activities show no relation summary** (mockup 36 draws "prov:wasDerivedFrom …41d2b8@v1" under them); a record is read only when its activity is expanded, so a long history costs one request per page, not one per version. The filter matches the paths and digests of the records already read.
+- **Where the SRS or the mockup disagree with UI-S-024** (the stricter rule won, as in UI-F2.3 and UI-F2.4): attribute names and values are 13 px, not the 11 and 12 px of mockup 36 (meta text at least 13 px); the footer buttons are 36 px, not 28 px (every button 36 px); times follow the document's locale (`Oct 16, 2026, 11:05 UTC`, as the File info version row already does), not the mockup's day-first form.
+- **Footer text.** "Provenance · times in UTC" is shown in the loading, empty, no-match and error states; over the activities the footer holds View in Logs and JSON-LD, as mockup 36 draws.
+- **Drag-and-drop source wording** is "Files upload · dragged and dropped" (mockup 23 says "dragged from Finder", which names one platform).
+- **Time zone.** The Uploaded row shows the viewer's local time and UTC; the Playwright config pins UTC.
+- **Playwright runner.** The installed Playwright expects a newer Chromium than this machine has, so the preview suite ran through a temporary config that names the installed headless shell (deleted before the commit); the committed config is unchanged. The runs took the shared lock `/dev/shm/filesquid-ui-playwright.lock`.
+
+## How it was tested
+
+1. Red run: the six new test files failed before the implementation (missing modules, `configure is not a function`; 42 of 49 tests failed).
+2. `npx prettier --write .`, `npx eslint .` and `npx tsc --noEmit` in `apps/filesquid/ui` are clean; `apps/imagesquid` passes Prettier with the same configuration.
+3. `npm test` in `apps/filesquid/ui`: 94 files, 2,216 tests passed (1 skipped), the one skip is the same as on `main`.
+4. Playwright, production build (`vite build` plus `vite preview`) at 1440 × 900 in light and dark: the whole preview suite, 188 tests passed; the new `provenance-panel.spec.ts` has 22 of them (6 in each theme, 10 theme-free).
+
+### Raw output
+
+Red run (`npx vitest run` of the six new files, before the implementation):
+
+```text
+Error: Failed to resolve import "../../src/files/provenance" from "tests/unit/provenance-model.test.ts". Does the file exist?
+Error: Failed to resolve import "../../src/files/provenance-source" from "tests/unit/provenance-source.test.ts". Does the file exist?
+TypeError: panel.configure is not a function
+TypeError: logsHash is not a function
+TypeError: parseLogsHash is not a function
+ Test Files  6 failed (6)
+      Tests  42 failed | 7 passed (49)
+```
+
+Green run (`npx vitest run`):
+
+```text
+ ✓ tests/unit/component-styles.test.ts (351 tests) 97ms
+ ✓ tests/ui/provenance-panel.test.ts (23 tests) 4277ms
+ ✓ tests/unit/provenance-model.test.ts (23 tests) 73ms
+ ✓ tests/ui/files-route.test.ts (13 tests) 2024ms
+ ✓ tests/unit/file-info-rows.test.ts (12 tests) 125ms
+ ✓ tests/ui/file-info-tab.test.ts (9 tests) 810ms
+ ✓ tests/unit/provenance-source.test.ts (7 tests) 102ms
+ ✓ tests/unit/logs-hash.test.ts (5 tests) 27ms
+ Test Files  94 passed (94)
+      Tests  2216 passed | 1 skipped (2217)
+   Duration  94.85s (transform 8.39s, setup 8.13s, import 27.46s, tests 95.77s, environment 111.59s)
+```
+
+Playwright (preview suite):
+
+```text
+[chromium] › tests/e2e/preview/provenance-panel.spec.ts:127:5 › light theme › File info (35): the import facts rows, the technical group and the footer
+[chromium] › tests/e2e/preview/provenance-panel.spec.ts:187:5 › light theme › File info (24): a format with nothing to read says so
+[chromium] › tests/e2e/preview/provenance-panel.spec.ts:200:5 › light theme › Provenance (36): the newest activity expanded, the timeline and the footer
+[chromium] › tests/e2e/preview/provenance-panel.spec.ts:334:5 › light theme › Panel states (25): loading, no match and error keep the header, tabs and filter
+[chromium] › tests/e2e/preview/provenance-panel.spec.ts:391:5 › light theme › Panel states (25): an error is its own state, with the code, Try again and View in Logs
+[chromium] › tests/e2e/preview/provenance-panel.spec.ts:417:5 › light theme › Preview (22): the media frame has the 8 px radius token on the raised surface
+[chromium] › tests/e2e/preview/provenance-panel.spec.ts:127:5 › dark theme › File info (35): the import facts rows, the technical group and the footer
+[chromium] › tests/e2e/preview/provenance-panel.spec.ts:187:5 › dark theme › File info (24): a format with nothing to read says so
+[chromium] › tests/e2e/preview/provenance-panel.spec.ts:200:5 › dark theme › Provenance (36): the newest activity expanded, the timeline and the footer
+[chromium] › tests/e2e/preview/provenance-panel.spec.ts:334:5 › dark theme › Panel states (25): loading, no match and error keep the header, tabs and filter
+[chromium] › tests/e2e/preview/provenance-panel.spec.ts:391:5 › dark theme › Panel states (25): an error is its own state, with the code, Try again and View in Logs
+[chromium] › tests/e2e/preview/provenance-panel.spec.ts:417:5 › dark theme › Preview (22): the media frame has the 8 px radius token on the raised surface
+[chromium] › tests/e2e/preview/provenance-panel.spec.ts:436:1 › the tabs are exactly File info, Description and Provenance, with no audit log tab
+[chromium] › tests/e2e/preview/provenance-panel.spec.ts:455:1 › the Provenance tab reads only its own routes and mounts without the other panels
+[chromium] › tests/e2e/preview/provenance-panel.spec.ts:471:1 › keyboard: arrows move across the three tabs and the activities toggle with Enter
+[chromium] › tests/e2e/preview/provenance-panel.spec.ts:503:1 › a reconstructed activity is marked and its agent is shown as unrecorded
+[chromium] › tests/e2e/preview/provenance-panel.spec.ts:532:1 › in-tab search filters by kind, operation and version, and Clear filter restores
+[chromium] › tests/e2e/preview/provenance-panel.spec.ts:551:1 › copy puts the whole value on the clipboard and announces it
+[chromium] › tests/e2e/preview/provenance-panel.spec.ts:568:1 › View in Logs opens the Logs address filtered to the file and to an operation
+[chromium] › tests/e2e/preview/provenance-panel.spec.ts:586:1 › JSON-LD saves the file's history and announces it; a failure is an alert
+[chromium] › tests/e2e/preview/provenance-panel.spec.ts:608:1 › a record that cannot be read is an alert inside its activity; Try again reads it
+[chromium] › tests/e2e/preview/provenance-panel.spec.ts:623:1 › an empty history is its own state
+188 passed (1.6m)
+EXIT 0
+```
+
+Hook: `bash scripts/pre-commit.sh` passed: `✅ All Pre-Commit Hooks Passed! Test scope: npm:apps/filesquid/ui`. Playwright was run by hand against the preview build as above (`FILESQUID_E2E=1` builds the Rust server and is not part of an npm-only scope).

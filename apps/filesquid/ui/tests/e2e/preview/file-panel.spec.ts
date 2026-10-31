@@ -181,7 +181,7 @@ for (const scheme of SCHEMES) {
         label(labels, "filePanelFilterInfo"),
       );
       await expect(details.locator(".count")).toHaveText(
-        fill("filePanelInfoCount", { count: "9" }),
+        fill("filePanelInfoCount", { count: "11" }),
       );
       await expect(details.locator(".row dt")).toHaveText([
         label(labels, "filePanelOriginalName"),
@@ -191,13 +191,15 @@ for (const scheme of SCHEMES) {
         label(labels, "filePanelHistorySize"),
         fill("filePanelDigest", { algorithm: "SHA-256" }),
         fill("filePanelDigest", { algorithm: "SHA-512" }),
+        label(labels, "filePanelUploaded"),
+        label(labels, "filePanelSource"),
         label(labels, "filePanelObject"),
         label(labels, "filePanelVersion"),
       ]);
       await expect(details.locator(".row .value")).toHaveText([
         "facade-study.jpg",
         ".jpg",
-        "image/jpeg",
+        fill("filePanelFormatValue", { format: "JPEG image", mime: "image/jpeg" }),
         fill("filePanelSizeValue", { size: "6.2 MB", bytes: "6,481,920" }),
         fill("filePanelHistorySizeValue", {
           size: "96.3 MB",
@@ -205,6 +207,11 @@ for (const scheme of SCHEMES) {
         }),
         "9b1f4e…c07a2d",
         "5a5a5a…5a5a5a",
+        fill("filePanelUploadedValue", { local: "Oct 12, 2026, 14:20", utc: "14:20" }),
+        fill("filePanelSourceValue", {
+          method: label(labels, "filePanelMethodFolder"),
+          volume: "FUJIFILM",
+        }),
         "urn:uuid:7f3c9a1e-…-41d2b8",
         fill("filePanelVersionValue", { version: "v4", total: "4", time: "Oct 16, 2026, 11:05" }),
       ]);
@@ -520,7 +527,7 @@ for (const scheme of SCHEMES) {
       await expect(clear).toHaveText(label(labels, "filePanelClearFilter"));
       await expectBox(clear, { height: 36 });
       await clear.click();
-      await expect(details.locator(".row")).toHaveCount(9);
+      await expect(details.locator(".row")).toHaveCount(11);
       await expect(details.locator("input.filter")).toBeFocused();
 
       api.failDetails(503, "unavailable");

@@ -20,6 +20,13 @@
  * give each row a source chip (`rowChip`) and action buttons before copy (`rowActions`), an
  * element below the rows (`afterRows`, the Add property button), an empty state for a record
  * with no rows (`emptyState`), and leave the footer out.
+ *
+ * UI-F2.15 adds what the File info and Provenance tabs need, so the three tabs (and the Logs
+ * view of UI-F2.16) keep one table, filter and state model: a row's `group` (rows under an
+ * eyebrow, not counted as properties) and `display: "note"`, a row's `searchText`, a
+ * `renderBody` that draws the matching rows in the tab's own way (the Provenance blocks), a
+ * `footerElement` in place of the footer line, an `errorExtra` element in the error state, and
+ * the public `copyValue`.
  */
 import { formatLabel, type LabelTable } from "../theme/labels";
 import { ApiError } from "../api/client";
@@ -59,10 +66,20 @@ export interface PropertyTableOptions {
   readonly rowChip?: (row: PropertyRow) => RowChip | undefined;
   /** Action buttons shown before a row's copy button, when the tab has any. */
   readonly rowActions?: (row: PropertyRow) => HTMLButtonElement[];
-  /** The element below the rows (the Add property button), built on each render. */
-  readonly afterRows?: () => HTMLElement;
+  /** The element below the rows (the Add property button), built on each render; none when it answers undefined. */
+  readonly afterRows?: () => HTMLElement | undefined;
   /** The state shown for a record with no rows, built on each render; none when absent. */
   readonly emptyState?: () => HTMLElement;
+  /**
+   * Draws the rows that match the filter in place of the default list of property rows (the
+   * Provenance tab's blocks, UI-F2.15). The table still owns the filter, the count, the states,
+   * the copy status and the footer.
+   */
+  readonly renderBody?: (rows: readonly PropertyRow[]) => HTMLElement;
+  /** An element in place of the footer line (the Provenance tab's footer buttons). */
+  readonly footerElement?: HTMLElement;
+  /** An element at the end of the error state (View in Logs), built on each error. */
+  readonly errorExtra?: () => HTMLElement | undefined;
 }
 
 /** A row's chip: its words and its tone. */
@@ -121,6 +138,8 @@ const STYLE = `
   .button-icon:hover, .button-icon:focus-visible, .copy:hover, .copy:focus-visible, .row:hover .copy { color: var(--fs-icon); }
   .body > .after-rows { margin: var(--fs-space-2) var(--fs-space-3) var(--fs-space-3); padding: 0 var(--fs-space-1); }
   .state.empty .button { margin-block-start: var(--fs-space-3); }
+  .group-title { margin: var(--fs-space-4) var(--fs-space-3) var(--fs-space-1); padding: 0 var(--fs-space-1); line-height: 1.4; }
+  .note-row { margin: var(--fs-space-1) var(--fs-space-3) var(--fs-space-3); padding: 0 var(--fs-space-1); color: var(--fs-on-surface-variant); font-size: var(--fs-font-size-small); line-height: 1.3; }
   .placeholder { display: grid; gap: var(--fs-space-2); box-sizing: border-box; min-block-size: 2.75rem; margin: 0 var(--fs-space-3); padding: var(--fs-space-2) var(--fs-space-1); border-block-end: 1px solid var(--fs-outline); }
   .bar { display: block; block-size: 0.5625rem; border-radius: var(--fs-radius-pill); background: var(--fs-outline); }
   .bar.wide { block-size: 0.6875rem; }
@@ -132,7 +151,7 @@ const STYLE = `
   .state .detail { font-size: var(--fs-font-size-small); color: var(--fs-on-surface-variant); }
   .state .code { font-family: var(--fs-font-mono); font-size: var(--fs-font-size-small); color: var(--fs-on-surface-variant); }
   .state .button { margin-block-start: var(--fs-space-3); }
-  .footer { margin: 0; box-sizing: border-box; min-block-size: 2.75rem; padding: var(--fs-space-3) var(--fs-space-4) var(--fs-space-2) var(--fs-space-4); border-block-start: 1px solid var(--fs-outline); color: var(--fs-on-surface-muted); font-size: var(--fs-font-size-small); }
+  .footer { position: sticky; inset-block-end: 0; z-index: 1; background: var(--fs-surface-card); margin: 0; box-sizing: border-box; min-block-size: 2.75rem; padding: var(--fs-space-3) var(--fs-space-4) var(--fs-space-2) var(--fs-space-4); border-block-start: 1px solid var(--fs-outline); color: var(--fs-on-surface-muted); font-size: var(--fs-font-size-small); }
   .announce { position: absolute; inline-size: 1px; block-size: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 `;
 
@@ -217,12 +236,28 @@ export function errorState(
   return state;
 }
 
-/** True when a row's label, value or copy text contains `word` (case-insensitive). */
+/** True when a row's label, value or copy text (or its `searchText`) contains `word`, ignoring case. */
 function matches(row: PropertyRow, word: string): boolean {
   const needle = word.toLocaleLowerCase();
-  return [row.label, row.value, row.copy ?? ""].some((text) =>
-    text.toLocaleLowerCase().includes(needle),
-  );
+  const texts =
+    row.searchText === undefined ? [row.label, row.value, row.copy ?? ""] : [row.searchText];
+  return texts.some((text) => text.toLocaleLowerCase().includes(needle));
+}
+
+/** How many rows are properties: the grouped rows (technical rows, notes) are not counted. */
+function propertyCount(rows: readonly PropertyRow[]): number {
+  return rows.filter((row) => row.group === undefined).length;
+}
+
+/** The rows in runs of one group each, in order. */
+function groupRuns(rows: readonly PropertyRow[]): { group?: string; rows: PropertyRow[] }[] {
+  const runs: { group?: string; rows: PropertyRow[] }[] = [];
+  for (const row of rows) {
+    const last = runs[runs.length - 1];
+    if (last && last.group === row.group) last.rows.push(row);
+    else runs.push({ group: row.group, rows: [row] });
+  }
+  return runs;
 }
 
 /** The table of one tab. */
@@ -251,7 +286,12 @@ export class PropertyTable {
     this.announcer = node("p", "announce");
     this.announcer.setAttribute("role", "status");
     this.element.append(wrap, this.count, this.body, this.announcer);
-    if (options.footer !== undefined) this.element.append(node("p", "footer", options.footer));
+    if (options.footerElement) {
+      options.footerElement.classList.add("footer");
+      this.element.append(options.footerElement);
+    } else if (options.footer !== undefined) {
+      this.element.append(node("p", "footer", options.footer));
+    }
     this.clear();
   }
 
@@ -304,9 +344,11 @@ export class PropertyTable {
     this.body.removeAttribute("aria-busy");
     const online = this.options.online ? this.options.online() : navigator.onLine;
     const words = failureWords(error, this.options.labels, online);
-    this.body.replaceChildren(
-      errorState(this.options.errorTitle, words, this.options.labels, this.options.onRetry),
-    );
+    const { errorTitle, labels, onRetry } = this.options;
+    const state = errorState(errorTitle, words, labels, onRetry);
+    const extra = this.options.errorExtra?.();
+    if (extra) state.append(extra);
+    this.body.replaceChildren(state);
   }
 
   /** Draw the rows that match the filter, or the no-match state. */
@@ -316,7 +358,7 @@ export class PropertyTable {
     this.clearButton.hidden = this.filter.value === "";
     this.count.classList.remove("busy");
     this.body.removeAttribute("aria-busy");
-    this.count.textContent = this.options.countText(shown.length, this.all.length);
+    this.count.textContent = this.options.countText(propertyCount(shown), propertyCount(this.all));
     const empty = this.all.length === 0 ? this.options.emptyState?.() : undefined;
     if (empty) {
       empty.classList.add("empty");
@@ -330,12 +372,29 @@ export class PropertyTable {
       this.setState("no-match");
       return;
     }
-    const list = node("dl", "rows");
-    list.append(...shown.map((row) => this.row(row)));
+    const list = this.options.renderBody ? [this.options.renderBody(shown)] : this.lists(shown);
     const after = this.options.afterRows?.();
     if (after) after.classList.add("after-rows");
-    this.body.replaceChildren(list, ...(after ? [after] : []));
+    this.body.replaceChildren(...list, ...(after ? [after] : []));
     this.setState("ready");
+  }
+
+  /** The default body: a description list per group, each group under its eyebrow. */
+  private lists(rows: readonly PropertyRow[]): HTMLElement[] {
+    return groupRuns(rows).flatMap(({ group, rows: run }) => {
+      const parts: HTMLElement[] = [];
+      if (group !== undefined) parts.push(node("p", "eyebrow group-title", group));
+      const plain = run.filter((row) => row.display !== "note");
+      if (plain.length > 0) {
+        const list = node("dl", "rows");
+        list.append(...plain.map((row) => this.row(row)));
+        parts.push(list);
+      }
+      for (const row of run.filter((r) => r.display === "note")) {
+        parts.push(node("p", "note-row", row.value));
+      }
+      return parts;
+    });
   }
 
   /** Record what the table shows and tell the host. */
@@ -382,18 +441,22 @@ export class PropertyTable {
       formatLabel(this.options.labels.filePanelCopy, { property: row.label }),
     );
     copy.append(icon("copy", 16));
-    copy.addEventListener("click", () => void this.copyToClipboard(row));
+    copy.addEventListener("click", () => void this.copyValue(row.label, row.copy ?? row.value));
     return copy;
   }
 
-  /** Put a row's whole value on the clipboard and announce it. Side effect: the clipboard. */
-  private async copyToClipboard(row: PropertyRow): Promise<void> {
+  /**
+   * Put a whole value on the clipboard and announce it in the polite status region. Side
+   * effect: the clipboard.
+   *
+   * @param property The property the value belongs to, for the announcement.
+   * @param text The whole text to copy.
+   */
+  async copyValue(property: string, text: string): Promise<void> {
     this.announcer.textContent = "";
     try {
-      await navigator.clipboard.writeText(row.copy ?? row.value);
-      this.announcer.textContent = formatLabel(this.options.labels.filePanelCopied, {
-        property: row.label,
-      });
+      await navigator.clipboard.writeText(text);
+      this.announcer.textContent = formatLabel(this.options.labels.filePanelCopied, { property });
     } catch (error) {
       console.warn("FileSquid could not copy a value", error instanceof Error ? error.name : error);
     }
