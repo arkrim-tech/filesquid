@@ -6,8 +6,9 @@
 # Destination refusals carry their rule code as an ApiError sub-code. The path a write used is
 # answered and recorded in the collection snapshot version, never in the journal.
 # API-S-012: search rows carry the same facts. API-S-021: collection and folder navigation nodes
-# carry collection_id.
-# Owner decision 2026-10-31, verbatim: "accept recommendations" (decisions 2, 4 and 14).
+# carry collection_id. API-S-014: history_bytes beside the library's total, the bytes on disk held
+# only by versions other than each object's head, each distinct content counted once.
+# Owner decisions 2026-10-31, verbatim: "accept recommendations" (decisions 2, 4 and 14) and "well do a" (history bytes).
 # Scenarios only; Task API-F2.21 adds their step definitions (unmatched steps are reported as skipped).
 Feature: Row facts, the Recent view and destination identifiers
   As a library owner
@@ -39,6 +40,11 @@ Feature: Row facts, the Recent view and destination identifiers
     Given row-facts caller uploaded "a.txt", then opened "beach.jpg", then renamed "notes.md"
     When row-facts caller reads the Recent view
     Then row-facts rows should be "notes.md" changed, "beach.jpg" opened, "a.txt" uploaded, in that order
+
+  Scenario: The library's storage total names the bytes only older versions keep
+    Given row-facts fixture: "beach.jpg" whose v1 content of 400 bytes differs from its head and "notes.md" whose v1 and head share one content
+    When row-facts caller reads the library history size of "Family"
+    Then row-facts history bytes should be 400, counting the shared content of "notes.md" as no history
 
   # Edge cases
   Scenario: A file in no collection carries null collection facts

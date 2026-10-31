@@ -9,7 +9,7 @@ TDD-ENFORCE: Not applicable - documentation, mockup and plan changes only; the n
 - Verbatim, 2026-10-31: "accept recommendations". It accepts each orchestrator recommendation below (D2 to D15).
 - Verbatim, 2026-10-31, on the open call (i), full-text search: "full-text search of filesquid drive contents is a release 1 feature".
 - Verbatim, 2026-10-31, on the open call (ii), copies over 64 MiB: "build streamed copies".
-- The open call (iii), the "incl. {history} history" storage split caption, is still awaiting an owner decision.
+- Verbatim, 2026-10-31, on the open call (iii), the "incl. {history} history" storage split: "well do a". Option (a), as the orchestrator offered it: build it in the MVP; the API also reports the bytes kept only by older versions, counting content shared between versions once, so the sidebar can show "incl. {history} history" under Storage used.
 - Verbatim, 2026-10-31, on Cubic capacity (item 13): "13. leave where you left off until Cubic is re-enabled." There is no waiver of the review loop: work stops at the review step until Cubic is available again. This is recorded here only, not in the rules.
 
 ## What changed, decision by decision
@@ -29,14 +29,14 @@ TDD-ENFORCE: Not applicable - documentation, mockup and plan changes only; the n
 | D11: UI-S-030 focus border, SRS-UI-007 exemption | [UI-S-030](../../apps/filesquid/ui/resources/srs.md) (`--fs-focus-ring`), [SRS-UI-007](../srs.md#srs-ui-007-light-and-dark-themes) (search operator text and **Clear all** named) | UI-F2.9 Status: per-format type chips stay after the MVP and are not scheduled |
 | D12: library revisions restart at 1 after a host restart (API-S-025) | This walkthrough only: no change for the MVP | none |
 | (ii) "build streamed copies" | API-S-011 copy (the 64 MiB allowance removed) | New [API-F2.26](../../apps/filesquid/crates/api/resources/plan.md) (6 h, Task FS-2.5) |
+| (iii) "well do a": the storage split | [API-S-014](../../apps/filesquid/crates/api/resources/srs.md) **History size** (`history_bytes`: the bytes on disk held only by versions other than each object's head version, each distinct content counted once), API-S-011 storage use, [UI-S-025](../../apps/filesquid/ui/resources/srs.md) caption | Folded into API-F2.21 (17 to 19 h) and UI-F2.20 (the caption line) |
 | (i) "full-text search ... is a release 1 feature" | [PRD F-063](../prd.md#f-063-file-search-query-language-and-filter-chips) and [SRS-F-063](../srs.md#srs-f-063-file-search-query-language-and-filter-chips): "in the first release" removed, so only the plan carries the timing | New post-MVP [API-F2.29](../../apps/filesquid/crates/api/resources/plan.md) (12 h, Task FS-2.7) |
 
 ### API-F2.2 and API-F2.3 closure
 
 Both Descriptions are narrowed to what parts 1 and 2 delivered, and their Status names where each remainder went: row facts and Recent to API-F2.21; the ZIP download and history object to API-F2.22; the copy's derivation to API-F2.23; streamed copies to API-F2.26; the server-only operators (`sharedwith:`, `to:`, `from:`, `pendingowner:`, `owner:` naming another user), the multi-user search scenarios and the home, personal and shares views to the new post-MVP [API-F2.28](../../apps/filesquid/crates/api/resources/plan.md) (14 h, Task FS-2.7; Dependencies SV-F1.4 and API-F2.4); the favorites and tags views and `is:favorite` to CL-1.4 (Task 1.4, 8 to 12 h; Task 1.4 32 to 36 h); natural-language search questions to Task 4.2 (DE-4.2, 12 to 16 h; Task 4.2 24 to 28 h); the search-suggestions route dropped (the UI builds suggestions from the search operation; not scheduled). SV-F1.4 is removed from API-F2.3's Dependencies.
 
-- **API-F2.3 is ticked.** Of its three open calls, (i) and (ii) are answered and (iii) belongs to API-F2.2, so with every remainder moved the box is ticked (orchestrator, 2026-10-31).
-- **API-F2.2 stays unticked** while (iii), the "incl. {history} history" storage split caption, awaits an owner decision.
+- **API-F2.2 and API-F2.3 are ticked.** All three open calls are answered ((i) API-F2.29, (ii) API-F2.26, (iii) API-F2.21 and UI-F2.20) and every remainder is moved, so both boxes are ticked in the api plan and the checklist (orchestrator, 2026-10-31).
 
 ### D3: did Task FS-2.4 already deliver the two items?
 
@@ -51,7 +51,7 @@ No. [UI-F2.7](../../apps/filesquid/ui/resources/plan.md)'s Description lists hid
 
 | Row | Hours | Global task | MVP |
 |---|---|---|---|
-| API-F2.21 View and search row facts, the Recent view and destination identifiers | 17 | FS-2.5 | yes |
+| API-F2.21 View and search row facts, the Recent view and destination identifiers (with the history bytes) | 19 | FS-2.5 | yes |
 | API-F2.22 Library history object and streamed ZIP download | 19 | FS-2.5 | yes |
 | API-F2.24 Command envelopes on the metadata write routes | 4 | FS-2.5 | yes |
 | API-F2.25 Collection moves compare the expected revision | 3 | FS-2.5 | yes |
@@ -65,7 +65,7 @@ No. [UI-F2.7](../../apps/filesquid/ui/resources/plan.md)'s Description lists hid
 | API-F2.29 Full-text search of PDF and plain text | 12 | FS-2.7 | no |
 | DE-F3.4 Per-attempt staging area for imports | 4 | FS-3.11 | no |
 
-Global estimates: Task FS-2.5 206 to 259 h, Task FS-2.4 48 to 56 h, Task FS-2.8 79 to 83 h, Task FS-3.4 40 to 41 h, Task FS-2.7 76 to 102 h, Task FS-3.11 24 to 28 h. The MVP grows by 66 hours, from 1,192 to **1,258** estimated hours (`python3 scripts/docs/update_mvp_progress.py`: "about 974 of 1258 estimated hours"). The module dispatch register and the summary timeline are updated.
+Global estimates: Task FS-2.5 206 to 261 h, Task FS-2.4 48 to 56 h, Task FS-2.8 79 to 83 h, Task FS-3.4 40 to 41 h, Task FS-2.7 76 to 102 h, Task FS-3.11 24 to 28 h. The MVP grows by 68 hours, from 1,192 to **1,260** estimated hours (`python3 scripts/docs/update_mvp_progress.py`: "about 988 of 1260 estimated hours"). The module dispatch register and the summary timeline are updated.
 
 ## ADR changes this PR could not make (ADRs are protected)
 
@@ -75,7 +75,7 @@ Global estimates: Task FS-2.5 206 to 259 h, Task FS-2.4 48 to 56 h, Task FS-2.8 
 
 ## Sync Execution Report
 
-- ADR to SRS: no ADR changed. The API SRS (API-S-002, API-S-011, API-S-012, API-S-021, API-S-028, API-S-031), the UI SRS (UI-S-017, UI-S-026, UI-S-030, UI-S-031, UI-S-032), the desktop SRS (DE-S-019) and the root SRS (SRS-UI-007, SRS-F-061, SRS-F-062, SRS-F-063) are amended.
+- ADR to SRS: no ADR changed. The API SRS (API-S-002, API-S-011, API-S-012, API-S-014, API-S-021, API-S-028, API-S-031), the UI SRS (UI-S-017, UI-S-025, UI-S-026, UI-S-030, UI-S-031, UI-S-032), the desktop SRS (DE-S-019) and the root SRS (SRS-UI-007, SRS-F-061, SRS-F-062, SRS-F-063) are amended.
 - SRS to PRD: PRD F-061 (Monitor only for the owner and administrators, self-scoped journal), F-062 (the owner's ZIP without per-member scrubbing) and F-063 (no release timing in the full-text sentence) are amended. No requirement ID was added, so the PRD and SRS traceability links are unchanged. The root README "About this project" needs no change; its import section gained the two import limits.
 - Plans: the implementation plan, the checklist and the api, ui and desktop module plans; the progress bar was redrawn.
 - BDD: new scenario files [`row_facts_recent_and_destinations_API-S-011.feature`](../../apps/filesquid/crates/api/tests/features/row_facts_recent_and_destinations_API-S-011.feature), [`zip_download_and_history_object_API-S-028.feature`](../../apps/filesquid/crates/api/tests/features/zip_download_and_history_object_API-S-028.feature), [`copy_provenance_and_streamed_copies_API-S-011.feature`](../../apps/filesquid/crates/api/tests/features/copy_provenance_and_streamed_copies_API-S-011.feature), [`metadata_command_envelopes_API-S-002.feature`](../../apps/filesquid/crates/api/tests/features/metadata_command_envelopes_API-S-002.feature), [`collection_move_revision_API-S-011.feature`](../../apps/filesquid/crates/api/tests/features/collection_move_revision_API-S-011.feature), [`self_scoped_journal_API-S-031.feature`](../../apps/filesquid/crates/api/tests/features/self_scoped_journal_API-S-031.feature), [`row_facts_in_the_drive_UI-S-026.feature`](../../apps/filesquid/ui/tests/features/row_facts_in_the_drive_UI-S-026.feature) and [`monitor_by_role_UI-S-032.feature`](../../apps/filesquid/ui/tests/features/monitor_by_role_UI-S-032.feature); scenarios added to the UI-S-030, UI-S-035 and SRS-UI-007 feature files. The `filesquid-api` harness reports the new scenarios as skipped until their rows add step definitions; no desktop feature file was touched, because the desktop harness fails on skipped steps.

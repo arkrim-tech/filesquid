@@ -39,6 +39,11 @@ Feature: Row facts in the Drive
     Then the copy request should send collection_id and folder "2026"
     And the copy should be listed under the path the API answered
 
+  Scenario: Storage used names the history it includes
+    Given the API reports a library total of 2 GB with history bytes of 300 MB
+    When the sidebar shows Storage used
+    Then the caption should read "incl. 300 MB history" from fileStorageCaptionHistory (owner decision 2026-10-31, verbatim: "well do a")
+
   Scenario: The ZIP dialog says the owner's own ZIP keeps metadata
     When I open Download ZIP for 3 files
     Then the dialog should show "Metadata kept" and "Files are downloaded as they are stored. Location and identity details in them are not removed. Sharing applies your privacy settings." from the label table
