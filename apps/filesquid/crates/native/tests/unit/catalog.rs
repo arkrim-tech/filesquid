@@ -94,6 +94,7 @@ fn raw(library_id: &str, revision: &str, op: &str, changes: Vec<CatalogChange>) 
         journal: JournalEntry::new("library.test", Outcome::Succeeded).target(library_id),
         created_id: None,
         deletion: None,
+        restored_into: Vec::new(),
     }
 }
 
