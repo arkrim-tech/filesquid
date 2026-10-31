@@ -6,6 +6,8 @@ import { FsAppShell } from "./components/fs-app-shell";
 import { FsBreadcrumb } from "./components/fs-breadcrumb";
 import { FsDestinationPicker } from "./components/fs-destination-picker";
 import { FsNewMenu } from "./components/fs-new-menu";
+import { FsImportDialog } from "./components/fs-import-dialog";
+import { FsJobsPanel } from "./components/fs-jobs-panel";
 import { FsDriveView } from "./components/fs-drive-view";
 import { FsSearchBar } from "./components/fs-search-bar";
 import { FsFileBrowser } from "./components/fs-file-browser";
@@ -287,6 +289,63 @@ export {
   type NewAction,
   type NewMenuOptions,
 } from "./components/fs-new-menu";
+export {
+  FsImportDialog,
+  IMPORT_STARTED_EVENT,
+  type ImportDialogOptions,
+  type ImportRequest,
+} from "./components/fs-import-dialog";
+export { FsJobsPanel, type JobsPanelOptions } from "./components/fs-jobs-panel";
+export {
+  mountImports,
+  type ImportRouteOptions,
+  type MountedImports,
+  type UploadClient,
+} from "./app/import-route";
+export { ClientImportSource, type ImportClient } from "./imports/client-source";
+export { ClientJobSource, type JobClient } from "./imports/jobs-source";
+export { JobsStore, type JobEntry, type JobsStoreOptions } from "./imports/jobs-store";
+export { NamedDestinations, type DestinationLookup } from "./imports/directory";
+export {
+  DESTINATION_ROUTE,
+  clientDestinationLookup,
+  parseResolvedDestination,
+  type DestinationClient,
+} from "./imports/destination-source";
+export { MemoryImportSource, MemoryJobSource } from "./imports/memory-source";
+export {
+  DestinationRequiredError,
+  DestinationUnresolvedError,
+  fileRefusal,
+  importFailure,
+  type ImportStep,
+} from "./imports/failure";
+export {
+  allowedControls,
+  destinationFolder,
+  destinationText,
+  itemStatus,
+  jobPhase,
+  numberedName,
+  pathSuffixRange,
+  shownItems,
+  summariseItems,
+  type DestinationDirectory,
+  type ImportPlan,
+  type ImportSource,
+  type ImportSourceKind,
+  type ItemSummary,
+  type JobChange,
+  type JobControls,
+  type JobItem,
+  type JobPhase,
+  type JobSource,
+  type JobView,
+  type PlanAnswer,
+  type PlanItem,
+  type PlanRequest,
+  type ResolvedDestination,
+} from "./imports/model";
 export { FILTER_EVENT } from "./components/fs-app-shell";
 export { DriveList, type DriveItem, type DriveLayout } from "./components/drive-list";
 export { Selection, MAX_SELECTED, type SelectionState } from "./drive/selection";
@@ -442,6 +501,10 @@ export function defineElements(): void {
   }
   if (!customElements.get("fs-drive-view")) customElements.define("fs-drive-view", FsDriveView);
   if (!customElements.get("fs-new-menu")) customElements.define("fs-new-menu", FsNewMenu);
+  if (!customElements.get("fs-import-dialog")) {
+    customElements.define("fs-import-dialog", FsImportDialog);
+  }
+  if (!customElements.get("fs-jobs-panel")) customElements.define("fs-jobs-panel", FsJobsPanel);
   if (!customElements.get("fs-search-bar")) customElements.define("fs-search-bar", FsSearchBar);
   if (!customElements.get("fs-details-panel")) {
     customElements.define("fs-details-panel", FsDetailsPanel);

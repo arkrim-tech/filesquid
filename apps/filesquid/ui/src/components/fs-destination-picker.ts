@@ -47,6 +47,11 @@ export interface DestinationPickerOptions {
   readonly current?: string;
   /** Whether the browser is online; defaults to `navigator.onLine`. */
   readonly online?: () => boolean;
+  /**
+   * `import` draws the tree as the upload dialog does (UI-1.2, mockup 52): rows 31 px high, a
+   * 1.5 px border and 8 px radius, and "Not a destination" at the right of each library row.
+   */
+  readonly variant?: "import";
 }
 
 /** One visible row of the tree. */
@@ -70,6 +75,11 @@ const STYLE = `
   .name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .current { color: var(--fs-on-surface-muted); }
   .empty { margin: 0; padding: var(--fs-space-3); color: var(--fs-on-surface-variant); }
+  .not-destination { margin-inline-start: auto; font-weight: 400; color: var(--fs-on-surface-muted); }
+  :host([data-variant="import"]) { block-size: 100%; }
+  :host([data-variant="import"]) ul { box-sizing: border-box; block-size: 100%; border-width: 1.5px; }
+  :host([data-variant="import"]) li { min-block-size: 1.9375rem; }
+  :host([data-variant="import"]) li[data-selectable="false"] { color: var(--fs-on-surface-muted); }
   [hidden] { display: none !important; }
 `;
 
@@ -87,6 +97,7 @@ export class FsDestinationPicker extends HTMLElement {
   private roots: readonly NavigationNode[] = [];
   private chosen?: DestinationChoice;
   private generation = 0;
+  private loading: Promise<void> = Promise.resolve();
 
   constructor() {
     super();
@@ -104,8 +115,10 @@ export class FsDestinationPicker extends HTMLElement {
    */
   configure(options: DestinationPickerOptions): void {
     this.options = options;
+    if (options.variant) this.dataset.variant = options.variant;
+    else delete this.dataset.variant;
     this.clearChoice();
-    if (this.isConnected) void this.load();
+    if (this.isConnected) this.loading = this.load();
   }
 
   /** Forget the chosen destination (the new tree may not hold it) and announce that. */
@@ -131,9 +144,38 @@ export class FsDestinationPicker extends HTMLElement {
     return this.chosen;
   }
 
+  /**
+   * Open the tree down to a collection or folder and choose it, so a dialog opened from a view of
+   * that place starts with it as the destination (UI-1.2). Network I/O via the source for the
+   * levels on the way.
+   *
+   * @param node The node handle of the collection or folder.
+   * @returns Whether the node was found and chosen; false leaves the choice empty.
+   */
+  async preselect(node: string): Promise<boolean> {
+    const source = this.options?.source;
+    if (!source) return false;
+    await this.loading;
+    const generation = this.generation;
+    try {
+      const { ancestors } = await source.list(node);
+      for (const ancestor of ancestors) {
+        if (ancestor.node === node || ancestor.kind === "repository") continue;
+        if (ancestor.has_children) await this.expand(ancestor.node);
+      }
+    } catch (error) {
+      if (generation === this.generation)
+        this.showFailure("FileSquid could not read a destination", error);
+      return false;
+    }
+    if (generation !== this.generation) return false;
+    this.choose(node);
+    return this.chosen?.node === node;
+  }
+
   /** Read the tree when attached. */
   connectedCallback(): void {
-    if (this.options && this.roots.length === 0) void this.load();
+    if (this.options && this.roots.length === 0) this.loading = this.load();
   }
 
   /** Drop answers still in flight once detached. */
@@ -313,7 +355,8 @@ export class FsDestinationPicker extends HTMLElement {
 
   /** The element of one row. */
   private rowElement(row: Row): HTMLElement {
-    const labels = (this.options as DestinationPickerOptions).labels;
+    const options = this.options as DestinationPickerOptions;
+    const labels = options.labels;
     const li = document.createElement("li");
     li.setAttribute("role", "treeitem");
     li.tabIndex = -1;
@@ -334,6 +377,12 @@ export class FsDestinationPicker extends HTMLElement {
     name.className = "name";
     name.textContent = row.trail.at(-1) ?? "";
     li.append(chevron, icon(row.node.kind === "library" ? "library" : "collection"), name);
+    if (options.variant === "import" && row.node.kind === "library") {
+      const note = document.createElement("span");
+      note.className = "not-destination";
+      note.textContent = labels.importNotDestination;
+      li.append(note);
+    }
     if (row.node.node === this.options?.current) {
       const current = document.createElement("span");
       current.className = "current";

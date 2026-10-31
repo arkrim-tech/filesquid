@@ -42,6 +42,7 @@ export class FsNewMenu extends HTMLElement {
   private options?: NewMenuOptions;
   private place?: string;
   private ready = false;
+  private folderReady = true;
   private menu?: OpenMenu;
   private readonly onNew = (event: Event) => this.open(event);
 
@@ -84,6 +85,16 @@ export class FsNewMenu extends HTMLElement {
     this.ready = value;
   }
 
+  /** Whether New folder is offered when a place is shown; true until a host says otherwise. */
+  get folders(): boolean {
+    return this.folderReady;
+  }
+
+  /** Say whether New folder works on this host (UI-1.2 enables the upload items before it). */
+  set folders(value: boolean) {
+    this.folderReady = value;
+  }
+
   /** Listen for the shell's New button. */
   connectedCallback(): void {
     document.addEventListener(NEW_EVENT, this.onNew);
@@ -109,10 +120,13 @@ export class FsNewMenu extends HTMLElement {
     const entries = newEntries(labels, enabled);
     // A host that cannot place uploads says so everywhere, before it says where to go.
     const reasoned = this.ready ? entries : withReason(entries, labels.fileActionUnavailable);
+    const gated = this.folderReady
+      ? reasoned
+      : withoutFolders(reasoned, labels.fileActionUnavailable);
     this.menu = openMenu(layer, { element: opener }, opener, {
       className: "new-menu",
       label: labels.fileNewMenu,
-      entries: reasoned,
+      entries: gated,
       onChoose: (id) => this.choose(id),
     });
   }
@@ -133,5 +147,17 @@ function withReason(
 ): ReturnType<typeof newEntries> {
   return entries.map((entry) =>
     entry.kind === "item" && entry.disabled ? { ...entry, reason } : entry,
+  );
+}
+
+/** The same entries with New folder disabled, saying it is not available here yet. */
+function withoutFolders(
+  entries: ReturnType<typeof newEntries>,
+  reason: string,
+): ReturnType<typeof newEntries> {
+  return entries.map((entry) =>
+    entry.kind === "item" && entry.id === "new-folder"
+      ? { ...entry, disabled: true, reason }
+      : entry,
   );
 }

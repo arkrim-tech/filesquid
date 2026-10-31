@@ -43,6 +43,8 @@ import {
   defineElements,
   detectHost,
   libraryRepairHref,
+  mountImports,
+  clientDestinationLookup,
   memoryTokenStore,
   resolveLocale,
   sharedNavigationStore,
@@ -111,6 +113,13 @@ shell?.append(tree);
 if (shell) bindNavigationRoute(shell, { labels, source: navigation, tree, drive });
 if (shell) bindDriveRoute(shell, { labels, navigation, drive, newMenu, searchBar });
 if (shell) bindStorage(shell, client);
+// The upload dialog, the Jobs panel and the footer status (UI-1.2). The API gives no collection ID
+// for a navigation node yet; the lookup asks the route the platform engineer is to add, and the
+// dialog says it cannot name the collection, sending nothing, until a host answers it.
+if (shell) {
+  const lookup = clientDestinationLookup(client);
+  mountImports(shell, { labels, client, navigation, newMenu, lookup });
+}
 if (shell) {
   const settings = { labels, client, theme, distribution: filesquid };
   bindSettingsRoute(shell, { ...settings, contractVersion: CONTRACT_VERSION, preferences });
