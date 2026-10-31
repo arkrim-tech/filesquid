@@ -230,5 +230,14 @@ fn a_file_from_an_earlier_build_is_still_read() {
     let found = load_or_create(&dir).expect("read");
     assert_eq!(found.id.as_str(), uuid);
     assert_eq!(found.source, InstallationSource::RestoredStore);
+    let upgraded = file_json(&dir);
+    assert_eq!(upgraded["schema"], 1, "{upgraded}");
+    assert_eq!(upgraded["installation_id"], uuid, "{upgraded}");
+    let created = upgraded["created"].as_str().expect("created");
+    assert!(created.ends_with('Z'), "UTC: {created}");
+    assert!(
+        filesquid_api::journal::parse_rfc3339_ms(created).is_some(),
+        "RFC 3339: {created}"
+    );
     std::fs::remove_dir_all(dir).unwrap();
 }

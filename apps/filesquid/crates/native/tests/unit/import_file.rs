@@ -423,6 +423,30 @@ async fn an_import_commit_is_linked_to_the_journal_and_carries_its_record() {
     );
 }
 
+/// DE-S-011: a replay whose recorded journal cannot be read in full fails instead of
+/// answering the import with entries missing, so the job keeps it to retry.
+#[tokio::test]
+async fn a_replay_whose_recorded_journal_is_unreadable_fails() {
+    let dir = TempDir::new("unreadable-journal");
+    let (files, _backend) = library(&dir.0).await;
+    with_provenance(&files);
+    let build = build();
+    let path = source(&dir.0, "a.txt", b"alpha");
+    import_file(&files, &request(&path, &build))
+        .await
+        .expect("imported");
+    let journal = dir
+        .0
+        .join("root")
+        .join("files")
+        .join(FILE_ID)
+        .join("v1/content/provenance/v1.journal.jsonl");
+    assert!(journal.is_file(), "{journal:?}");
+    std::fs::write(&journal, b"{\"operation\":\"ocfl.commit\"}\n").expect("corrupt");
+    let replayed = import_file(&files, &request(&path, &build)).await;
+    assert!(replayed.is_err(), "a partial journal is never answered");
+}
+
 /// The head version of the imported file's object. Storage I/O.
 async fn object_head(backend: &FsBackend) -> String {
     filesquid_ocfl::read::Object::open(backend, &format!("files/{FILE_ID}"))

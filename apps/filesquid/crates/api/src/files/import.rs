@@ -197,27 +197,43 @@ fn import_caller(actor: &str, import: &SourceImport) -> Caller {
 
 /// The entries the import commit of `file_id` recorded in its version
 /// (`provenance/v1.journal.jsonl`), under the IDs the commit named; none when the commit
-/// recorded none (no provenance installed). A file or line that cannot be read is logged
-/// (stdout, without its content) and skipped: the import itself is committed, and the rebuild
-/// from files (CL-1.9) reads the same file again. Storage I/O.
-async fn recorded_entries<B: StorageBackend>(backend: &B, file_id: &FileId) -> Vec<JournalEntry> {
-    let lines = match read_import_journal(backend, file_id).await {
-        Ok(lines) => lines,
-        Err(err) => {
-            tracing::warn!(error = ?err, "an import's recorded journal entries could not be read");
-            return Vec::new();
-        }
-    };
-    lines
-        .iter()
-        .filter_map(|line| match serde_json::from_str::<JournalEntry>(line) {
-            Ok(entry) => Some(entry),
-            Err(err) => {
-                tracing::warn!(error = %err, "a recorded journal entry could not be parsed");
-                None
-            }
+/// recorded none (no provenance installed). Storage I/O.
+///
+/// # Errors
+/// The journal file cannot be read, or a line of it is not an entry with an ID: the replay
+/// fails rather than answer a partial journal, so the job keeps the import to retry and never
+/// acknowledges it with entries missing (DE-S-011).
+async fn recorded_entries<B: StorageBackend>(
+    backend: &B,
+    file_id: &FileId,
+) -> Result<Vec<JournalEntry>, FileError> {
+    let lines = read_import_journal(backend, file_id)
+        .await
+        .map_err(canonical_error)?;
+    lines.iter().map(|line| recorded_entry(line)).collect()
+}
+
+/// One recorded journal line as an entry with its ID. Pure but for the log.
+///
+/// # Errors
+/// The line is not a journal entry, or names no ID.
+fn recorded_entry(line: &str) -> Result<JournalEntry, FileError> {
+    let unreadable = |reason: &str| {
+        tracing::warn!(
+            reason,
+            "a recorded journal entry of an import is unreadable"
+        );
+        canonical_error(crate::canonical::CanonicalError::Decode {
+            path: crate::history::journal_path("v1"),
+            reason: reason.to_string(),
         })
-        .collect()
+    };
+    let entry: JournalEntry =
+        serde_json::from_str(line).map_err(|_| unreadable("not a journal entry"))?;
+    match entry.id {
+        Some(_) => Ok(entry),
+        None => Err(unreadable("no journal ID")),
+    }
 }
 
 /// The journal lines of version `v1` of the file object of `file_id`. Storage I/O.
@@ -239,7 +255,7 @@ async fn read_import_journal<B: StorageBackend>(
 /// not exist yet. Storage I/O.
 ///
 /// # Errors
-/// As [`replayed`]; a read failure.
+/// As [`replayed`]; a read failure; a recorded journal that cannot be read in full.
 async fn imported_before<B, R, S>(
     library: &Library<B, R, S>,
     import: &SourceImport,
@@ -258,7 +274,7 @@ where
         return Ok(None);
     };
     let view = replayed(import, &original.record)?;
-    let entries = recorded_entries(backend, file_id).await;
+    let entries = recorded_entries(backend, file_id).await?;
     Ok(Some(Committed { view, entries }))
 }
 

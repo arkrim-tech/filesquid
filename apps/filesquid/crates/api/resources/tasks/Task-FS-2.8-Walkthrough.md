@@ -1,6 +1,6 @@
 # Task FS-2.8 Walkthrough: PROV-O history
 
-Global [Task FS-2.8](../../../../../../resources/implementation-plan.md#task-fs-28) ([ADR 040](../../../../../../resources/architecture/040-prov-o-history.md)). It ran as nine module slices on several branches, in the order the plan sets. Each slice's walkthrough holds its own failing runs, raw test output and SRS mapping. This walkthrough indexes them and records that the last slice, DE-0.10, closed the task.
+Global [Task FS-2.8](../../../../../../resources/implementation-plan.md#task-fs-28) ([ADR 040](../../../../../../resources/architecture/040-prov-o-history.md)). It ran as nine module slices on several branches, in the order the plan sets. Each slice's walkthrough holds its own failing runs, raw test output and SRS mapping. This walkthrough indexes them. DE-0.10, the closing desktop slice, was the last to finish (after API-F2.9 and API-F2.20, which the plan orders after it) and closed the task.
 
 ## Slices
 
@@ -21,7 +21,7 @@ Global [Task FS-2.8](../../../../../../resources/implementation-plan.md#task-fs-
 | Requirement | Covered by |
 |---|---|
 | SRS-F-067 PROV-O history of every version and change | every slice above; BDD [`prov_o_history_F-067.feature`](../../tests/features/prov_o_history_F-067.feature), [`prov_o_model_F-067.feature`](../../../prov/tests/features/prov_o_model_F-067.feature), [`prov_o_history_contract_F-067.feature`](../../../core/tests/features/prov_o_history_contract_F-067.feature), [`desktop_installation_F-067.feature`](../../../desktop/tests/features/desktop_installation_F-067.feature) |
-| API-S-028 PROV-O record per commit and journal linkage | API-F2.8, API-F2.20; BDD [`journal_and_commit_linkage_API-S-028.feature`](../../tests/features/journal_and_commit_linkage_API-S-028.feature) |
+| API-S-028 PROV-O record per commit and journal linkage | API-F2.8, API-F2.9, API-F2.20; BDD [`journal_and_commit_linkage_API-S-028.feature`](../../tests/features/journal_and_commit_linkage_API-S-028.feature) |
 | API-S-029 History routes and backfill | API-F2.9; BDD [`prov_o_history_records_routes_and_backfill_API-S-029.feature`](../../tests/features/prov_o_history_records_routes_and_backfill_API-S-029.feature) |
 | DE-S-011 Native journal and commit linkage | DE-0.10 and the FS-2.8 host wiring |
 | DE-S-012 Installation UUID | DE-0.10 |
@@ -30,7 +30,7 @@ The task's three proofs live in the slices that own them: one record per covered
 
 ## Closing run
 
-The closing slice, DE-0.10, passed `FULL=1 bash scripts/pre-commit.sh` on its head commit; the `Test scope:` line is in its pull request.
+The closing desktop slice, DE-0.10, passed `FULL=1 bash scripts/pre-commit.sh` on its head commit; the `Test scope:` line is in its pull request.
 
 ## Mocked Environment Variables
 

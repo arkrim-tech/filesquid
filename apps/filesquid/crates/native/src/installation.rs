@@ -194,8 +194,9 @@ fn forget_created(store: &Connection, id: &InstallationId, source: InstallationS
 /// launches over the same data directory are serialised there, so the first to commit names
 /// the ID and a later one reads it. No file I/O happens inside the transaction, so the
 /// journal writer sharing the database is never held up by it. The creation time is the
-/// file's, else the store's, else now; the file is to be written when it is missing or lacks
-/// it. Database I/O.
+/// file's, else the store's, else now; the store is rewritten whenever it holds another one,
+/// so both copies end with one creation time, and the file is to be written when it is
+/// missing or lacks it. Database I/O.
 fn settle_store(
     store: &mut Connection,
     in_file: Option<StoredCopy>,
@@ -212,9 +213,10 @@ fn settle_store(
     let file_created = in_file.and_then(|c| c.created);
     let store_created = in_store.and_then(|c| c.created);
     let write_file = file_created.is_none();
-    let rewrite_store = store_created.is_none();
-    let created = file_created.or(store_created).unwrap_or_else(now_rfc3339);
-    if rewrite_store {
+    let created = file_created
+        .or(store_created.clone())
+        .unwrap_or_else(now_rfc3339);
+    if store_created.as_deref() != Some(created.as_str()) {
         write_store(&tx, &id, &created)?;
     }
     tx.commit().map_err(|err| store_error(&err))?;
@@ -271,14 +273,17 @@ fn read_file(path: &Path) -> Result<Option<StoredCopy>, InstallationError> {
     parse_file(&text).map(Some)
 }
 
-/// The copy an installation file's text holds: schema 1, or an earlier build's file with no
-/// `schema` and no `created`. Any other schema, or a `created` that is not RFC 3339 UTC, is
-/// malformed. Pure.
+/// The copy an installation file's text holds: schema 1 with its `created`, or an earlier
+/// build's file with neither `schema` nor `created`. Any other schema, a schema 1 file
+/// without `created`, an unversioned file with one, or a `created` that is not RFC 3339 UTC
+/// is malformed. Pure.
 fn parse_file(text: &str) -> Result<StoredCopy, InstallationError> {
     let malformed = || InstallationError::Malformed { copy: "file" };
     let value: serde_json::Value = serde_json::from_str(text).map_err(|_| malformed())?;
     let schema = value.get("schema").map(serde_json::Value::as_u64);
-    if !matches!(schema, None | Some(Some(FILE_SCHEMA))) {
+    let versioned = matches!(schema, Some(Some(FILE_SCHEMA)));
+    let known = versioned || schema.is_none();
+    if !known || versioned != value.get("created").is_some() {
         return Err(malformed());
     }
     let uuid = value
@@ -363,23 +368,33 @@ fn open_store(path: &Path) -> Result<Connection, InstallationError> {
 }
 
 /// Add the `created` column to an installation table an earlier build created without it.
-/// Idempotent; the old row reads it as absent. Database I/O.
+/// Idempotent, and safe when concurrent launches migrate at once: an `ALTER` that fails
+/// because another launch added the column first is accepted. The old row reads it as absent.
+/// Database I/O.
 fn migrate_store(conn: &Connection) -> Result<(), InstallationError> {
-    let present: bool = conn
-        .query_row(
-            "SELECT EXISTS (SELECT 1 FROM pragma_table_info('host_installation')
-             WHERE name = 'created')",
-            [],
-            |r| r.get(0),
-        )
-        .map_err(|err| store_error(&err))?;
-    if present {
+    if has_created_column(conn)? {
         return Ok(());
     }
-    conn.execute_batch("ALTER TABLE host_installation ADD COLUMN created TEXT")
-        .map_err(|err| store_error(&err))?;
-    tracing::info!("migrated the installation store copy forward");
+    let altered = conn.execute_batch("ALTER TABLE host_installation ADD COLUMN created TEXT");
+    match altered {
+        Ok(()) => tracing::info!("migrated the installation store copy forward"),
+        Err(err) if has_created_column(conn)? => {
+            tracing::debug!(error = %err, "another launch migrated the installation store copy");
+        }
+        Err(err) => return Err(store_error(&err)),
+    }
     Ok(())
+}
+
+/// Whether the installation table has its `created` column. Database I/O.
+fn has_created_column(conn: &Connection) -> Result<bool, InstallationError> {
+    conn.query_row(
+        "SELECT EXISTS (SELECT 1 FROM pragma_table_info('host_installation')
+         WHERE name = 'created')",
+        [],
+        |r| r.get(0),
+    )
+    .map_err(|err| store_error(&err))
 }
 
 /// The store copy, if present; a creation time that is not RFC 3339 UTC reads as absent
@@ -467,6 +482,41 @@ mod tests {
         assert!(settled.write_file);
         let copy = read_store(&conn).expect("read").expect("a copy");
         assert_eq!(copy.created.as_deref(), Some(settled.created.as_str()));
+        drop(conn);
+        std::fs::remove_dir_all(dir).expect("cleanup");
+    }
+
+    #[test]
+    fn mixed_file_shapes_are_malformed() {
+        let uuid = "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d";
+        let schema_without_created = format!(r#"{{"schema":1,"installation_id":"{uuid}"}}"#);
+        let created_without_schema =
+            format!(r#"{{"installation_id":"{uuid}","created":"2026-10-31T00:00:00.000Z"}}"#);
+        for text in [schema_without_created, created_without_schema] {
+            assert!(
+                matches!(
+                    parse_file(&text),
+                    Err(InstallationError::Malformed { copy: "file" })
+                ),
+                "{text}"
+            );
+        }
+    }
+
+    #[test]
+    fn copies_with_two_creation_times_settle_on_the_files() {
+        let (mut conn, dir) = store("two-times");
+        let id = InstallationId::parse("0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d").expect("id");
+        write_store(&conn, &id, "2026-01-01T00:00:00.000Z").expect("store copy");
+        let file = StoredCopy {
+            id: id.clone(),
+            created: Some("2026-10-31T00:00:00.000Z".to_string()),
+        };
+        let settled = settle_store(&mut conn, Some(file)).expect("settle");
+        assert_eq!(settled.source, InstallationSource::Stored);
+        assert_eq!(settled.created, "2026-10-31T00:00:00.000Z");
+        let stored = read_store(&conn).expect("read").expect("a copy");
+        assert_eq!(stored.created.as_deref(), Some("2026-10-31T00:00:00.000Z"));
         drop(conn);
         std::fs::remove_dir_all(dir).expect("cleanup");
     }

@@ -139,7 +139,17 @@ FileSquid MVP (early access) on the macOS desktop: phases F0 to F3, closed by ga
     - [x] [UI-F2.2](../apps/filesquid/ui/resources/plan.md#phase-f2-default-ui-global-tasks-fs-21-fs-22-fs-24-fs-25-11-12-after-the-mvp-ui-f26-in-global-task-fs-23-ui-f210-and-ui-f212-in-global-task-fs-27-ui-f213-in-global-task-fs-26-ui-f25-in-global-task-fs-c1-phase-c) `<fs-file-browser>`
     - [x] [UI-F2.3](../apps/filesquid/ui/resources/plan.md#phase-f2-default-ui-global-tasks-fs-21-fs-22-fs-24-fs-25-11-12-after-the-mvp-ui-f26-in-global-task-fs-23-ui-f210-and-ui-f212-in-global-task-fs-27-ui-f213-in-global-task-fs-26-ui-f25-in-global-task-fs-c1-phase-c) Details and Versions panels
     - [x] [UI-F2.4](../apps/filesquid/ui/resources/plan.md#phase-f2-default-ui-global-tasks-fs-21-fs-22-fs-24-fs-25-11-12-after-the-mvp-ui-f26-in-global-task-fs-23-ui-f210-and-ui-f212-in-global-task-fs-27-ui-f213-in-global-task-fs-26-ui-f25-in-global-task-fs-c1-phase-c) `<fs-metadata-panel>`
-22. [ ] [Task 1.2](./implementation-plan.md#task-1.2) Safe file and folder import with durable jobs
+22. [x] [Task FS-2.8](./implementation-plan.md#task-fs-2.8) PROV-O history
+    - [x] [CO-0.11](../apps/filesquid/crates/core/resources/plan.md#phase-f2-prov-o-history-contracts-global-task-fs-28) PROV-O history contract types
+    - [x] [IO-1.5](../apps/filesquid/crates/ocfl/resources/plan.md#phase-f2-version-bound-files-for-prov-o-history-global-task-fs-28) Version-bound logical files in the change model
+    - [x] [PV-0.1](../apps/filesquid/crates/prov/resources/plan.md#phase-f2-prov-o-history-engine-global-task-fs-28) Crate, PROV-O model and profile `filesquid-prov/1`
+    - [x] [MD-0.9](../apps/filesquid/crates/metadata/resources/plan.md#phase-f2-commit-options-for-prov-o-history-global-task-fs-28) Commit options on the `ocfl` store
+    - [x] [PV-0.2](../apps/filesquid/crates/prov/resources/plan.md#phase-f2-prov-o-history-engine-global-task-fs-28) `ocfl` feature: records in OCFL objects and reconstruction
+    - [x] [API-F2.8](../apps/filesquid/crates/api/resources/plan.md#phase-f2-prov-o-history-global-task-fs-28) Journal and commit linkage for PROV-O history
+    - [x] [DE-0.10](../apps/filesquid/crates/desktop/resources/plan.md#phase-f0-catalog-jobs-ocfl-coordinator-global-task-05) Installation UUID, native journal columns, outbox events and coordinator commit linkage
+    - [x] [API-F2.9](../apps/filesquid/crates/api/resources/plan.md#phase-f2-prov-o-history-global-task-fs-28) PROV-O records, history routes and backfill
+    - [x] [API-F2.20](../apps/filesquid/crates/api/resources/plan.md#phase-f2-prov-o-history-global-task-fs-28) Repair consent statement names the repair's history version
+23. [ ] [Task 1.2](./implementation-plan.md#task-1.2) Safe file and folder import with durable jobs
     - [x] [DE-1.2](../apps/filesquid/crates/desktop/resources/plan.md#phases-f2-i1-and-f5-library-import-gallery-organize-and-setup-global-tasks-1116) File and folder import
     - [x] [IO-1.7](../apps/filesquid/crates/ocfl/resources/plan.md#phase-f2-streamed-single-file-stage-global-task-12) Streamed single-file stage
     - [x] [DE-1.7](../apps/filesquid/crates/desktop/resources/plan.md#phases-f2-i1-and-f5-library-import-gallery-organize-and-setup-global-tasks-1116) Owner-folder library index, home collections and retirement of in-app catalog roots
@@ -149,7 +159,7 @@ FileSquid MVP (early access) on the macOS desktop: phases F0 to F3, closed by ga
     - [x] [DE-1.8](../apps/filesquid/crates/desktop/resources/plan.md#phases-f2-i1-and-f5-library-import-gallery-organize-and-setup-global-tasks-1116) Host side of the upload review, per-file progress, rebuild job and library facts
     - [ ] [UI-1.2](../apps/filesquid/ui/resources/plan.md#phase-f2-default-ui-global-tasks-fs-21-fs-22-fs-24-fs-25-11-12-after-the-mvp-ui-f26-in-global-task-fs-23-ui-f210-and-ui-f212-in-global-task-fs-27-ui-f213-in-global-task-fs-26-ui-f25-in-global-task-fs-c1-phase-c) Import UI with job progress
     - [ ] [UI-1.3](../apps/filesquid/ui/resources/plan.md#phase-f2-default-ui-global-tasks-fs-21-fs-22-fs-24-fs-25-11-12-after-the-mvp-ui-f26-in-global-task-fs-23-ui-f210-and-ui-f212-in-global-task-fs-27-ui-f213-in-global-task-fs-26-ui-f25-in-global-task-fs-c1-phase-c) First use, library facts, recent libraries and the rebuild job
-23. [ ] [Task FS-2.5](./implementation-plan.md#task-fs-2.5) Drive-parity views, search and version restore
+24. [ ] [Task FS-2.5](./implementation-plan.md#task-fs-2.5) Drive-parity views, search and version restore
     - [ ] [API-F2.2](../apps/filesquid/crates/api/resources/plan.md#phase-f2-activity-and-health-monitoring-global-task-fs-24-and-drive-parity-operations-global-task-fs-25-api-f24-in-global-task-fs-27-after-the-mvp) View operation, preferences, storage use, copy, move and ZIP download
     - [ ] [API-F2.3](../apps/filesquid/crates/api/resources/plan.md#phase-f2-activity-and-health-monitoring-global-task-fs-24-and-drive-parity-operations-global-task-fs-25-api-f24-in-global-task-fs-27-after-the-mvp) Search operation and operator grammar
     - [x] [API-F2.5](../apps/filesquid/crates/api/resources/plan.md#phase-f2-activity-and-health-monitoring-global-task-fs-24-and-drive-parity-operations-global-task-fs-25-api-f24-in-global-task-fs-27-after-the-mvp) Version listing, labels, restore and history size
@@ -163,16 +173,6 @@ FileSquid MVP (early access) on the macOS desktop: phases F0 to F3, closed by ga
     - [x] [UI-F2.11](../apps/filesquid/ui/resources/plan.md#phase-f2-default-ui-global-tasks-fs-21-fs-22-fs-24-fs-25-11-12-after-the-mvp-ui-f26-in-global-task-fs-23-ui-f210-and-ui-f212-in-global-task-fs-27-ui-f213-in-global-task-fs-26-ui-f25-in-global-task-fs-c1-phase-c) Versions panel labels, download and history size
     - [ ] [UI-F2.19](../apps/filesquid/ui/resources/plan.md#phase-f2-default-ui-global-tasks-fs-21-fs-22-fs-24-fs-25-11-12-after-the-mvp-ui-f26-in-global-task-fs-23-ui-f210-and-ui-f212-in-global-task-fs-27-ui-f213-in-global-task-fs-26-ui-f25-in-global-task-fs-c1-phase-c) Preview top bar and zoom chip
     - [ ] [UI-F2.17](../apps/filesquid/ui/resources/plan.md#phase-f2-default-ui-global-tasks-fs-21-fs-22-fs-24-fs-25-11-12-after-the-mvp-ui-f26-in-global-task-fs-23-ui-f210-and-ui-f212-in-global-task-fs-27-ui-f213-in-global-task-fs-26-ui-f25-in-global-task-fs-c1-phase-c) Uploads and imports always target a collection or folder
-24. [x] [Task FS-2.8](./implementation-plan.md#task-fs-2.8) PROV-O history
-    - [x] [CO-0.11](../apps/filesquid/crates/core/resources/plan.md#phase-f2-prov-o-history-contracts-global-task-fs-28) PROV-O history contract types
-    - [x] [IO-1.5](../apps/filesquid/crates/ocfl/resources/plan.md#phase-f2-version-bound-files-for-prov-o-history-global-task-fs-28) Version-bound logical files in the change model
-    - [x] [PV-0.1](../apps/filesquid/crates/prov/resources/plan.md#phase-f2-prov-o-history-engine-global-task-fs-28) Crate, PROV-O model and profile `filesquid-prov/1`
-    - [x] [MD-0.9](../apps/filesquid/crates/metadata/resources/plan.md#phase-f2-commit-options-for-prov-o-history-global-task-fs-28) Commit options on the `ocfl` store
-    - [x] [PV-0.2](../apps/filesquid/crates/prov/resources/plan.md#phase-f2-prov-o-history-engine-global-task-fs-28) `ocfl` feature: records in OCFL objects and reconstruction
-    - [x] [API-F2.8](../apps/filesquid/crates/api/resources/plan.md#phase-f2-prov-o-history-global-task-fs-28) Journal and commit linkage for PROV-O history
-    - [x] [DE-0.10](../apps/filesquid/crates/desktop/resources/plan.md#phase-f0-catalog-jobs-ocfl-coordinator-global-task-05) Installation UUID, native journal columns, outbox events and coordinator commit linkage
-    - [x] [API-F2.9](../apps/filesquid/crates/api/resources/plan.md#phase-f2-prov-o-history-global-task-fs-28) PROV-O records, history routes and backfill
-    - [x] [API-F2.20](../apps/filesquid/crates/api/resources/plan.md#phase-f2-prov-o-history-global-task-fs-28) Repair consent statement names the repair's history version
 25. [ ] [Task FS-2.9](./implementation-plan.md#task-fs-2.9) Durable journal, Logs view and file panel tabs
     - [x] [API-F2.10](../apps/filesquid/crates/api/resources/plan.md#phase-f2-prov-o-history-global-task-fs-28) Client events, journal query filters and journal export
     - [x] [IO-1.6](../apps/filesquid/crates/ocfl/resources/plan.md#phase-f2-engine-warnings-with-object-references-global-task-fs-29) Copy-guard warnings name the object
