@@ -85,6 +85,25 @@ export const MAX_OBJECT_ID_BYTES = 1024;
 export const MAX_LIBRARY_ID_BYTES = 128;
 /** Most bytes a location ID may have. */
 export const MAX_LOCATION_ID_BYTES = 128;
+/** Most bytes a library name may have (API-S-019, API-S-038). */
+export const MAX_LIBRARY_NAME_BYTES = 1024;
+
+/**
+ * Whether a value is a library name the API accepts: 1 to 1,024 UTF-8 bytes, not blank, and
+ * without control characters (API-S-019, API-S-038). Pure.
+ *
+ * @param value The candidate name.
+ * @returns True for a valid name.
+ */
+export function isLibraryName(value: unknown): value is string {
+  if (typeof value !== "string" || value.trim() === "") return false;
+  if (new TextEncoder().encode(value).length > MAX_LIBRARY_NAME_BYTES) return false;
+  // No C0 or C1 control character and no DEL.
+  return ![...value].some((char) => {
+    const code = char.codePointAt(0) ?? 0;
+    return code < 0x20 || (code >= 0x7f && code <= 0x9f);
+  });
+}
 
 /** Hash of the library start page. */
 export const LIBRARY_ROUTE = "#/library";

@@ -694,5 +694,6 @@
   "jobStateCancelling": "cancelling",
   "jobStateCompleted": "finished",
   "jobStateFailed": "failed",
-  "jobStateCancelled": "cancelled"
+  "jobStateCancelled": "cancelled",
+  "libraryFirstUseNameInvalid": "The name can have at most 1,024 bytes and no control characters. Change it, or leave it blank."
 }

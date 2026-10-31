@@ -140,6 +140,38 @@ describe("<fs-first-use>", () => {
     expect(done[0]?.bubbles && done[0]?.composed).toBe(true);
   });
 
+  it("refuses a name the API would refuse, says so under the field and sends nothing", async () => {
+    const { dialog, source } = await mount();
+    button(dialog, "choose").click();
+    await settle();
+    source.calls.length = 0;
+    type(nameInput(dialog), "bad\u0007name");
+    button(dialog, "create").click();
+    await settle();
+    expect(source.calls).toEqual([]);
+    expect(nameInput(dialog).getAttribute("aria-invalid")).toBe("true");
+    const problem = rootOf(dialog).querySelector("#first-use-name-error") as HTMLElement;
+    expect(problem.hidden).toBe(false);
+    expect(problem.textContent).toBe(labels.libraryFirstUseNameInvalid);
+    expect(rootOf(dialog).activeElement).toBe(nameInput(dialog));
+    type(nameInput(dialog), "Good name");
+    expect(nameInput(dialog).hasAttribute("aria-invalid")).toBe(false);
+    expect(problem.hidden).toBe(true);
+    button(dialog, "create").click();
+    await settle();
+    expect(source.calls[0]).toBe("create:loc-1:Good name");
+  });
+
+  it("accepts a name longer than 256 characters when it is within 1,024 bytes", async () => {
+    const { dialog, source } = await mount();
+    button(dialog, "choose").click();
+    await settle();
+    type(nameInput(dialog), "n".repeat(900));
+    button(dialog, "create").click();
+    await settle();
+    expect(source.calls).toContain(`create:loc-1:${"n".repeat(900)}`);
+  });
+
   it("sends no name when the field is blank, so the host names the library", async () => {
     const { dialog, source } = await mount();
     type(nameInput(dialog), "   ");

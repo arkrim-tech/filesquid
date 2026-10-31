@@ -2,7 +2,7 @@
  * The words the library screens build from the host's facts and a job's view (UI-1.3,
  * UI-S-027, mockups 01, 04 and 41): when a library was opened, its free space, the rebuild's
  * progress line, the state chip and the progress fraction. Every word comes from the label
- * table; a figure the host did not give (an unreadable volume, an unknown total) is left out,
+ * table; a figure the host did not give (unknown free space, an unknown total) is left out,
  * never invented. Pure.
  */
 import { formatSize } from "../files/model";
@@ -74,7 +74,7 @@ export function openedWhen(
 
 /**
  * The meta line of a recent library: "Opened {when} · {free} free on its disk", or without the
- * free figure when its volume cannot be read. Pure.
+ * free figure when the host gives none (its free space is unknown). Pure.
  *
  * @param library The recent library.
  * @param now The current time.
@@ -96,7 +96,7 @@ export function recentMeta(
 
 /**
  * The value of the Free space fact: "{free} on the disk that holds this library", or that it is
- * not known when the volume cannot be read. Pure.
+ * not known when the host gives none (its free space is unknown). Pure.
  *
  * @param freeBytes The free bytes the host gave, or null.
  * @param labels The active label table.

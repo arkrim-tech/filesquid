@@ -287,6 +287,21 @@ describe("<fs-library-rebuild> live updates and the finished report", () => {
   });
 });
 
+describe("<fs-library-rebuild> recovery from a failed read", () => {
+  it("drops the error once a later read or an event shows the job again", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const jobs = new FakeJobSource();
+    const { page } = await mount(jobs);
+    jobs.current = new TypeError("bad answer");
+    jobs.listener?.({ kind: "resync" });
+    await settle();
+    expect(rootOf(page).querySelector("fs-states")?.hasAttribute("hidden")).toBe(false);
+    jobs.listener?.({ kind: "update", job: jobView({ done: 1500 }) });
+    expect(rootOf(page).querySelector("fs-states")?.hasAttribute("hidden")).toBe(true);
+    expect(text(page, ".progress-text")).toContain("1,500 of 2,418");
+  });
+});
+
 describe("<fs-library-rebuild> safety re-read bound", () => {
   it("re-reads an active job at most MAX_REFRESHES times, then leaves it to the events", async () => {
     const jobs = new FakeJobSource();

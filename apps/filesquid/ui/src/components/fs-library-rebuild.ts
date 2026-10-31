@@ -334,6 +334,8 @@ export class FsLibraryRebuild extends HTMLElement {
 
   /** Show a job view: the card, the report and errors when it is final, the next re-read. */
   private apply(view: JobView): void {
+    // A valid job view means the page works again: an earlier failed read no longer applies.
+    this.feedback?.clear();
     const previous = this.view;
     this.view =
       view.result === null && previous?.result ? { ...view, result: previous.result } : view;

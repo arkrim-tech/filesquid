@@ -13,6 +13,7 @@ import {
   parseLibraryFacts,
   parseRecentLibraries,
 } from "../../src/libraries/contract";
+import { isLibraryName } from "../../src/libraries/model";
 import { REBUILD_JOB } from "../support/library-fakes";
 
 const FACTS = {
@@ -50,6 +51,9 @@ describe("parseLibraryFacts", () => {
   it.each([
     ["a non-object", "facts"],
     ["a missing name", { ...FACTS, name: undefined }],
+    ["a blank name", { ...FACTS, name: "   " }],
+    ["a name with a control character", { ...FACTS, name: "Family\u0007archive" }],
+    ["a name over 1,024 bytes", { ...FACTS, name: "é".repeat(513) }],
     ["a negative free space", { ...FACTS, free_bytes: -1 }],
     ["a fractional free space", { ...FACTS, free_bytes: 1.5 }],
     ["an unknown reason", { ...FACTS, free_bytes: null, free_bytes_reason: "gone" }],
@@ -91,6 +95,8 @@ describe("parseRecentLibraries", () => {
     ["a date that is not RFC 3339", { libraries: [{ ...RECENT, last_opened: "yesterday" }] }],
     ["an open flag that is not a boolean", { libraries: [{ ...RECENT, open: "yes" }] }],
     ["a blank library id", { libraries: [{ ...RECENT, library_id: "" }] }],
+    ["a blank name", { libraries: [{ ...RECENT, name: " " }] }],
+    ["a name with a control character", { libraries: [{ ...RECENT, name: "a\nb" }] }],
     [
       "free space with a reason",
       { libraries: [{ ...RECENT, free_bytes: 5, free_bytes_reason: "not_local" }] },
@@ -152,6 +158,16 @@ describe("parseJobView and parseJobControl", () => {
     expect(() => parseJobView(value)).toThrow(TypeError);
   });
 
+  it("keeps the destination of an upload job and refuses a malformed one", () => {
+    const destination = { collection_id: "col-1", folder: "Trip/Day 1" };
+    expect(parseJobView({ ...job, kind: "import", destination })).toMatchObject({ destination });
+    expect(parseJobView({ ...job, destination: { collection_id: "col-1" } })).toMatchObject({
+      destination: { collection_id: "col-1" },
+    });
+    expect(() => parseJobView({ ...job, destination: { folder: "x" } })).toThrow(TypeError);
+    expect(() => parseJobView({ ...job, destination: "col-1" })).toThrow(TypeError);
+  });
+
   it("accepts a report only for a rebuild job", () => {
     const report = { objects: [], unreadable: [] };
     expect(() =>
@@ -173,5 +189,15 @@ describe("parseJobView and parseJobControl", () => {
     expect(() => parseJobControl({ job: { ...job, state: "x" }, scheduled: false })).toThrow(
       TypeError,
     );
+  });
+});
+
+describe("isLibraryName", () => {
+  it.each(["Family archive", "É".repeat(512), "a", " padded "])("accepts %j", (name) => {
+    expect(isLibraryName(name)).toBe(true);
+  });
+
+  it.each(["", "   ", "tab\there", "é".repeat(513), "x\u0085y", 7, null])("refuses %j", (name) => {
+    expect(isLibraryName(name)).toBe(false);
   });
 });

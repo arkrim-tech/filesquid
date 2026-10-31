@@ -700,6 +700,7 @@ export const REQUIRED_LABEL_KEYS = [
   "jobStateCompleted",
   "jobStateFailed",
   "jobStateCancelled",
+  "libraryFirstUseNameInvalid",
 ] as const;
 
 /** One required label key. */

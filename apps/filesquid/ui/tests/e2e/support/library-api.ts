@@ -274,6 +274,10 @@ async function serveJobs(page: Page, api: LibraryApi): Promise<void> {
     if (request.method() !== method) {
       return route.fulfill({ status: 405, json: error("method_not_allowed") });
     }
+    if (request.postData()) {
+      // The controls take no body (API-S-002).
+      return route.fulfill({ status: 400, json: error("invalid_request") });
+    }
     if (control === undefined) {
       return route.fulfill({ status: 200, json: jobView(api.job) });
     }

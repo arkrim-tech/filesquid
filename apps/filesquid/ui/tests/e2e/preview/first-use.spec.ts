@@ -313,9 +313,11 @@ for (const scheme of SCHEMES) {
       const api = await serveLibraries(page);
       api.libraries.set("lib-2", null);
       api.libraries.set("lib-3", null);
+      // One fixed instant: "today" and the dates below do not depend on when the test runs.
+      await page.clock.setFixedTime(new Date("2026-10-31T12:00:00Z"));
       api.meta.set(LIB, {
         name: "Family archive",
-        lastOpened: new Date().toISOString(),
+        lastOpened: "2026-10-31T08:00:00Z",
         freeBytes: 1_400_000_000_000,
       });
       api.meta.set("lib-2", {

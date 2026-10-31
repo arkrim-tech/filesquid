@@ -8,6 +8,7 @@
 import {
   MAX_LOCATION_ID_BYTES,
   MAX_REPAIR_OBJECTS,
+  isLibraryName,
   type CollectionView,
   type FreeBytesReason,
   type JobControlAnswer,
@@ -129,7 +130,7 @@ export function parseLibraryFacts(value: unknown): LibraryFacts {
   if (!isRecord(value)) throw breaks("library facts");
   const { library_id: id, name, revision } = value;
   const space = freeSpace(value);
-  if (!isText(id) || !isText(name) || space === undefined) throw breaks("library facts");
+  if (!isText(id) || !isLibraryName(name) || space === undefined) throw breaks("library facts");
   if (revision !== null && !isText(revision)) throw breaks("library facts");
   return { library_id: id, name, ...space, revision };
 }
@@ -142,7 +143,7 @@ function recentLibrary(value: unknown): RecentLibrary | undefined {
   if (!isRecord(value)) return undefined;
   const { library_id: id, name, last_opened: opened, open } = value;
   const space = freeSpace(value);
-  const named = isText(id) && isText(name) && isDateTime(opened);
+  const named = isText(id) && isLibraryName(name) && isDateTime(opened);
   if (!named || typeof open !== "boolean" || space === undefined) return undefined;
   return { library_id: id, name, last_opened: opened, open, ...space };
 }
@@ -225,6 +226,19 @@ function jobCore(value: Record<string, unknown>): RebuildJobAnswer["job"] | unde
 }
 
 /**
+ * The destination of an upload job (API-S-037): a collection and an optional folder in it.
+ *
+ * @returns The destination, undefined when the field is absent, or null when it is malformed.
+ */
+function jobDestination(value: unknown): JobView["destination"] | null | undefined {
+  if (value === undefined) return undefined;
+  if (!isRecord(value) || !isText(value.collection_id)) return null;
+  if (!isOptionalText(value.folder)) return null;
+  const destination = { collection_id: value.collection_id };
+  return value.folder === undefined ? destination : { ...destination, folder: value.folder };
+}
+
+/**
  * One job view (API-S-037), built again from its checked fields, or undefined when it breaks
  * the contract. Pure.
  */
@@ -234,9 +248,12 @@ function jobView(value: unknown): RebuildJobAnswer["job"] | undefined {
   const { control, total, error_code: code } = value;
   const controlled = control === undefined || isOneOf(control, JOB_CONTROLS);
   const totalled = total === undefined || isCount(total);
+  const destination = jobDestination(value.destination);
   if (job === undefined || !controlled || !totalled || !isOptionalText(code)) return undefined;
+  if (destination === null) return undefined;
   return {
     ...job,
+    ...(destination === undefined ? {} : { destination }),
     ...(control === undefined ? {} : { control: control as RebuildJobAnswer["job"]["control"] }),
     ...(total === undefined ? {} : { total }),
     ...(code === undefined ? {} : { error_code: code }),

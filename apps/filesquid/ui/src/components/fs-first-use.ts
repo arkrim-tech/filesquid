@@ -20,7 +20,12 @@
  */
 import { focusElement } from "../a11y/focus";
 import { libraryFailure, type Failure, type LibraryAction } from "../libraries/errors";
-import { libraryHref, type CollectionView, type LibraryView } from "../libraries/model";
+import {
+  isLibraryName,
+  libraryHref,
+  type CollectionView,
+  type LibraryView,
+} from "../libraries/model";
 import { RETRY_EVENT } from "./fs-states";
 import { icon } from "./icons";
 import {
@@ -58,9 +63,6 @@ interface Progress {
 /** The state that offers Try again for the collection step when the answer was a sentence. */
 const RETRY_FAILURE: Failure = { kind: "state", state: { kind: "error" } };
 
-/** Longest name the field accepts, in characters (the API allows 1,024 bytes). */
-const MAX_NAME_CHARS = 256;
-
 /**
  * The dialog's rules (UI-S-034, UI-S-024): 600 x 470 px, radius 10 px, 28 px side padding, the
  * name input 544 x 36 px, the location box 400 x 36 px beside Choose folder (136 x 36 px), the
@@ -88,6 +90,7 @@ const FIRST_USE_STYLE = `
   .collection-note div { display: grid; }
   .collection-note strong { font-weight: 600; color: var(--fs-on-surface); }
   .collection-note span { color: var(--fs-on-surface-variant); }
+  .field-error { margin: 0; color: var(--fs-error); font-size: var(--fs-font-size-small); }
   .kept { margin-block-start: var(--fs-space-2); color: var(--fs-on-surface); font-size: var(--fs-font-size-small); font-weight: 600; }
   .kept:empty { display: none; }
   .first-use .feedback { margin-block-start: var(--fs-space-2); }
@@ -104,6 +107,7 @@ export class FsFirstUse extends HTMLElement {
   private generation = 0;
   private feedback?: Feedback;
   private nameField?: HTMLInputElement;
+  private nameError?: HTMLElement;
   private chosenBox?: HTMLElement;
   private keptLine?: HTMLElement;
 
@@ -191,12 +195,17 @@ export class FsFirstUse extends HTMLElement {
     const input = node("input", "input");
     input.id = "first-use-name";
     input.type = "text";
-    input.maxLength = MAX_NAME_CHARS;
     input.autocomplete = "off";
     input.spellcheck = false;
+    input.setAttribute("aria-describedby", "first-use-name-error");
+    input.addEventListener("input", () => this.showNameError(false));
     this.nameField = input;
+    const problem = node("p", "field-error", labels.libraryFirstUseNameInvalid);
+    problem.id = "first-use-name-error";
+    problem.hidden = true;
+    this.nameError = problem;
     const field = node("div", "field");
-    field.append(label, input);
+    field.append(label, input, problem);
     return field;
   }
 
@@ -348,6 +357,10 @@ export class FsFirstUse extends HTMLElement {
     const options = this.options;
     const feedback = this.feedback;
     if (!options || !feedback || this.busy || this.progress.locationId === undefined) return;
+    if (!this.progress.library && !this.nameIsValid()) {
+      this.showNameError(true);
+      return;
+    }
     const generation = this.generation;
     this.setBusy(true);
     feedback.note(options.labels.libraryWorking);
@@ -365,6 +378,20 @@ export class FsFirstUse extends HTMLElement {
     } finally {
       if (generation === this.generation) this.setBusy(false);
     }
+  }
+
+  /** A blank name is allowed (the host names the library); any other must be a valid name. */
+  private nameIsValid(): boolean {
+    const name = this.nameField?.value.trim() ?? "";
+    return name === "" || isLibraryName(name);
+  }
+
+  /** Show or hide the invalid-name message under the field, with the field's error border. */
+  private showNameError(shown: boolean): void {
+    if (this.nameError) this.nameError.hidden = !shown;
+    if (shown) this.nameField?.setAttribute("aria-invalid", "true");
+    else this.nameField?.removeAttribute("aria-invalid");
+    if (shown && this.nameField) focusElement(this.nameField);
   }
 
   /** Create the library on the chosen folder with the name given, and remember it. Network I/O. */
