@@ -28,7 +28,7 @@ Feature: Row facts in the Drive
 
   Scenario: The bulk bar counts the files inside selected folders
     When I select the folder "Trips" of 3 files and one file of 2 KB
-    Then the bulk bar should read "1 files and 1 folder (3 files inside) · {size}" from fileSelectionScopeInside
+    Then the bulk bar should read "1 file and 1 folder (3 files inside) · {size}" from fileSelectionScopeInside
 
   Scenario: Recent shows what I did with each file
     When I open Recent
@@ -59,7 +59,7 @@ Feature: Row facts in the Drive
     Then no collection name should be shown for it
 
   # Error case
-  Scenario: No file action falls back to the one open library
+  Scenario: A file action uses the library named on its row, not a fallback
     Given the row of "notes.md" names library "Work" while "Family" is also open
     When I rename "notes.md"
     Then the rename request should name library "Work"

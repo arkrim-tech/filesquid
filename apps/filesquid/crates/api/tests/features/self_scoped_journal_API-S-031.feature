@@ -18,8 +18,9 @@ Feature: Self-scoped journal route
     Then own-journal answer should hold only entries whose actor is "ana"
 
   Scenario: The desktop owner reads the owner's entries
+    Given own-journal entries by the desktop owner and by the host itself
     When own-journal desktop owner reads the self-scoped journal
-    Then own-journal answer should hold only the owner's entries
+    Then own-journal answer should hold the owner's entries and no entry of the host itself
 
   # Edge case
   Scenario: The admin journal filters and paging apply
@@ -30,6 +31,11 @@ Feature: Self-scoped journal route
   Scenario: The self-scoped route grants no admin route
     When own-journal caller "ana" reads the admin journal
     Then own-journal answer should be refused as forbidden and journaled as api.auth.denied
+
+  Scenario: The self-scoped answer keeps the journal's redaction
+    Given own-journal entry of "ana" about an upload of a file with a title and a path
+    When own-journal caller "ana" reads the self-scoped journal
+    Then own-journal entry should carry opaque IDs only, with no title, path, content or credential, exactly as the admin journal route would answer it
 
   Scenario: Names are resolved only for files the caller may read
     Given own-journal entry of "ana" about a file "ana" may no longer read

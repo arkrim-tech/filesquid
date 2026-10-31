@@ -9,6 +9,9 @@ Feature: Command envelopes on the metadata write routes
   I want a retried metadata edit to be applied once
   So that a lost answer never leaves a second version in my history
 
+  Background:
+    Given metadata-envelope file "report.pdf" whose metadata record is at version "v7"
+
   # Happy path
   Scenario Outline: A metadata write answers a command outcome for its operation ID
     When metadata-envelope caller sends <route> under operation ID "op-1"
@@ -35,7 +38,8 @@ Feature: Command envelopes on the metadata write routes
   Scenario: A write without an envelope is refused
     When metadata-envelope caller sends a statement set with a plain body
     Then metadata-envelope answer should be refused as invalid_request
+    And metadata-envelope refusal should be journaled once with its error code and opaque IDs only
 
   Scenario: A stale expected revision is a conflict
-    When metadata-envelope caller sends a statement set expecting an older revision
+    When metadata-envelope caller sends a statement set expecting revision "v6"
     Then metadata-envelope answer should be HTTP 409 with a conflict outcome and nothing committed

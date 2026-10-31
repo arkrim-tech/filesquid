@@ -27,7 +27,7 @@ TDD-ENFORCE: Not applicable - documentation, mockup and plan changes only; the n
 | D10 and D15: library history object; streamed ZIP download without per-member scrubbing in the owner's own ZIP | API-S-011 **ZIP download**, API-S-028 **History object**, [PRD F-062](../prd.md#f-062-drive-style-views-sorting-selection-and-layout-preferences), [SRS-F-062](../srs.md#srs-f-062-drive-style-views-sorting-selection-and-layout-preferences) **Multi-download**, [UI-S-026](../../apps/filesquid/ui/resources/srs.md) ZIP dialog, mockup [`12-zip-download.svg`](../ui-mockups/v3/12-zip-download.svg) (policy box redrawn: "Metadata kept", no chip) | New [API-F2.22](../../apps/filesquid/crates/api/resources/plan.md) (19 h, Task FS-2.5), which states the open design point of saving a ZIP above the 16 MiB answer cap of DE-S-005 on the desktop without deciding it |
 | D10: a copy's cross-object `prov:wasDerivedFrom` | API-S-011 copy | New [API-F2.23](../../apps/filesquid/crates/api/resources/plan.md) (4 h, Task FS-2.8) |
 | D11: UI-S-030 focus border, SRS-UI-007 exemption | [UI-S-030](../../apps/filesquid/ui/resources/srs.md) (`--fs-focus-ring`), [SRS-UI-007](../srs.md#srs-ui-007-light-and-dark-themes) (search operator text and **Clear all** named) | UI-F2.9 Status: per-format type chips stay after the MVP and are not scheduled |
-| D12: library revisions restart at 1 after a host restart (API-S-025) | This walkthrough only: no change for the MVP | none |
+| D12: library revisions restart at 1 after a host restart (API-S-025) | This walkthrough only, as the orchestrator directed: the decision changes nothing, and API-S-025 already states the behaviour | none |
 | (ii) "build streamed copies" | API-S-011 copy (the 64 MiB allowance removed) | New [API-F2.26](../../apps/filesquid/crates/api/resources/plan.md) (6 h, Task FS-2.5) |
 | (iii) "well do a": the storage split | [API-S-014](../../apps/filesquid/crates/api/resources/srs.md) **History size** (`history_bytes`: the bytes on disk held only by versions other than each object's head version, each distinct content counted once), API-S-011 storage use, [UI-S-025](../../apps/filesquid/ui/resources/srs.md) caption | Folded into API-F2.21 (17 to 19 h) and UI-F2.20 (the caption line) |
 | (i) "full-text search ... is a release 1 feature" | [PRD F-063](../prd.md#f-063-file-search-query-language-and-filter-chips) and [SRS-F-063](../srs.md#srs-f-063-file-search-query-language-and-filter-chips): "in the first release" removed, so only the plan carries the timing | New post-MVP [API-F2.29](../../apps/filesquid/crates/api/resources/plan.md) (12 h, Task FS-2.7) |
@@ -86,4 +86,18 @@ None.
 
 ## Pre-commit
 
-See the section below for the hook run on the head commit.
+The PR's change scope is `rust:` and `npm:` (the API, UI and desktop SRS, plans and feature files live inside the crates and the UI package), so the head commit ran the full suite. Excerpt of `FULL=1 bash scripts/pre-commit.sh` on `fa1093f2` (the review fixes after it rerun the hook as recorded in the pull request):
+
+```text
+✅ Clippy passed (37s).
+✅ Workspace tests passed (507s).
+494 scenarios (362 passed, 132 skipped)
+✅ Rustdoc passed (83s).
+✅ Desktop tests (test-instrumented) passed (198s).
+✅ TypeScript passed (14s).
+✅ Vitest passed (83s).
+✅ Lint and test validation passed (test scope: full).
+✅ All Pre-Commit Hooks Passed! Test scope: full (1063s)
+```
+
+The 494 scenarios are the `filesquid-api` harness; the new scenarios of this PR are among the skipped ones until their rows add step definitions.

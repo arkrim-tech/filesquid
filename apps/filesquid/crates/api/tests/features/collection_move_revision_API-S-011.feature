@@ -30,6 +30,25 @@ Feature: Collection moves compare the expected revision
     When move-revision caller asks for folder "Trips" in collection "Summer"
     Then move-revision answer should be the free path "Trips" as pending, with nothing stored and no journal entry
 
+  Scenario: A retry completes a rename whose relocation failed after the name was committed
+    Given move-revision caller renamed it to "harbour.jpg" under operation ID "op-5" and the relocation failed after the name commit
+    When move-revision caller sends the same rename under "op-5" again
+    Then move-revision collection path should be "harbour.jpg" and the name should have been committed once
+
+  Scenario: The in-object move shape stays accepted beside the collection shape
+    When move-revision caller moves a logical file inside its object with the in-object input of object_id, from and to
+    Then move-revision answer should be committed as before the collection shape existed
+
+  Scenario Outline: Reserved folders are reserved at a collection's root only
+    When move-revision caller asks for folder "<folder>" in collection "Summer"
+    Then move-revision answer should be <outcome>
+
+    Examples:
+      | folder              | outcome                        |
+      | .filesquid/notes    | refused as invalid_path        |
+      | provenance          | refused as invalid_path        |
+      | Trips/.filesquid    | the free path as pending       |
+
   # Error case
   Scenario: A second move made from the same read is a conflict
     Given move-revision first caller moved it to "Archive" with that revision

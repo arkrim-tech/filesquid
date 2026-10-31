@@ -2,7 +2,8 @@
 # entity from the source's file entity at the copied version (prov:wasDerivedFrom across objects,
 # SRS-F-067), and dcterms:source names the source. A copy of a file version of any size streams
 # through bounded ranged reads and writes and never holds the file in memory (NFR-003), on every
-# host, the desktop included.
+# host, the desktop included; a host that stages on disk keeps the staged bytes there (an in-memory
+# staging backend holds what it stages, as the OCFL module's streamed stage documents).
 # Owner decisions 2026-10-31, verbatim: "accept recommendations" (decision 10) and "build streamed copies".
 # Scenarios only; Tasks API-F2.23 and API-F2.26 add their step definitions (unmatched steps are reported as skipped).
 Feature: Copy provenance and streamed copies
@@ -17,11 +18,11 @@ Feature: Copy provenance and streamed copies
     Then copy-history first version record of the copy should derive its file entity from "report.pdf" at v3
     And copy-history record should validate against filesquid-prov/1
 
-  Scenario Outline: A copy of any size streams with bounded memory
-    Given copy-history file of <size> in collection "Work"
+  Scenario Outline: A copy of any size streams with bounded memory on a disk-backed staging area
+    Given copy-history file of <size> in collection "Work" of a library whose staging area is on disk
     When copy-history caller copies it into collection "Archive"
     Then copy-history copy should have the source's SHA-256 and size
-    And copy-history copy should never hold the whole file in memory
+    And copy-history copy should never hold the whole file in memory, its staged bytes going to the staging area on disk
 
     Examples:
       | size    |

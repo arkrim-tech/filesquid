@@ -46,6 +46,11 @@ Feature: Row facts, the Recent view and destination identifiers
     When row-facts caller reads the library history size of "Family"
     Then row-facts history bytes should be 400, counting the shared content of "notes.md" as no history
 
+  Scenario: Content shared by two older versions counts once as history
+    Given row-facts fixture: "plan.pdf" whose v1 and v2 hold one content of 500 bytes and whose head v3 holds another
+    When row-facts caller reads the library history size of "Family"
+    Then row-facts history bytes should be 500, the shared content counted once
+
   # Edge cases
   Scenario: A file in no collection carries null collection facts
     Given row-facts fixture: a file "loose.bin" registered in no collection
@@ -63,10 +68,14 @@ Feature: Row facts, the Recent view and destination identifiers
     Then row-facts answer should be HTTP <status> with sub-code "<subcode>"
 
     Examples:
-      | destination                     | status | subcode               |
-      | no collection                   | 400    | destination_required  |
-      | an unknown collection           | 404    | collection_not_found  |
-      | a path whose 9,999 numbers taken | 409    | path_suffix_exhausted |
+      | destination           | status | subcode              |
+      | no collection         | 400    | destination_required |
+      | an unknown collection | 404    | collection_not_found |
+
+  Scenario: An upload whose numbers are all taken carries path_suffix_exhausted
+    Given row-facts fixture: "Summer/beach.jpg" and "Summer/beach-1.jpg" through "Summer/beach-9999.jpg" are taken
+    When row-facts caller uploads "beach.jpg" into collection "Summer"
+    Then row-facts answer should be HTTP 409 with sub-code "path_suffix_exhausted"
 
   Scenario: The Recent view never shows another caller's actions
     Given row-facts second caller opened "beach.jpg"

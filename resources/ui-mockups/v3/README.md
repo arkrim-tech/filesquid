@@ -110,7 +110,7 @@ Status after the owner's answers: **redrawn** (content changed for an answer), *
 | Empty library: no collection; upload disabled with the reason | [07](./07-empty-library.svg) | UI-S-002 **Destination**; UI-F2.17; ADR 041 Decision 4 | updated |
 | New menu (Upload files…, Upload folder…, New folder) and the per-item menu (Remove) | [10](./10-new-and-item-menus.svg) | UI-F2.8; UI-S-006; owner answer 8 | updated |
 | Bulk action bar stating the effective scope | [11](./11-selection-bulk-actions.svg) | UI-F2.8 | updated |
-| Streamed ZIP download (no save path shown) | [12](./12-zip-download.svg) | UI-F2.8; ZIP route and dialog wording API-F2.22; API-S-011 (the policy box redrawn on 2026-10-31 to say that metadata is kept, owner decision, verbatim: "accept recommendations", decision 15 (a); UI-S-026) | updated |
+| Streamed ZIP download (no save path shown) | [12](./12-zip-download.svg) | UI-F2.8; ZIP route and dialog wording API-F2.22; API-S-011 (the policy box redrawn on 2026-10-31 to say that metadata is kept, owner decision, verbatim: "accept recommendations", decision 15 (a); UI-S-026) | redrawn |
 | Move or copy picker: collections and folders only, never Recently deleted | [13](./13-move-copy-picker.svg) | UI-F2.8; API-S-011 **Destination** | updated |
 | Rename form and remove with Undo | [14](./14-rename-and-delete.svg) | [#119](https://github.com/arkrim-tech/filesquid/pull/119), API-S-027 | updated |
 | Rename refusals | [44](./44-rename-refusals.svg) | #119 | updated |
@@ -155,7 +155,7 @@ Status after the owner's answers: **redrawn** (content changed for an answer), *
 
 | Surface | Mockup | Source | Status |
 |---|---|---|---|
-| Image preview; light and dark | [22](./22-preview-image.svg), [22 dark](./22-preview-image-dark.svg) | UI-F2.2 (built); top bar and zoom chip UI-F2.19; filmstrip deferred after the MVP (owner decision 2026-10-30, UI-S-031; both SVGs still draw it, so the filmstrip in them is not required; their media frame was redrawn with the 8 px `--fs-radius` corner on 2026-10-31, owner decision, verbatim: "accept recommendations"); API-S-018 | updated |
+| Image preview; light and dark | [22](./22-preview-image.svg), [22 dark](./22-preview-image-dark.svg) | UI-F2.2 (built); top bar and zoom chip UI-F2.19; filmstrip deferred after the MVP (owner decision 2026-10-30, UI-S-031; both SVGs still draw it, so the filmstrip in them is not required; their media frame was redrawn with the 8 px `--fs-radius` corner on 2026-10-31, owner decision, verbatim: "accept recommendations"); API-S-018 | redrawn |
 | Video preview | [23](./23-preview-video.svg) | UI-F2.2 | updated |
 | Unsupported format | [24](./24-preview-unsupported.svg) | UI-F2.2 | updated |
 | Panel states | [25](./25-panel-states.svg) | UI-F2.15; UI-S-022 | updated |
@@ -174,7 +174,7 @@ Status after the owner's answers: **redrawn** (content changed for an answer), *
 | Logs view; light and dark | [38](./38-logs-view.svg), [38 dark](./38-logs-view-dark.svg) | UI-F2.16; UI-S-021 | updated |
 | Download logs | [39](./39-logs-export.svg) | UI-F2.16; API-S-031; owner answer 8 | updated |
 
-**Counts:** 64 files: 13 redrawn for an answer (01, 02, 04, 09, 16, 16 dark, 19, 32, 41, 41 dark, 47, 55; 31 and 31 dark also have their health word at 22 px), 49 updated, 2 new (57, 58). No screen was retired.
+**Counts:** 64 files: 16 redrawn for an answer (01, 02, 04, 09, 16, 16 dark, 19, 32, 41, 41 dark, 47, 55; 12, 22 and 22 dark for the owner's decisions of 2026-10-31; 31 and 31 dark also have their health word at 22 px), 46 updated, 2 new (57, 58). No screen was retired.
 
 ### Strings
 
