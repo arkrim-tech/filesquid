@@ -23,7 +23,9 @@ import {
   ClientSearchSource,
   singleOpenLibrary,
   ClientDownloadSource,
+  ClientFactsSource,
   ClientHistorySource,
+  ClientProvenanceSource,
   ClientMetadataSource,
   ClientLibrarySource,
   ClientNavigationSource,
@@ -141,7 +143,12 @@ if (shell) {
 }
 if (shell) {
   const history = new ClientHistorySource(client);
-  const filePanel = { history, download: new ClientDownloadSource(client) };
+  const filePanel = {
+    history,
+    download: new ClientDownloadSource(client),
+    facts: new ClientFactsSource(client),
+    provenance: new ClientProvenanceSource(client),
+  };
   const browser = { labels, source: files, filePanel, metadata: new ClientMetadataSource(client) };
   bindFilesRoute(shell, browser);
 }

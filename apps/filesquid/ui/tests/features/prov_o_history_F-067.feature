@@ -1,7 +1,11 @@
 # F-067: PROV-O history of every version and change
 # F-055: Default UI and panel composition; F-061: Activity journal
 # UI-S-019: Display names; UI-S-020: Provenance tab; UI-S-021: Logs view; UI-S-022: File panel tabs
-# Scenarios only; step definitions arrive with Tasks FS-2.8 and FS-2.9 (UI-F2.15).
+# Task UI-F2.15 (global Task FS-2.9). Executable proof: tests/unit/provenance-model.test.ts,
+# tests/unit/provenance-source.test.ts, tests/unit/file-info-rows.test.ts, tests/ui/provenance-panel.test.ts,
+# tests/ui/file-info-tab.test.ts, tests/ui/files-route.test.ts (jsdom) and
+# tests/e2e/preview/provenance-panel.spec.ts (production build served by vite preview).
+# The Logs view itself (View in Logs target, journal-only labels) is Task UI-F2.16.
 Feature: File panel tabs: File info, Description and Provenance
   As a library owner
   I want to see a file's facts, description and history in one consistent panel
@@ -62,8 +66,51 @@ Feature: File panel tabs: File info, Description and Provenance
     And choosing it should open the Logs view with all journal entries newest first
 
   Scenario: The owner exports the history as JSON-LD
-    When I choose "Export history" in the "Provenance" tab
+    When I choose "JSON-LD" in the "Provenance" tab
     Then a JSON-LD file of the file's PROV-O records should be downloaded
+    And the export should be announced
+
+  Scenario: An export that left records out says so
+    Given the history export reports that records were left out
+    When I choose "JSON-LD" in the "Provenance" tab
+    Then the announcement should say that some records were left out
+
+  Scenario: The latest activity is expanded and shows its prov attributes
+    When I open the "Provenance" tab
+    Then the latest activity should show prov:startedAtTime, prov:endedAtTime, prov:wasAssociatedWith, prov:used, prov:wasGeneratedBy and prov:wasDerivedFrom
+    And the other activities should be collapsed and read their record only when I expand them
+
+  Scenario: Each activity links to the Logs view for its operation
+    When I open the "Provenance" tab as the owner and expand every activity
+    Then each activity should offer "View in Logs" for its own operation ID
+    And the footer should offer "View in Logs" for the file
+
+  Scenario: Anyone who is not the owner or an administrator gets no View in Logs
+    When I open the "Provenance" tab on a host where I am not the owner
+    Then no "View in Logs" link should be shown
+
+  Scenario: File info shows the import facts without any absolute path
+    When I open the "File info" tab
+    Then I should see when the file was uploaded in local time and in UTC and the source with its volume
+    And the path relative to the import root should be shown only when the API knows it
+    And no absolute path, import root, host name or account name should be shown
+
+  Scenario: File info shows what could be read from the file
+    Given the file has exif statements
+    When I open the "File info" tab
+    Then I should see them under "Technical · read from the file", not counted as properties
+
+  Scenario: A format with nothing to read says so
+    Given the file has no exif statements
+    When I open the "File info" tab
+    Then I should see "Nothing could be read from this format."
+
+  Scenario: The Provenance tab has loading and empty states
+    Given the history route answers slowly
+    When I open the "Provenance" tab
+    Then I should see the loading placeholder rows with "Loading provenance…"
+    Given the file has no recorded activity
+    Then I should see "No activities recorded"
 
   Scenario: Searching within a tab filters its rows
     When I type "digest" into the search field of the "File info" tab
@@ -91,6 +138,18 @@ Feature: File panel tabs: File info, Description and Provenance
     Given the history route fails
     When I open the "Provenance" tab
     Then I should see the tab's error state, not an empty list
+    And it should show the reason, "Nothing was changed.", the code and "Try again"
+
+  Scenario: A record that cannot be read stays inside its activity
+    Given the record of the latest version cannot be read
+    When I open the "Provenance" tab
+    Then that activity should show an alert with "Try again"
+    And the other activities should still be listed
+
+  Scenario: A failed export changes nothing
+    Given the history export fails
+    When I choose "JSON-LD" in the "Provenance" tab
+    Then I should see "Could not export the history. Nothing was changed."
 
   # Source
   # - resources/srs.md SRS-F-067, SRS-F-055, SRS-F-061
