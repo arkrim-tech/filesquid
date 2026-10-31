@@ -4,7 +4,7 @@
  * head, only the versions that changed a file, and each distinct content counted once.
  */
 import { describe, expect, it } from "vitest";
-import { MemoryFileSource } from "../../src/files/memory-source";
+import { ContentIdentity, MemoryFileSource } from "../../src/files/memory-source";
 import type { FileRef } from "../../src/files/model";
 
 const OBJECT = { library_id: "lib", object_id: "obj" };
@@ -45,6 +45,46 @@ describe("MemoryFileSource history reads", () => {
       ["v4", "added", 5],
     ]);
     expect(history.entries[1]?.digest).toBeNull();
+  });
+
+  it("stands in a short digest however large the content, and tells contents apart", async () => {
+    // A hex digest of a 700 KB image blocked the fake host for 160 ms on every history read, and
+    // the performance harness measured the fake (Task UI-F3.1).
+    const one = new Uint8Array(700_000).fill(7);
+    const two = new Uint8Array(700_000).fill(7);
+    two[350_000] = 8;
+    const digestOf = async (content: Uint8Array): Promise<string> => {
+      const s = new MemoryFileSource({ ...OBJECT, files: [{ path: "a.bin", content }] });
+      const history = await s.history({ ...FILE, path: "a.bin" });
+      return history.entries[0]?.digest ?? "";
+    };
+    const first = await digestOf(one);
+    expect(first.length).toBeGreaterThan(0);
+    expect(first.length).toBeLessThanOrEqual(64);
+    expect(await digestOf(one)).toBe(first);
+    expect(await digestOf(two)).not.toBe(first);
+  });
+
+  it("never gives two different contents one digest, even when their hash sums collide", () => {
+    // The digest is the key `historySize` counts distinct contents by, so a collision of the
+    // cheap sum must not merge two contents: the identity checks the bytes when a sum repeats.
+    const identity = new ContentIdentity(() => "same-sum");
+    const a = new Uint8Array([1, 2, 3]);
+    const b = new Uint8Array([3, 2, 1]);
+    const first = identity.digestOf(a);
+    expect(identity.digestOf(b)).not.toBe(first);
+    expect(identity.digestOf(new Uint8Array([1, 2, 3]))).toBe(first);
+    expect(identity.digestOf(b)).toBe(identity.digestOf(new Uint8Array([3, 2, 1])));
+  });
+
+  it("keeps its own copy of a content, so changing the caller's array later renumbers nothing", () => {
+    const identity = new ContentIdentity(() => "same-sum");
+    const kept = new Uint8Array([1, 2, 3]);
+    const first = identity.digestOf(kept);
+    const second = identity.digestOf(new Uint8Array([9, 9, 9]));
+    kept.fill(9);
+    expect(identity.digestOf(new Uint8Array([1, 2, 3]))).toBe(first);
+    expect(identity.digestOf(new Uint8Array([9, 9, 9]))).toBe(second);
   });
 
   it("counts each distinct content of the history once", async () => {

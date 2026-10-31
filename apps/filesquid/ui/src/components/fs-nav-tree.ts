@@ -46,6 +46,7 @@ import { focusElement, recoverFocus } from "../a11y/focus";
 import { failureState, type ViewState } from "./view-state";
 import { RETRY_EVENT, type FsStates } from "./fs-states";
 import { treeKeyAction, type KeyItem } from "./nav-tree-keys";
+import { TreeIndex } from "./nav-tree-index";
 import {
   describePin,
   sectionElement,
@@ -94,10 +95,10 @@ const STYLE = `
   .unavailable .kind-icon { color: var(--fs-icon-muted); }
   .unavailable .name { display: inline-flex; align-items: center; gap: var(--fs-space-2); }
   [hidden] { display: none !important; }
-  a { position: relative; display: flex; align-items: center; gap: var(--fs-space-2); box-sizing: border-box; min-block-size: 1.875rem; padding: 0 var(--fs-space-2) 0 var(--fs-space-3); color: var(--fs-on-surface-variant); font-weight: 400; text-decoration: none; overflow-wrap: anywhere; transition: background-color var(--fs-motion-duration), color var(--fs-motion-duration); }
+  a { display: flex; align-items: center; gap: var(--fs-space-2); box-sizing: border-box; min-block-size: 1.875rem; padding: 0 var(--fs-space-2) 0 var(--fs-space-3); color: var(--fs-on-surface-variant); font-weight: 400; text-decoration: none; overflow-wrap: anywhere; transition: background-color var(--fs-motion-duration), color var(--fs-motion-duration); }
   a[data-kind="library"], a[data-kind="repository"] { color: var(--fs-on-surface); font-weight: 500; }
   a:hover { background: var(--fs-surface-raised); }
-  a[aria-current="page"] { background: var(--fs-primary-container); color: var(--fs-on-primary-container); font-weight: 500; }
+  a[aria-current="page"] { position: relative; background: var(--fs-primary-container); color: var(--fs-on-primary-container); font-weight: 500; }
   a[aria-current="page"]::before { content: ""; position: absolute; inset-block: 0; inset-inline-start: 0; inline-size: 2.5px; background: var(--fs-brand); }
   a[aria-current="page"] .kind-icon { color: var(--fs-primary); }
   a[aria-busy="true"] { color: var(--fs-on-surface-muted); }
@@ -132,6 +133,8 @@ export class FsNavTree extends HTMLElement {
   private readonly active = new Map<string, string>();
   /** The nodes in the last render, by handle. */
   private rendered = new Map<string, NavigationNode>();
+  /** The treeitems of the last render, so the current destination moves without a search. */
+  private readonly index = new TreeIndex();
   private generation = 0;
   /** The generation of the last whole-tree read that finished; a read is in flight otherwise. */
   private settled = 0;
@@ -176,10 +179,15 @@ export class FsNavTree extends HTMLElement {
     return this.currentId;
   }
 
-  /** Mark another destination as current. */
+  /**
+   * Mark another destination as current. The tree is not rebuilt: only `aria-current`, each
+   * section's Tab stop and its Pin toggle depend on the current destination, and a rebuild of a
+   * level of 10,000 nodes (80,000 elements) held the main thread for about 0.7 s on every
+   * folder opened (Task UI-F3.1). The tree is drawn from scratch only when none is drawn yet.
+   */
   set current(node: string | undefined) {
     this.currentId = node;
-    this.render();
+    if (!this.markCurrentInPlace()) this.render();
   }
 
   /** Follow the store and source, and read the tree, while attached. */
@@ -462,7 +470,37 @@ export class FsNavTree extends HTMLElement {
     if (state) states.state = state;
     box.hidden = state !== undefined;
     box.replaceChildren(...(state || !views ? [] : this.sections(views)));
+    if (state || !views) this.index.clear();
+    else this.index.build(box);
     recoverFocus(root, hadFocus, () => this.focusTarget(root, key, states));
+  }
+
+  /**
+   * Move `aria-current`, the Tab stops and the Pin toggles to follow the current destination,
+   * in the sections already drawn. Side effects: sets attributes of a few drawn nodes.
+   *
+   * @returns False when no tree is drawn (the caller renders), true when the drawn one follows.
+   */
+  private markCurrentInPlace(): boolean {
+    if (this.index.empty || !this.store) return false;
+    this.index.mark(this.currentId);
+    for (const id of this.index.sectionIds()) this.followCurrent(id);
+    return true;
+  }
+
+  /**
+   * Put a section's Tab stop where a render would: the item the person moved to, else the
+   * current one, else the first. Word the Pin toggle for that stop.
+   */
+  private followCurrent(id: string): void {
+    const moved = this.index.itemIn(id, this.active.get(id));
+    const stop = moved ?? this.index.itemIn(id, this.currentId) ?? this.index.first(id);
+    if (stop) this.index.setStop(id, stop);
+    const node = stop?.dataset.node ? this.rendered.get(stop.dataset.node) : undefined;
+    const pin = this.index.section(id)?.querySelector<HTMLButtonElement>("button.pin");
+    if (!node || !pin) return;
+    const pinned = this.store?.preferences.pinned.some((p) => p.node === node.node) ?? false;
+    describePin(pin, (this.options as NavTreeOptions).labels, node, pinned);
   }
 
   /** The sections of an answer. */
@@ -669,9 +707,7 @@ export class FsNavTree extends HTMLElement {
     const node = item.dataset.node ? this.rendered.get(item.dataset.node) : undefined;
     if (!section?.dataset.section || !node) return;
     this.active.set(section.dataset.section, node.node);
-    for (const other of section.querySelectorAll<HTMLElement>('[role="treeitem"]')) {
-      other.tabIndex = other === item ? 0 : -1;
-    }
+    this.index.setStop(section.dataset.section, item);
     const pin = section.querySelector<HTMLButtonElement>("button.pin");
     const pinned = this.store?.preferences.pinned.some((p) => p.node === node.node) ?? false;
     if (pin) describePin(pin, (this.options as NavTreeOptions).labels, node, pinned);

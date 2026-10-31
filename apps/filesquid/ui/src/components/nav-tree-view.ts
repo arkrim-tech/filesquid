@@ -308,7 +308,10 @@ function itemElement(
   if (!expandable(item) || level >= MAX_DEPTH) return li;
   const open = scope.ctx.isOpen(item.node);
   link.setAttribute("aria-expanded", String(open));
-  link.querySelector(".twisty")?.classList.add("parent");
+  const twisty = link.querySelector(".twisty");
+  twisty?.classList.add("parent");
+  // Only a parent draws the chevron: a leaf keeps the empty slot, so names align.
+  twisty?.append(icon("chevron", 16));
   if (scope.ctx.isBusy(item.node)) link.setAttribute("aria-busy", "true");
   const children = open ? childItems(item, scope.ctx) : [];
   if (children.length === 0) return li;
@@ -344,7 +347,6 @@ function itemLink(
   const twisty = document.createElement("span");
   twisty.className = "twisty";
   twisty.setAttribute("aria-hidden", "true");
-  twisty.append(icon("chevron", 16));
   const name = document.createElement("span");
   name.className = "name";
   name.textContent = nodeName(node, scope.ctx.labels);
