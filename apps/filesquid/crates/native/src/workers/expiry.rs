@@ -11,7 +11,7 @@
 //! open is not visited: its due files are expired by the first run after it is opened.
 
 use crate::SqliteCatalog;
-use filesquid_api::jobs::{Job, JobError, JobSpec, JobState, Jobs, RunningJob};
+use filesquid_api::jobs::{Halt, Job, JobError, JobSpec, JobState, Jobs, RunningJob};
 use filesquid_api::library::{mint_uuid_v4, LibraryService, EXPIRY_JOB_KIND};
 use std::collections::BTreeSet;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -43,9 +43,10 @@ pub struct ExpiryJobReport {
 }
 
 /// Run one expiry job over every library `catalog` has open, under `source` (the
-/// installation). A job suspended earlier resumes from its checkpoint, the libraries it
-/// finished; a job of another source is left and a new one submitted. Database, filesystem
-/// and journal I/O.
+/// installation), starting `resumed` when the job routes resumed that job. A job suspended
+/// earlier resumes from its checkpoint, the libraries it finished; a job of another source is
+/// left and a new one submitted. A pause or cancel asked during a library halts the run before
+/// its next library and before it completes. Database, filesystem and journal I/O.
 ///
 /// # Errors
 /// The job could not be submitted, started, checkpointed or completed (for example its lease
@@ -55,9 +56,10 @@ pub fn run_expiry_job(
     service: &LibraryService,
     catalog: &SqliteCatalog,
     source: &str,
+    resumed: Option<&str>,
     stop: &AtomicBool,
 ) -> Result<(JobState, ExpiryJobReport), JobError> {
-    let mut running = start_job(jobs, source)?;
+    let mut running = start_job(jobs, source, resumed)?;
     let mut done = done_libraries(running.checkpoint_text());
     let libraries = catalog
         .open_libraries()
@@ -69,9 +71,10 @@ pub fn run_expiry_job(
         .filter(|l| !done.contains(l.as_str()))
         .collect();
     for library in remaining {
-        if stop.load(Ordering::SeqCst) || running.requested().is_some() {
-            return running.suspend().map(|state| (state, report));
-        }
+        running = match pause_point(running, stop)? {
+            Halt::Continued(next) => *next,
+            Halt::Halted(state) => return Ok((state, report)),
+        };
         let finished = expire_renewing(service, catalog, library, &running, &mut report);
         report.libraries += 1;
         if finished {
@@ -80,22 +83,48 @@ pub fn run_expiry_job(
         let progress = u64::try_from(done.len()).unwrap_or(u64::MAX);
         running.checkpoint(&checkpoint(&done), progress, Some(total))?;
     }
-    finish(running, &report).map(|()| (JobState::Completed, report))
+    match pause_point(running, stop)? {
+        Halt::Continued(last) => finish(*last, &report).map(|()| (JobState::Completed, report)),
+        Halt::Halted(state) => Ok((state, report)),
+    }
 }
 
-/// Start this installation's unfinished expiry job, or a new one when there is none or the
-/// unfinished one belongs to another source.
-fn start_job(jobs: &Jobs, source: &str) -> Result<RunningJob, JobError> {
-    let job = match jobs.unfinished_of(EXPIRY_JOB_KIND, 1)?.into_iter().next() {
-        Some(job) => job,
-        None => submit(jobs, source)?,
+/// Stop the run where it may stop: suspend it when `stop` is set (the host quits), halt it
+/// through [`RunningJob::halt_if_requested`] when a pause or cancel was asked (checked again in
+/// the store, so a resume that cleared it keeps the run going), and otherwise hand it back.
+/// Store I/O when it stops.
+fn pause_point(running: RunningJob, stop: &AtomicBool) -> Result<Halt, JobError> {
+    if stop.load(Ordering::SeqCst) {
+        return running.suspend().map(Halt::Halted);
+    }
+    if running.requested().is_none() {
+        return Ok(Halt::Continued(Box::new(running)));
+    }
+    running.halt_if_requested()
+}
+
+/// Start `resumed`, the job the job routes resumed, when given; otherwise this installation's
+/// oldest unfinished expiry job, or a new one when there is none or the unfinished one belongs
+/// to another source.
+fn start_job(jobs: &Jobs, source: &str, resumed: Option<&str>) -> Result<RunningJob, JobError> {
+    let id = match resumed {
+        Some(id) => id.to_string(),
+        None => oldest_or_new(jobs, source)?.id,
     };
-    match jobs.start(&job.id, source) {
+    match jobs.start(&id, source) {
         Err(JobError::SourceChanged) => {
             let fresh = submit(jobs, source)?;
             jobs.start(&fresh.id, source)
         }
         started => started,
+    }
+}
+
+/// The oldest unfinished expiry job, or a newly submitted one of `source` when there is none.
+fn oldest_or_new(jobs: &Jobs, source: &str) -> Result<Job, JobError> {
+    match jobs.unfinished_of(EXPIRY_JOB_KIND, 1)?.into_iter().next() {
+        Some(job) => Ok(job),
+        None => submit(jobs, source),
     }
 }
 

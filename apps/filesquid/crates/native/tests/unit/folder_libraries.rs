@@ -165,7 +165,8 @@ fn a_version_2_catalog_is_migrated_to_the_current_version_and_rebuilt_from_its_f
              ALTER TABLE library DROP COLUMN folder_identity;
              ALTER TABLE files DROP COLUMN deletion_cause;
              ALTER TABLE files DROP COLUMN removed_home_title;
-             ALTER TABLE receipts DROP COLUMN deletion_cause; DROP TABLE pending_purges;
+             ALTER TABLE receipts DROP COLUMN deletion_cause;
+             ALTER TABLE receipts DROP COLUMN restored_into; DROP TABLE pending_purges;
              PRAGMA user_version = 2;",
         )
         .expect("downgrade to v2");

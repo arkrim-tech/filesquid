@@ -756,10 +756,18 @@ fn none_deleted(w: &mut MonitorWorld) {
     );
 }
 
+/// The in-memory catalog's object purger records each object work it was handed; the
+/// tombstone written to a real OCFL object (its state, retained history and no content) is
+/// asserted over the desktop catalog by `filesquid-native`'s `assert_tombstone` tests.
 #[then(expr = "each expired file's object should become a tombstone")]
 fn objects_tombstoned(w: &mut MonitorWorld) {
-    let done = w.library.fx().catalog.purged_objects();
-    assert_eq!(done.len(), w.library.files.len());
+    let catalog = &w.library.fx().catalog;
+    let done = catalog.purged_objects();
+    let mut ids: Vec<&str> = done.iter().map(|(id, _)| id.as_str()).collect();
+    let mut expected: Vec<&str> = w.library.files.iter().map(FileId::as_str).collect();
+    ids.sort();
+    expected.sort();
+    assert_eq!(ids, expected, "one object work per expired file");
     assert!(done
         .iter()
         .all(|(_, mode)| *mode == filesquid_api::library::ExpiryMode::KeepVersionHistory));

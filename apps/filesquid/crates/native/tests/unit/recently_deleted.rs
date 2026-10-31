@@ -127,6 +127,17 @@ fn a_library_retention_command_is_kept_in_the_snapshot_and_journaled() {
         },
     );
     assert_eq!(snapshot_of(&fx, &lib).library.retention_days, Some(90));
+    let entries = catalog_fixture::all_entries(fx.journal.as_ref());
+    let set = entries
+        .iter()
+        .find(|e| e.operation == "library.retention.set")
+        .expect("the retention change is journaled");
+    assert_eq!(set.outcome, filesquid_api::journal::Outcome::Succeeded);
+    assert!(
+        set.target_ids.iter().any(|id| id == lib.as_str()),
+        "journaled for this library: {:?}",
+        set.target_ids
+    );
     let fx = rebuilt(fx, &lib);
     let state = fx.catalog.library(&lib).expect("read").expect("library");
     assert_eq!(state.retention_days, Some(90), "survives an index rebuild");
@@ -474,9 +485,11 @@ fn a_deletion_stopped_part_way_is_finished_by_the_next_run() {
 
 #[test]
 fn the_expiry_runs_as_a_durable_job_over_every_open_library() {
-    use filesquid_api::jobs::{JobState, Jobs, MemoryJobStore};
+    use filesquid_api::jobs::{JobState, Jobs};
     use filesquid_api::monitor::{Monitor, MonitorConfig, StaticHostChecks};
     use filesquid_native::workers::expiry::run_expiry_job;
+    use filesquid_native::SqliteJobs;
+    use std::sync::atomic::AtomicBool;
     let (fx, lib, file) = deleted_file("f215-job");
     let monitor = Monitor::start(
         Arc::new(filesquid_api::journal::MemoryJournal::new("desktop")),
@@ -484,24 +497,44 @@ fn the_expiry_runs_as_a_durable_job_over_every_open_library() {
         MonitorConfig::new("desktop"),
         filesquid_api::EventBus::new(),
     );
-    let jobs = Jobs::new(
-        Arc::new(MemoryJobStore::new()),
-        monitor.journal(),
-        monitor.registry().clone(),
-        "test-launch",
-    );
+    let path = fx.root.join("f215-jobs.sqlite");
+    let launch = |id: &str| {
+        let store = SqliteJobs::open(&path).expect("job store");
+        Jobs::new(
+            Arc::new(store),
+            monitor.journal(),
+            monitor.registry().clone(),
+            id,
+        )
+    };
     let service = later_service(&fx, ExpiryMode::KeepVersionHistory);
-    let stop = std::sync::atomic::AtomicBool::new(false);
+    let source = "installation:test";
+    let quitting = AtomicBool::new(true);
+    let first = launch("launch-1");
+    let (state, _) =
+        run_expiry_job(&first, &service, &fx.catalog, source, None, &quitting).expect("quit");
+    assert_eq!(state, JobState::Pending, "a quit suspends the job");
+    drop(first);
+    let jobs = launch("launch-2");
+    let kept = jobs
+        .unfinished_of(filesquid_api::library::EXPIRY_JOB_KIND, 2)
+        .expect("jobs");
+    assert_eq!(kept.len(), 1, "the job survives the process: {kept:?}");
+    let stop = AtomicBool::new(false);
     let (state, report) =
-        run_expiry_job(&jobs, &service, &fx.catalog, "installation:test", &stop).expect("run");
+        run_expiry_job(&jobs, &service, &fx.catalog, source, None, &stop).expect("run");
     assert_eq!(state, JobState::Completed);
+    assert_eq!(
+        jobs.job(&kept[0].id).expect("job").state,
+        JobState::Completed
+    );
     assert_eq!(
         (report.libraries, report.expired, report.objects_done),
         (1, 1, 1)
     );
     assert_tombstone(&fx, &lib, &file);
     let (_, again) =
-        run_expiry_job(&jobs, &service, &fx.catalog, "installation:test", &stop).expect("rerun");
+        run_expiry_job(&jobs, &service, &fx.catalog, source, None, &stop).expect("rerun");
     assert_eq!(again.expired, 0, "a second run finds nothing due");
     drop(monitor);
 }

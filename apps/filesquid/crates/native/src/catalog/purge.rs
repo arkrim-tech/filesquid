@@ -353,9 +353,9 @@ impl ObjectWork<'_> {
     }
 
     /// The PROV-O activity of the purge: that of the snapshot version its operation
-    /// committed, found newest first among every version of the snapshot's inventory (already read, so the
-    /// search is bounded by it), else that of
-    /// the operation on the snapshot object with no version known. Filesystem I/O.
+    /// committed, found newest first among every version of the snapshot's inventory (already
+    /// read, so the search is bounded by it), else that of the operation on the snapshot
+    /// object with no version known. Filesystem I/O.
     fn purge_activity(&self) -> Result<String, CatalogError> {
         let backend = self.root.backend();
         let snapshot_id = self.root.snapshot_object_id().to_string();

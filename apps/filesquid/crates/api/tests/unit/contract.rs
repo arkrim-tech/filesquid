@@ -399,8 +399,11 @@ fn sample_body(method: &Method, path: &str) -> Body {
         return Body::from(serde_json::to_vec(&ValidationConfig::default()).expect("json"));
     }
     if *method == Method::PUT && path == "/api/v1/settings/recently-deleted" {
-        let settings =
-            serde_json::json!({"default_retention_days": 30, "expiry": "keep_version_history"});
+        let settings = serde_json::json!({
+            "envelope": {"schema_version": 1, "operation_id": "op-settings",
+                         "expected_revision": "0", "scope": "installation"},
+            "input": {"default_retention_days": 30, "expiry": "keep_version_history"},
+        });
         return Body::from(settings.to_string());
     }
     if path == "/api/v1/recently-deleted/commands" {
@@ -842,28 +845,59 @@ fn samples() -> Vec<(&'static str, Vec<Value>)> {
     all
 }
 
+/// A pin of every kind, each with a distinct handle of a node of that kind.
+fn pin_samples() -> Vec<filesquid_api::preferences::PinnedDestination> {
+    use filesquid_api::navigation::{FolderScope, NodeRef};
+    use filesquid_api::preferences::{PinKind, PinnedDestination};
+    use filesquid_core::{CollectionId, LibraryId, RepositoryId, VirtualCollectionId};
+    let nodes = [
+        (
+            PinKind::Repository,
+            NodeRef::Repository(RepositoryId::new("r").expect("id")),
+        ),
+        (
+            PinKind::Library,
+            NodeRef::Library(LibraryId::new("l").expect("id")),
+        ),
+        (
+            PinKind::Collection,
+            NodeRef::Collection(CollectionId::new("c").expect("id")),
+        ),
+        (
+            PinKind::VirtualCollection,
+            NodeRef::VirtualCollection(VirtualCollectionId::new("v").expect("id")),
+        ),
+        (
+            PinKind::Folder,
+            NodeRef::folder(
+                FolderScope::Collection(CollectionId::new("c").expect("id")),
+                "a",
+            ),
+        ),
+        (
+            PinKind::RecentlyDeleted,
+            NodeRef::RecentlyDeleted(RepositoryId::new("r").expect("id")),
+        ),
+    ];
+    nodes
+        .into_iter()
+        .map(|(kind, node)| PinnedDestination {
+            node: node.to_handle().expect("handle"),
+            kind,
+        })
+        .collect()
+}
+
 /// Serialized samples of the preference schemas: the defaults, a value with every choice
 /// changed and a pin of every kind, and every enum value.
 fn preference_samples() -> Vec<(&'static str, Vec<Value>)> {
     use filesquid_api::preferences::{
-        FolderPlacement, Layout, NavigationPreferences, PinKind, PinnedDestination, Preferences,
-        SortDirection, SortKey, StartView,
+        FolderPlacement, Layout, NavigationPreferences, Preferences, SortDirection, SortKey,
+        StartView,
     };
-    let pin = |kind| PinnedDestination {
-        node: "n1.YzE6Yw".into(),
-        kind,
-    };
-    let kinds = [
-        PinKind::Repository,
-        PinKind::Library,
-        PinKind::Collection,
-        PinKind::VirtualCollection,
-        PinKind::Folder,
-        PinKind::RecentlyDeleted,
-    ];
     let navigation = NavigationPreferences {
         version: 1,
-        pinned: kinds.map(pin).to_vec(),
+        pinned: pin_samples(),
         order: vec!["libraries".into()],
         collapsed: vec!["n1.YzE6Yw".into()],
     };
@@ -1689,6 +1723,25 @@ fn recently_deleted_samples() -> Vec<(&'static str, Vec<Value>)> {
             [DeletionCause::OneByOne, DeletionCause::WithCollection]
                 .map(to_value)
                 .to_vec(),
+        ),
+        (
+            "RecentlyDeletedSettingsCommand",
+            vec![to_value(filesquid_api::envelope::Command {
+                envelope: filesquid_api::operation::CommandEnvelope::new(
+                    OperationId::new("op-settings").expect("op"),
+                    filesquid_api::operation::ExpectedRevision::new("0").expect("rev"),
+                    filesquid_api::operation::OperationScope::new("installation").expect("scope"),
+                ),
+                input: settings,
+            })],
+        ),
+        (
+            "RecentlyDeletedSettingsOutcome",
+            vec![filesquid_api::envelope::committed(
+                &OperationId::new("op-settings").expect("op"),
+                &view,
+            )
+            .expect("answer")],
         ),
         ("InstallationSettings", vec![to_value(settings)]),
         ("RecentlyDeletedSettings", vec![to_value(&view)]),

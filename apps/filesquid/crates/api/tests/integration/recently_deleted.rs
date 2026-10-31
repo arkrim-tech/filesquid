@@ -379,6 +379,15 @@ async fn the_command_route_takes_only_trash_commands_in_their_own_scope() {
     }
 }
 
+/// A settings command: the envelope with `operation_id` and `scope`, and `input`.
+fn settings_command(operation_id: &str, scope: &str, input: Value) -> Value {
+    json!({
+        "envelope": {"schema_version": 1, "operation_id": operation_id,
+                     "expected_revision": "0", "scope": scope},
+        "input": input,
+    })
+}
+
 #[tokio::test]
 async fn the_settings_answer_the_default_the_expiry_setting_and_each_library_s_period() {
     let trash = Trash::new(None).await;
@@ -392,11 +401,15 @@ async fn the_settings_answer_the_default_the_expiry_setting_and_each_library_s_p
     assert_eq!(libraries.len(), 2);
     assert_eq!(libraries[0]["retention_days"], Value::Null);
     assert_eq!(libraries[1]["retention_days"], 90);
-    for bad in [
+    for (n, input) in [
         json!({"default_retention_days": 0, "expiry": "keep_version_history"}),
         json!({"default_retention_days": 3651, "expiry": "keep_version_history"}),
         json!({"default_retention_days": 30, "expiry": "forever"}),
-    ] {
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let bad = settings_command(&format!("op-bad-{n}"), "installation", input);
         let answer = trash
             .rig
             .send_command(Method::PUT, "/api/v1/settings/recently-deleted", &bad)
@@ -408,14 +421,64 @@ async fn the_settings_answer_the_default_the_expiry_setting_and_each_library_s_p
             answer.json()
         );
     }
-    let set = json!({"default_retention_days": 14, "expiry": "delete_all_version_history"});
+    let input = json!({"default_retention_days": 14, "expiry": "delete_all_version_history"});
+    let set = settings_command("op-settings", "installation", input.clone());
     let answer = trash
         .rig
         .send_command(Method::PUT, "/api/v1/settings/recently-deleted", &set)
         .await;
     assert_eq!(answer.status, StatusCode::OK, "{:?}", answer.json());
-    assert_eq!(answer.json()["default_retention_days"], 14);
-    assert_eq!(answer.json()["expiry"], "delete_all_version_history");
+    assert_eq!(answer.json()["operation_id"], "op-settings");
+    assert_eq!(answer.json()["kind"], "committed");
+    assert_eq!(answer.json()["result"]["default_retention_days"], 14);
+    assert_eq!(
+        answer.json()["result"]["expiry"],
+        "delete_all_version_history"
+    );
+    let replay = trash
+        .rig
+        .send_command(Method::PUT, "/api/v1/settings/recently-deleted", &set)
+        .await;
+    assert_eq!(
+        replay.json(),
+        answer.json(),
+        "a repeated operation_id replays"
+    );
+    let reused = settings_command(
+        "op-settings",
+        "installation",
+        json!({"default_retention_days": 15, "expiry": "keep_version_history"}),
+    );
+    let refused = trash
+        .rig
+        .send_command(Method::PUT, "/api/v1/settings/recently-deleted", &reused)
+        .await;
+    assert_eq!(
+        refused.status,
+        StatusCode::BAD_REQUEST,
+        "{:?}",
+        refused.json()
+    );
+    let scoped = settings_command("op-scope", "library:x", input.clone());
+    let refused = trash
+        .rig
+        .send_command(Method::PUT, "/api/v1/settings/recently-deleted", &scoped)
+        .await;
+    assert_eq!(
+        refused.status,
+        StatusCode::BAD_REQUEST,
+        "{:?}",
+        refused.json()
+    );
+    let bare = trash
+        .rig
+        .send_command(Method::PUT, "/api/v1/settings/recently-deleted", &input)
+        .await;
+    assert_eq!(
+        bare.status,
+        StatusCode::BAD_REQUEST,
+        "an envelope is required"
+    );
     let stored = trash.settings.journal_entries();
     assert_eq!(stored.len(), 1, "journaled once");
     assert_eq!(stored[0].operation, "settings.recently_deleted.set");

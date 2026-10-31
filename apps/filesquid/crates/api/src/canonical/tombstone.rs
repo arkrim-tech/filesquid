@@ -297,33 +297,45 @@ async fn read_provenance<B: StorageBackend>(
 }
 
 /// Delete every stored key of the object at `object_root`, at most [`MAX_OBJECT_KEYS`];
-/// answer how many were deleted. Deleting what is already gone succeeds, so a deletion
-/// stopped part-way is completed by running it again. Storage I/O.
+/// answer how many were deleted. The keys are first counted page by page with the listing's
+/// cursor, so an object over the bound is refused before any key is deleted. Deleting what is
+/// already gone succeeds, so a deletion stopped part-way is completed by running it again.
+/// Storage I/O.
 ///
 /// # Errors
-/// A storage failure, or an object larger than the bound (nothing past it is deleted).
+/// A storage failure, or an object larger than the bound (nothing is deleted).
 pub async fn delete_object<B: StorageBackend>(
     backend: &B,
     object_root: &str,
 ) -> Result<usize, CanonicalError> {
     let prefix = format!("{object_root}/");
-    let mut deleted = 0;
+    let keys = list_object_keys(backend, &prefix).await?;
+    for key in &keys {
+        backend.delete(key).await.map_err(storage)?;
+    }
+    Ok(keys.len())
+}
+
+/// Every stored key under `prefix`, listed page by page with the listing's cursor, or a
+/// refusal when there are more than [`MAX_OBJECT_KEYS`]. Storage I/O.
+async fn list_object_keys<B: StorageBackend>(
+    backend: &B,
+    prefix: &str,
+) -> Result<Vec<StorageKey>, CanonicalError> {
+    let mut keys = Vec::new();
+    let mut after: Option<StorageKey> = None;
     for _ in 0..=MAX_OBJECT_KEYS / KEY_PAGE {
         let page = backend
-            .list(&prefix, None, KEY_PAGE)
+            .list(prefix, after.as_ref(), KEY_PAGE)
             .await
             .map_err(storage)?;
-        if page.keys.is_empty() {
-            return Ok(deleted);
-        }
-        // Every page is listed from the start, because the keys of the page before are gone;
-        // the bound is checked before a key of the page is deleted.
-        if deleted + page.keys.len() > MAX_OBJECT_KEYS {
+        keys.extend(page.keys);
+        if keys.len() > MAX_OBJECT_KEYS {
             break;
         }
-        for key in &page.keys {
-            backend.delete(key).await.map_err(storage)?;
-            deleted += 1;
+        match page.next {
+            Some(next) => after = Some(next),
+            None => return Ok(keys),
         }
     }
     Err(CanonicalError::Failed(

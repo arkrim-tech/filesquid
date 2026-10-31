@@ -17,7 +17,7 @@ use filesquid_native::workers::expiry::run_expiry_job;
 use filesquid_native::{HostMonitor, SqliteCatalog, SqliteRetentionSettings, JOURNAL_FILE};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Weak};
+use std::sync::{Arc, Mutex, PoisonError, Weak};
 use std::time::Duration;
 
 /// Time between two expiry runs.
@@ -80,10 +80,11 @@ impl ExpiryTask {
         }
     }
 
-    /// Run one expiry job now; a failure is logged and the next run tries again. Database,
-    /// filesystem and journal I/O.
-    pub fn run_once(&self, stop: &AtomicBool) {
-        let run = run_expiry_job(&self.jobs, &self.service, &self.catalog, &self.source, stop);
+    /// Run one expiry job now, `resumed` when the job routes resumed that job; a failure is
+    /// logged and the next run tries again. Database, filesystem and journal I/O.
+    pub fn run_once(&self, resumed: Option<&str>, stop: &AtomicBool) {
+        let (jobs, catalog) = (&self.jobs, &self.catalog);
+        let run = run_expiry_job(jobs, &self.service, catalog, &self.source, resumed, stop);
         if let Err(err) = run {
             tracing::warn!(
                 operation = filesquid_api::library::EXPIRY_JOB_KIND,
@@ -106,6 +107,8 @@ pub struct ExpiryHandle {
     running: AtomicBool,
     /// The app's exit flag.
     stop: Arc<AtomicBool>,
+    /// The job the job routes resumed last, which the next run starts.
+    resumed: Mutex<Option<String>>,
     /// This handle, for the thread a resumed job runs on.
     me: Weak<ExpiryHandle>,
 }
@@ -117,19 +120,31 @@ impl ExpiryHandle {
             task,
             running: AtomicBool::new(false),
             stop,
+            resumed: Mutex::new(None),
             me: me.clone(),
         })
     }
 
-    /// Run once now unless a run is already in progress; answer whether this call ran.
-    /// Database, filesystem and journal I/O.
+    /// Run once now unless a run is already in progress, starting the job resumed last if
+    /// any; answer whether this call ran. The in-progress flag is cleared on every exit, a
+    /// panic included, so a failed run never blocks the later ones. Database, filesystem and
+    /// journal I/O.
     pub fn run_now(&self) -> bool {
         if self.running.swap(true, Ordering::SeqCst) {
             return false;
         }
-        self.task.run_once(&self.stop);
-        self.running.store(false, Ordering::SeqCst);
+        let _clear = RunningFlag(&self.running);
+        let resumed = self.take_resumed();
+        self.task.run_once(resumed.as_deref(), &self.stop);
         true
+    }
+
+    /// Take the job the job routes resumed last, if any.
+    fn take_resumed(&self) -> Option<String> {
+        self.resumed
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take()
     }
 
     /// Whether a run is in progress.
@@ -154,9 +169,20 @@ impl ExpiryHandle {
     }
 }
 
+/// Clears a run's in-progress flag when dropped, on every exit of the run.
+struct RunningFlag<'a>(&'a AtomicBool);
+
+impl Drop for RunningFlag<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
+    }
+}
+
 impl JobRunner for ExpiryHandle {
-    /// Run the resumed expiry job on its own thread; a run already in progress takes it.
-    fn resume(&self, _job: &Job) -> Result<(), JobError> {
+    /// Run the resumed expiry job `job` on its own thread; while a run is in progress, the
+    /// job is kept and started by the next run.
+    fn resume(&self, job: &Job) -> Result<(), JobError> {
+        *self.resumed.lock().unwrap_or_else(PoisonError::into_inner) = Some(job.id.clone());
         if self.is_running() {
             return Ok(());
         }

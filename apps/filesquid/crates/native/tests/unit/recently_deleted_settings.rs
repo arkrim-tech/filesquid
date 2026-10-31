@@ -43,14 +43,13 @@ fn settings_default_survive_a_reopen_and_are_journaled() {
     assert_eq!(set.len(), 1);
     assert!(set[0].target_ids.is_empty(), "no value is journaled");
     assert_eq!(set[0].actor, "owner");
-    let bad = InstallationSettings {
-        default_retention_days: 0,
-        ..changed
-    };
-    let refused = reopened.store(&bad, JournalEntry::new("x", Outcome::Succeeded));
-    assert!(
-        refused.is_err(),
-        "the store refuses an out-of-range period too"
-    );
-    assert_eq!(reopened.read().expect("read"), changed);
+    for days in [0, 3_651] {
+        let bad = InstallationSettings {
+            default_retention_days: days,
+            ..changed
+        };
+        let refused = reopened.store(&bad, JournalEntry::new("x", Outcome::Succeeded));
+        assert!(refused.is_err(), "the store refuses {days} days too");
+        assert_eq!(reopened.read().expect("read"), changed);
+    }
 }

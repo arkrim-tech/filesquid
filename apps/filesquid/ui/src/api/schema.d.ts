@@ -1475,7 +1475,7 @@ export interface paths {
         get: operations["getRecentlyDeletedSettings"];
         /**
          * Change the Recently deleted settings
-         * @description Set the installation default retention (1 to 3,650 days, invalid_retention otherwise) and the expiry setting. Only the admin may (on the desktop, the owner); any other caller is 403 forbidden. The change is journaled once as settings.recently_deleted.set, without its values, and never changes the purge_after of a file already deleted. A change to the current values stores nothing.
+         * @description Set the installation default retention (1 to 3,650 days, invalid_retention otherwise) and the expiry setting, sent as a command: the CommandEnvelope (scope `installation`; expected_revision is not compared, because the settings carry no revision) and the settings as `input`. Only the admin may (on the desktop, the owner); any other caller is 403 forbidden. The change is journaled once as settings.recently_deleted.set, without its values, and never changes the purge_after of a file already deleted. A change to the current values stores nothing. The answer is a `committed` CommandOutcome with the settings now in force as `result`; a repeated operation_id of the same command answers that outcome again, the same operation_id with other settings is invalid_request, and one still running is 409 conflict.
          */
         put: operations["putRecentlyDeletedSettings"];
         post?: never;
@@ -3447,6 +3447,22 @@ export interface components {
             error: components["schemas"]["PortError"] | null;
             /** @description What the command did. */
             result: components["schemas"]["LibraryCommandResult"] | null;
+        };
+        /** @description Body of PUT /api/v1/settings/recently-deleted: the command envelope (scope `installation`) and the installation settings. */
+        RecentlyDeletedSettingsCommand: {
+            envelope: components["schemas"]["CommandEnvelope"];
+            input: components["schemas"]["InstallationSettings"];
+        };
+        /** @description The answer of PUT /api/v1/settings/recently-deleted: the `CommandOutcome` fields (kind `committed`) and the settings now in force. A repeated operation_id of the same command answers this outcome again. */
+        RecentlyDeletedSettingsOutcome: {
+            /** @description The command's operation id. */
+            operation_id: string;
+            /** @description Always `committed`. */
+            kind: components["schemas"]["CommandOutcomeKind"];
+            /** @description Always null: a refusal is an error answer. */
+            error: components["schemas"]["PortError"] | null;
+            /** @description The settings now in force. */
+            result: components["schemas"]["RecentlyDeletedSettings"] | null;
         };
     };
     responses: {
@@ -6332,22 +6348,23 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["InstallationSettings"];
+                "application/json": components["schemas"]["RecentlyDeletedSettingsCommand"];
             };
         };
         responses: {
-            /** @description The Recently deleted settings. */
+            /** @description The command's committed outcome, with the settings now in force. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["RecentlyDeletedSettings"];
+                    "application/json": components["schemas"]["RecentlyDeletedSettingsOutcome"];
                 };
             };
             400: components["responses"]["InvalidRequest"];
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            409: components["responses"]["LibraryCommandConflict"];
             500: components["responses"]["Internal"];
             503: components["responses"]["Unavailable"];
         };

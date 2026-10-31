@@ -45,7 +45,8 @@ struct State {
     files: BTreeMap<String, StoredFile>,
     folders: BTreeMap<String, Folder>,
     receipts: BTreeMap<String, CommitReceipt>,
-    /// Recorded object works of expired files, by file ID: (operation ID, mode, library).
+    /// Recorded object works of expired files, by file ID: (operation ID, mode, library,
+    /// the expiry's commit time in Unix milliseconds, `purged_at_ms`).
     pending: BTreeMap<String, (String, ExpiryMode, String, i64)>,
     /// Object works done, in order.
     purged: Vec<(FileId, ExpiryMode)>,

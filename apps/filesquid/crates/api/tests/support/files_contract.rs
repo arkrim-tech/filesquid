@@ -818,15 +818,15 @@ fn drive_samples() -> Vec<(&'static str, Vec<Value>)> {
         ViewRow::Folder(folder.clone()),
         ViewRow::File(file(Some("2026-10-20T01:00:00.000Z".into()))),
         ViewRow::File(file(None)),
-        ViewRow::File(deleted),
     ];
-    let page = |next: Option<String>, complete| ViewPage {
+    let deleted = ViewRow::File(deleted);
+    let page = |view, rows: Vec<ViewRow>, next: Option<String>, complete| ViewPage {
         node: "n1.abc".into(),
-        view: ViewKind::All,
+        view,
         sort: SortKey::ModifiedByMe,
         direction: SortDirection::Descending,
         folders: FolderPlacement::Mixed,
-        rows: rows.clone(),
+        rows,
         next_cursor: next,
         complete,
     };
@@ -859,25 +859,39 @@ fn drive_samples() -> Vec<(&'static str, Vec<Value>)> {
                 .to_vec(),
         ),
         ("ViewFolderRow", vec![to_value(ViewRow::Folder(folder))]),
-        ("ViewFileRow", rows[1..].iter().map(to_value).collect()),
-        ("ViewRow", rows.iter().map(to_value).collect()),
+        (
+            "ViewFileRow",
+            rows[1..].iter().chain([&deleted]).map(to_value).collect(),
+        ),
+        (
+            "ViewRow",
+            rows.iter().chain([&deleted]).map(to_value).collect(),
+        ),
         (
             "ViewPage",
             vec![
-                to_value(page(Some("v1.00".into()), true)),
-                to_value(page(None, false)),
+                to_value(page(
+                    ViewKind::All,
+                    rows.clone(),
+                    Some("v1.00".into()),
+                    true,
+                )),
+                to_value(page(ViewKind::All, rows.clone(), None, false)),
+                to_value(page(ViewKind::Deleted, vec![deleted.clone()], None, true)),
             ],
         ),
         ("CollectionHistorySize", vec![to_value(size)]),
     ]
     .into_iter()
-    .chain(search_samples(rows))
+    .chain(search_samples(rows, deleted))
     .collect()
 }
 
-/// Serialized samples of the search schemas (Task API-F2.3).
+/// Serialized samples of the search schemas (Task API-F2.3): ordinary `rows`, and the
+/// `deleted` row of an `is:deleted` search (Task API-F2.15).
 fn search_samples(
     rows: Vec<filesquid_api::files::drive::ViewRow>,
+    deleted: filesquid_api::files::drive::ViewRow,
 ) -> Vec<(&'static str, Vec<Value>)> {
     use filesquid_api::files::search::{SearchPage, SearchSort};
     use filesquid_api::preferences::{FolderPlacement, SortDirection};
@@ -889,23 +903,25 @@ fn search_samples(
         SearchSort::ModifiedByMe,
         SearchSort::OpenedByMe,
     ];
-    let page = |node: Option<String>, next: Option<String>| SearchPage {
-        q: "deck type:document -draft".into(),
+    let page = |q: &str, rows: Vec<_>, node: Option<String>, next: Option<String>| SearchPage {
+        q: q.into(),
         node,
         sort: SearchSort::Relevance,
         direction: SortDirection::Descending,
         folders: FolderPlacement::OnTop,
-        rows: rows.clone(),
+        rows,
         next_cursor: next,
         complete: true,
     };
+    let q = "deck type:document -draft";
     vec![
         ("SearchSort", sorts.map(to_value).to_vec()),
         (
             "SearchPage",
             vec![
-                to_value(page(None, Some("v1.00".into()))),
-                to_value(page(Some("n1.abc".into()), None)),
+                to_value(page(q, rows.clone(), None, Some("v1.00".into()))),
+                to_value(page(q, rows.clone(), Some("n1.abc".into()), None)),
+                to_value(page("is:deleted deck", vec![deleted], None, None)),
             ],
         ),
     ]

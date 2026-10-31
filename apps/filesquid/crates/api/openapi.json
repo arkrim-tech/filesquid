@@ -4517,14 +4517,14 @@
       "put": {
         "operationId": "putRecentlyDeletedSettings",
         "summary": "Change the Recently deleted settings",
-        "description": "Set the installation default retention (1 to 3,650 days, invalid_retention otherwise) and the expiry setting. Only the admin may (on the desktop, the owner); any other caller is 403 forbidden. The change is journaled once as settings.recently_deleted.set, without its values, and never changes the purge_after of a file already deleted. A change to the current values stores nothing.",
+        "description": "Set the installation default retention (1 to 3,650 days, invalid_retention otherwise) and the expiry setting, sent as a command: the CommandEnvelope (scope `installation`; expected_revision is not compared, because the settings carry no revision) and the settings as `input`. Only the admin may (on the desktop, the owner); any other caller is 403 forbidden. The change is journaled once as settings.recently_deleted.set, without its values, and never changes the purge_after of a file already deleted. A change to the current values stores nothing. The answer is a `committed` CommandOutcome with the settings now in force as `result`; a repeated operation_id of the same command answers that outcome again, the same operation_id with other settings is invalid_request, and one still running is 409 conflict.",
         "x-filesquid-action": "library.read",
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/InstallationSettings"
+                "$ref": "#/components/schemas/RecentlyDeletedSettingsCommand"
               }
             }
           }
@@ -4546,14 +4546,17 @@
             "$ref": "#/components/responses/Unavailable"
           },
           "200": {
-            "description": "The Recently deleted settings.",
+            "description": "The command's committed outcome, with the settings now in force.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/RecentlyDeletedSettings"
+                  "$ref": "#/components/schemas/RecentlyDeletedSettingsOutcome"
                 }
               }
             }
+          },
+          "409": {
+            "$ref": "#/components/responses/LibraryCommandConflict"
           }
         }
       }
@@ -10521,6 +10524,67 @@
               }
             ],
             "description": "What the command did."
+          }
+        }
+      },
+      "RecentlyDeletedSettingsCommand": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Body of PUT /api/v1/settings/recently-deleted: the command envelope (scope `installation`) and the installation settings.",
+        "required": [
+          "envelope",
+          "input"
+        ],
+        "properties": {
+          "envelope": {
+            "$ref": "#/components/schemas/CommandEnvelope"
+          },
+          "input": {
+            "$ref": "#/components/schemas/InstallationSettings"
+          }
+        }
+      },
+      "RecentlyDeletedSettingsOutcome": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "The answer of PUT /api/v1/settings/recently-deleted: the `CommandOutcome` fields (kind `committed`) and the settings now in force. A repeated operation_id of the same command answers this outcome again.",
+        "required": [
+          "operation_id",
+          "kind",
+          "error",
+          "result"
+        ],
+        "properties": {
+          "operation_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The command's operation id."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/CommandOutcomeKind",
+            "description": "Always `committed`."
+          },
+          "error": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PortError"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Always null: a refusal is an error answer."
+          },
+          "result": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RecentlyDeletedSettings"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The settings now in force."
           }
         }
       }

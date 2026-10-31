@@ -197,6 +197,10 @@ impl std::fmt::Debug for ApiState {
                 &self.import_starter.get().is_some(),
             )
             .field(
+                "library_service_installed",
+                &self.library_service.get().is_some(),
+            )
+            .field(
                 "home_collections_installed",
                 &self.home_collections.get().is_some(),
             )

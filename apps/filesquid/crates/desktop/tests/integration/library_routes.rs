@@ -1018,11 +1018,16 @@ fn recently_deleted_settings_and_the_expiry_job_are_wired() {
     assert_eq!(view["expiry"], "keep_version_history");
     assert_eq!(view["may_change"], true);
     assert_eq!(view["libraries"].as_array().expect("libraries").len(), 1);
-    let set = json!({ "default_retention_days": 45, "expiry": "keep_version_history" });
+    let set = json!({
+        "envelope": {"schema_version": 1, "operation_id": "op-settings",
+                     "expected_revision": "0", "scope": "installation"},
+        "input": { "default_retention_days": 45, "expiry": "keep_version_history" },
+    });
     let (status, changed) =
         desktop.send("PUT", "/api/v1/settings/recently-deleted", Some(set), true);
     assert_eq!(status, 200, "{changed}");
-    assert_eq!(changed["default_retention_days"], 45);
+    assert_eq!(changed["kind"], "committed");
+    assert_eq!(changed["result"]["default_retention_days"], 45);
     let jobs = open_jobs(&desktop.dir, &desktop.host).expect("jobs");
     let task = ExpiryTask::new(
         service,
@@ -1030,7 +1035,7 @@ fn recently_deleted_settings_and_the_expiry_job_are_wired() {
         jobs.clone(),
         &installation(),
     );
-    task.run_once(&AtomicBool::new(false));
+    task.run_once(None, &AtomicBool::new(false));
     let finished = jobs
         .unfinished_of(filesquid_api::library::EXPIRY_JOB_KIND, 1)
         .expect("jobs");

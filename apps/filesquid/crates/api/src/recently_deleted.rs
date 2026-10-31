@@ -14,15 +14,19 @@
 //!   retention, the expiry setting, whether the caller may change them, and each readable
 //!   library's own period and revision.
 //! - `PUT /api/v1/settings/recently-deleted` (`settings.recently_deleted.configure`): the
-//!   admin (on the desktop, the owner) sets the installation default and the expiry setting.
+//!   admin (on the desktop, the owner) sets the installation default and the expiry setting,
+//!   `{"envelope": CommandEnvelope, "input": InstallationSettings}` with the scope
+//!   `installation`, answered with a `committed` `CommandOutcome` whose `result` is the
+//!   settings answer; a repeated operation ID answers that outcome again.
 //!
 //! The library service journals what it commits and what it refuses; a handler journals only
 //! what it refuses itself (a body, envelope or command it cannot take, a library the caller
 //! may not read, a host without the service), once, with opaque IDs only (API-S-036).
 
 use crate::auth::{journal_entry, Action, Principal, Resource};
-use crate::envelope::{self, Command};
+use crate::envelope::{self, Checked, Command, Settled};
 use crate::error::{ApiError, ErrorCode};
+use crate::files::receipts::ClaimGuard;
 use crate::journal::{JournalEntry, Level, Outcome};
 use crate::library::{
     CommandRequest, CommandResult, ExpiryMode, InstallationSettings, LibraryCommand, LibraryError,
@@ -43,6 +47,9 @@ use std::sync::Arc;
 
 /// Journal operation of a refusal made by the command route itself.
 pub const COMMAND_OPERATION: &str = "recently_deleted.command";
+
+/// The envelope scope of a change to the installation settings.
+pub const SETTINGS_SCOPE: &str = "installation";
 
 /// Journal operation of a refusal made by the settings read route itself.
 pub const SETTINGS_READ_OPERATION: &str = "settings.recently_deleted.read";
@@ -192,37 +199,113 @@ async fn read_settings(
 }
 
 /// `PUT /api/v1/settings/recently-deleted`: only the admin; the guard checked `library.read`,
-/// so this handler checks the admin action itself before anything else.
+/// so this handler checks the admin action itself before anything else. The body is
+/// `{"envelope": CommandEnvelope, "input": InstallationSettings}` with the scope
+/// [`SETTINGS_SCOPE`]; the answer is a `committed`
+/// [`CommandOutcome`](crate::operation::CommandOutcome) with the settings as `result`, stored
+/// as the operation's receipt so a repeated operation ID answers it again (API-S-002).
 async fn write_settings(
     State(state): State<ApiState>,
     Extension(principal): Extension<Principal>,
-    request: Result<Json<InstallationSettings>, JsonRejection>,
+    request: Result<Json<Command<InstallationSettings>>, JsonRejection>,
 ) -> Response {
     let actor = principal.actor();
-    if !may_configure(&state, &principal) {
-        let err = ApiError::denied(crate::error::DenialReason::NotPermitted);
-        return refuse(&state, SETTINGS_OPERATION, actor, None, err).await;
-    }
-    let (Ok(Json(settings)), Some(service)) = (request, state.library_service()) else {
-        let err = match state.library_service() {
-            Some(_) => invalid("The body is not Recently deleted settings."),
-            None => unavailable(),
-        };
-        return refuse(&state, SETTINGS_OPERATION, actor, None, err).await;
+    let (service, command) = match check_settings(&state, &principal, request) {
+        Ok(ready) => ready,
+        Err((id, err)) => return refuse(&state, SETTINGS_OPERATION, actor, id.as_ref(), err).await,
     };
-    let store = service.clone();
+    let operation_id = command.operation_id.clone();
+    let receipts = state.command_receipts();
+    let claimed = envelope::claim(
+        receipts,
+        SETTINGS_OPERATION,
+        SETTINGS_SCOPE,
+        &command.input,
+        &operation_id,
+    );
+    let guard = match claimed {
+        Ok(guard) => guard,
+        Err(settled) => return settle(&state, actor, &operation_id, settled).await,
+    };
+    let (store, settings) = (service.clone(), command.input);
     let stored =
         tokio::task::spawn_blocking(move || store.set_installation_settings(actor, settings)).await;
     match stored {
-        Ok(Ok(_)) => match settings_view(&state, &principal, service).await {
-            Ok(view) => Json(view).into_response(),
-            Err(err) => err.into_response(),
-        },
-        Ok(Err(err)) => library_error(&err).into_response(),
+        Ok(Ok(_)) => settings_answer(&state, &principal, service, &operation_id, guard).await,
+        Ok(Err(err)) => envelope::refusal(Some(&operation_id), library_error(&err)),
         Err(_) => {
             ApiError::internal(SETTINGS_OPERATION, "the settings task failed").into_response()
         }
     }
+}
+
+/// The installed library service and a checked settings command.
+type SettingsCommand = (Arc<LibraryService>, Checked<InstallationSettings>);
+
+/// The installed service and the checked settings command of `request` from the admin, or
+/// the refusal with the operation ID when the envelope was read.
+fn check_settings(
+    state: &ApiState,
+    principal: &Principal,
+    request: Result<Json<Command<InstallationSettings>>, JsonRejection>,
+) -> Result<SettingsCommand, (Option<OperationId>, ApiError)> {
+    if !may_configure(state, principal) {
+        let err = ApiError::denied(crate::error::DenialReason::NotPermitted);
+        return Err((None, err));
+    }
+    let Json(body) = request.map_err(|_| {
+        (
+            None,
+            invalid("The body is not a Recently deleted settings command."),
+        )
+    })?;
+    let operation_id = Some(body.envelope.operation_id().clone());
+    let checked = envelope::check(body.envelope, body.input, SETTINGS_SCOPE)
+        .map_err(|message| (operation_id.clone(), invalid(message)))?;
+    let service = state
+        .library_service()
+        .ok_or_else(|| (operation_id, unavailable()))?;
+    Ok((service, checked))
+}
+
+/// Answer a settings claim that did not run the command: a replay changes nothing and is not
+/// journaled; a refusal is journaled once.
+async fn settle(
+    state: &ApiState,
+    actor: &str,
+    operation_id: &OperationId,
+    settled: Settled,
+) -> Response {
+    let Some((code, message)) = settled.refusal() else {
+        let Settled::Replay(answer) = settled else {
+            unreachable!("only a replay refuses nothing");
+        };
+        return Json(answer).into_response();
+    };
+    let err = ApiError::new(code, message);
+    refuse(state, SETTINGS_OPERATION, actor, Some(operation_id), err).await
+}
+
+/// The `committed` answer of a settings change with the settings now in force as `result`,
+/// stored through `guard` as the operation's receipt. Reads the settings store and the
+/// catalog on a blocking thread.
+async fn settings_answer(
+    state: &ApiState,
+    principal: &Principal,
+    service: Arc<LibraryService>,
+    operation_id: &OperationId,
+    guard: ClaimGuard,
+) -> Response {
+    let view = match settings_view(state, principal, service).await {
+        Ok(view) => view,
+        Err(err) => return err.into_response(),
+    };
+    let Some(answer) = envelope::committed(operation_id, view) else {
+        return ApiError::internal(SETTINGS_OPERATION, "the answer could not be encoded")
+            .into_response();
+    };
+    guard.store(answer.clone());
+    Json(answer).into_response()
 }
 
 /// The settings answer for `principal`. Reads the settings store and the catalog on a
