@@ -13,6 +13,7 @@ import {
 import { fixture, one, settle, control, click } from "../support/file-browser-fakes";
 import { FakePanelSource } from "../support/panel-fakes";
 import { FakeMetadataSource } from "../support/metadata-fakes";
+import { FakeFactsSource, FakeProvenanceSource } from "../support/provenance-fakes";
 import labels from "../../src/theme/labels.en.json";
 
 let host: HTMLElement & { focusMain: () => void };
@@ -195,6 +196,82 @@ describe("bindFilesRoute", () => {
     expect(description.dataset.state).toBe("ready");
     expect(metadata.calls.statements).toBe(1);
     expect(description.shadowRoot?.querySelectorAll(".row")).toHaveLength(8);
+  });
+
+  it("registers exactly the three tabs of UI-S-022 and no audit log tab (UI-F2.15)", async () => {
+    window.history.replaceState(null, "", "#/files/lib/obj");
+    const history = new FakePanelSource();
+    const provenance = new FakeProvenanceSource();
+    stop = bindFilesRoute(host, {
+      labels,
+      source: fixture(),
+      filePanel: { history, download: history, facts: new FakeFactsSource(), provenance },
+      metadata: new FakeMetadataSource(),
+    });
+    await settle();
+    await click(control(browser() as FsFileBrowser, "readme.txt"));
+    await settle();
+    const panel = host.querySelector<FsFilePanel>("fs-file-panel") as FsFilePanel;
+    const tabs = [...(panel.shadowRoot?.querySelectorAll<HTMLElement>('[role="tab"]') ?? [])];
+    expect(tabs.map((t) => t.textContent)).toEqual([
+      labels.filePanelInfo,
+      labels.filePanelDescription,
+      labels.filePanelProvenance,
+    ]);
+    expect(tabs.map((t) => t.textContent?.toLowerCase()).join(" ")).not.toMatch(/audit|log/);
+    // The Provenance tab reads nothing until it is shown, and it mounts in its own slot.
+    expect(panel.shadowRoot?.querySelector("fs-provenance-panel")).toBeNull();
+    expect(provenance.historyCalls).toHaveLength(0);
+    tabs[2]?.click();
+    await settle();
+    const tab = panel.shadowRoot?.querySelector("fs-provenance-panel") as HTMLElement;
+    expect(tab.closest("section")?.dataset.slot).toBe("provenance");
+    expect(tab.dataset.state).toBe("ready");
+    expect(provenance.historyCalls).toHaveLength(1);
+  });
+
+  it("offers View in Logs only once the host is known to be the desktop (UI-F2.15)", async () => {
+    window.history.replaceState(null, "", "#/files/lib/obj");
+    const history = new FakePanelSource();
+    stop = bindFilesRoute(host, {
+      labels,
+      source: fixture(),
+      filePanel: { history, download: history, provenance: new FakeProvenanceSource() },
+    });
+    host.dispatchEvent(new CustomEvent("fs-host", { detail: { hostType: "desktop" } }));
+    await settle();
+    await click(control(browser() as FsFileBrowser, "readme.txt"));
+    await settle();
+    const panel = host.querySelector<FsFilePanel>("fs-file-panel") as FsFilePanel;
+    panel.shadowRoot?.querySelectorAll<HTMLElement>('[role="tab"]')[1]?.click();
+    await settle();
+    const tab = panel.shadowRoot?.querySelector("fs-provenance-panel") as HTMLElement;
+    expect(tab.shadowRoot?.querySelector("a.logs")).not.toBeNull();
+    host.dispatchEvent(new CustomEvent("fs-host", { detail: { hostType: "server" } }));
+    panel.fileRef = { ...(panel.fileRef as NonNullable<typeof panel.fileRef>), version: "v2" };
+    await settle();
+    expect(tab.shadowRoot?.querySelector("a.logs")).toBeNull();
+  });
+
+  it("remembers the desktop host from before the files route was entered (UI-F2.15)", async () => {
+    const history = new FakePanelSource();
+    stop = bindFilesRoute(host, {
+      labels,
+      source: fixture(),
+      filePanel: { history, download: history, provenance: new FakeProvenanceSource() },
+    });
+    // The host is known while another route is shown and no browser exists yet.
+    host.dispatchEvent(new CustomEvent("fs-host", { detail: { hostType: "desktop" } }));
+    window.history.replaceState(null, "", "#/files/lib/obj");
+    window.dispatchEvent(new HashChangeEvent("hashchange"));
+    await settle();
+    await click(control(browser() as FsFileBrowser, "readme.txt"));
+    await settle();
+    const panel = host.querySelector<FsFilePanel>("fs-file-panel") as FsFilePanel;
+    panel.shadowRoot?.querySelectorAll<HTMLElement>('[role="tab"]')[1]?.click();
+    await settle();
+    const tab = panel.shadowRoot?.querySelector("fs-provenance-panel") as HTMLElement;
+    expect(tab.shadowRoot?.querySelector("a.logs")).not.toBeNull();
   });
 
   it("mounts no file panel without a history source", async () => {
