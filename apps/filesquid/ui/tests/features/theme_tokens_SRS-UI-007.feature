@@ -111,6 +111,12 @@ Feature: Light and dark themes and official branding
     When the primary is changed to "#17ad4a" with "#ffffff" text
     Then it should fail naming the primary pair
 
+  Scenario: The search operator text and Clear all are exempt only at the listed primary (owner decision 2026-10-31, verbatim: "accept recommendations")
+    Given the FileSquid default token file with --fs-primary "#16ac49" as text on "#ffffff"
+    When the token test runs on the search drop-down's operator text and the Clear all control
+    Then it should accept both at 2.99 to 1 as the listed --fs-primary text pair
+    And it should fail them for ImageSquid's token file at any value below 4.5 to 1
+
   Scenario: The focus ring has no contrast exception
     Given a distribution token file whose focus ring is "#16ac49" on a "#ffffff" surface
     When the token test runs

@@ -17,6 +17,7 @@ Feature: Global search bar and filter chips in the FileSquid default UI
   Scenario: The search field widens and shows the drop-down while it has focus
     When I focus the search field
     Then the field should be 620 px wide with the focus border and the drop-down should open under it
+    And the focus border should be 2 px of the --fs-focus-ring token, "#0f8a39" in light and "#16ac49" in dark, not --fs-primary (owner decision 2026-10-31, verbatim: "accept recommendations")
     And the drop-down should offer the Type, Location and Modified filters, the operators this device answers and the line "Enter shows all results"
     And the drop-down should not offer a People filter, because the desktop has no accounts
 

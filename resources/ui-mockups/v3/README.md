@@ -110,7 +110,7 @@ Status after the owner's answers: **redrawn** (content changed for an answer), *
 | Empty library: no collection; upload disabled with the reason | [07](./07-empty-library.svg) | UI-S-002 **Destination**; UI-F2.17; ADR 041 Decision 4 | updated |
 | New menu (Upload files…, Upload folder…, New folder) and the per-item menu (Remove) | [10](./10-new-and-item-menus.svg) | UI-F2.8; UI-S-006; owner answer 8 | updated |
 | Bulk action bar stating the effective scope | [11](./11-selection-bulk-actions.svg) | UI-F2.8 | updated |
-| Streamed ZIP download (no save path shown) | [12](./12-zip-download.svg) | UI-F2.8; API-S-011 | updated |
+| Streamed ZIP download (no save path shown) | [12](./12-zip-download.svg) | UI-F2.8; ZIP route and dialog wording API-F2.22; API-S-011 (the policy box redrawn on 2026-10-31 to say that metadata is kept, owner decision, verbatim: "accept recommendations", decision 15 (a); UI-S-026) | updated |
 | Move or copy picker: collections and folders only, never Recently deleted | [13](./13-move-copy-picker.svg) | UI-F2.8; API-S-011 **Destination** | updated |
 | Rename form and remove with Undo | [14](./14-rename-and-delete.svg) | [#119](https://github.com/arkrim-tech/filesquid/pull/119), API-S-027 | updated |
 | Rename refusals | [44](./44-rename-refusals.svg) | #119 | updated |
@@ -155,7 +155,7 @@ Status after the owner's answers: **redrawn** (content changed for an answer), *
 
 | Surface | Mockup | Source | Status |
 |---|---|---|---|
-| Image preview; light and dark | [22](./22-preview-image.svg), [22 dark](./22-preview-image-dark.svg) | UI-F2.2 (built); top bar and zoom chip UI-F2.19; filmstrip deferred after the MVP (owner decision 2026-10-30, UI-S-031; both SVGs still draw it and are unchanged, so the filmstrip in them is not required); API-S-018 | updated |
+| Image preview; light and dark | [22](./22-preview-image.svg), [22 dark](./22-preview-image-dark.svg) | UI-F2.2 (built); top bar and zoom chip UI-F2.19; filmstrip deferred after the MVP (owner decision 2026-10-30, UI-S-031; both SVGs still draw it, so the filmstrip in them is not required; their media frame was redrawn with the 8 px `--fs-radius` corner on 2026-10-31, owner decision, verbatim: "accept recommendations"); API-S-018 | updated |
 | Video preview | [23](./23-preview-video.svg) | UI-F2.2 | updated |
 | Unsupported format | [24](./24-preview-unsupported.svg) | UI-F2.2 | updated |
 | Panel states | [25](./25-panel-states.svg) | UI-F2.15; UI-S-022 | updated |

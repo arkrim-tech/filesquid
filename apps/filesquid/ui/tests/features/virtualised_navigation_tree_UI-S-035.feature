@@ -43,6 +43,7 @@ Feature: Virtualised navigation tree
     When the tree reads the level
     Then it should show the first 10,000 nodes
     And the console should say that only the first 50 pages of the level are shown
+    And a short line under the last node shown should say "Showing the first 10,000 only. Use search to find the rest." from the label key navigationLevelLimit (owner decision 2026-10-31, verbatim: "accept recommendations")
 
   Scenario: A pin beyond the cap still opens
     Given collection "Harbour 48000" is pinned and is not among the first 10,000 nodes of its level
