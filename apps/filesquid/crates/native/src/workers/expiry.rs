@@ -4,7 +4,7 @@
 //! One run is one `library.expiry` job: it resumes an unfinished one of this installation or
 //! submits a new one, then expires every library the catalog has open, one after the other,
 //! through `filesquid-api`'s [`LibraryService::expire_library`] with the catalog as the
-//! [`ObjectPurger`]. The job registers in the process registry and journals its state
+//! [`ObjectPurger`](filesquid_api::library::ObjectPurger). The job registers in the process registry and journals its state
 //! changes through [`Jobs`]; its checkpoint is the count of libraries done and its result
 //! holds counts only, never a name or path. A library that fails is counted and retried by
 //! the next run; setting `stop` suspends the job between libraries. A library that is not
