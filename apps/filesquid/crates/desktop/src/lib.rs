@@ -47,6 +47,7 @@ pub mod libraries;
 pub mod navigation;
 pub mod panic_journal;
 pub mod rebuilds;
+pub mod recently_deleted;
 pub mod stdout_log;
 #[cfg(feature = "test-webdriver")]
 pub mod test_fixture;
@@ -773,12 +774,26 @@ fn start_monitor(
     navigation::install_navigation(&state, catalog.clone(), &installation)
         .inspect_err(|_| host.stop())?;
     app.manage(DesktopCatalog(catalog.clone()));
-    install_library_services(app, &host, &installation, &data_dir, (opened, catalog))
-        .inspect_err(|_| host.stop())?;
+    let trash =
+        recently_deleted::install_recently_deleted(&state, &host, catalog.clone(), &data_dir)
+            .inspect_err(|_| host.stop())?;
+    install_library_services(
+        app,
+        &host,
+        &installation,
+        &data_dir,
+        (opened, catalog.clone()),
+    )
+    .inspect_err(|_| host.stop())?;
     let runtime = tauri::async_runtime::handle().inner().clone();
     let stop = Arc::new(AtomicBool::new(false));
-    install_job_routes(&state, &app.state::<DesktopJobs>().0, runtime, stop.clone())
-        .inspect_err(|_| host.stop())?;
+    let jobs = app.state::<DesktopJobs>().0.clone();
+    install_job_routes(&state, &jobs, runtime, stop.clone()).inspect_err(|_| host.stop())?;
+    let expiry = recently_deleted::ExpiryTask::new(trash, catalog, jobs, &installation);
+    let expiry = recently_deleted::ExpiryHandle::new(expiry, stop.clone());
+    state.install_job_runner(filesquid_api::library::EXPIRY_JOB_KIND, expiry.clone());
+    recently_deleted::spawn_expiry(expiry.clone());
+    app.manage(DesktopExpiry(expiry));
     app.manage(DesktopInstallation(installation));
     open_test_library(app, &data_dir);
     let forwarder = Arc::new(event_channel::register_forwarder(host.monitor().registry()));
@@ -1055,6 +1070,9 @@ fn stop_monitor(app: &tauri::AppHandle) {
         monitor.stop.store(true, Ordering::SeqCst);
         monitor.backfill.wait(BACKFILL_STOP_WAIT);
         monitor.imports.wait(IMPORT_STOP_WAIT);
+        if let Some(expiry) = app.try_state::<DesktopExpiry>() {
+            expiry.0.wait(recently_deleted::EXPIRY_STOP_WAIT);
+        }
         if let Some(jobs) = app.try_state::<DesktopJobs>() {
             rebuilds::wait_for_rebuilds(&jobs.0, rebuilds::REBUILD_STOP_WAIT);
         }
@@ -1062,6 +1080,9 @@ fn stop_monitor(app: &tauri::AppHandle) {
         monitor.host.stop();
     }
 }
+
+/// The expiry of deleted files this launch runs (Task API-F2.15), waited for at exit.
+pub struct DesktopExpiry(pub Arc<recently_deleted::ExpiryHandle>);
 
 /// Journal operation of a launch that failed before the app could run.
 pub const START_OPERATION: &str = "desktop.start";

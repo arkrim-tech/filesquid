@@ -10,16 +10,16 @@
 use super::canonical::CanonicalRoot;
 use super::history::{plan_commit, History};
 use super::intent::PendingIntent;
-use super::rows::{sort_name, sql};
+use super::rows::{self, sort_name, sql};
 use super::{failed, intent, outbox, project, reconcile, CommitProbe};
 use filesquid_api::canonical::{operation_kind, OperationRecord, SnapshotDelta, SnapshotKey};
 use filesquid_api::journal::JournalEntry;
 use filesquid_api::library::{
-    CatalogChange, CatalogCommit, CatalogError, CommitReceipt, FileState, LibraryRecord,
-    COLLECTION_HOLDS_FILES,
+    CatalogChange, CatalogCommit, CatalogError, CommitReceipt, Deletion, ExpiryMode, FileState,
+    LibraryRecord, COLLECTION_HOLDS_FILES,
 };
 use filesquid_core::{
-    Collection, CollectionId, File, Folder, LibraryId, VirtualCollection, VirtualMembership,
+    Collection, CollectionId, File, FileId, Folder, LibraryId, VirtualCollection, VirtualMembership,
 };
 use rusqlite::{params, Connection, Transaction};
 
@@ -195,6 +195,10 @@ fn apply_changes(
     let mut purged = project::purged_memberships(tx, &commit.changes)?;
     purged.extend(project::collection_deletions(tx, &commit.changes)?);
     for change in &commit.changes {
+        if let CatalogChange::ExpireFile { file_id, mode } = change {
+            expire_file(tx, file_id, commit, *mode)?;
+            continue;
+        }
         apply_change(tx, &commit.library_id, change, commit.journal.time_ms)?;
     }
     tx.execute("UPDATE library SET revision = ?1", params![revision])
@@ -204,6 +208,7 @@ fn apply_changes(
         revision: revision.to_string(),
         created_id: commit.created_id.clone(),
         deletion: commit.deletion,
+        restored_into: commit.restored_into.clone(),
     };
     Ok((receipt, purged))
 }
@@ -308,18 +313,35 @@ fn store_receipt(
     receipt: &CommitReceipt,
 ) -> Result<(), CatalogError> {
     tx.execute(
-        "INSERT INTO receipts (operation_id, revision, created_id, deleted_at_ms, purge_after_ms)
-         VALUES (?1, ?2, ?3, ?4, ?5)",
+        "INSERT INTO receipts
+         (operation_id, revision, created_id, deleted_at_ms, purge_after_ms, deletion_cause,
+          restored_into)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
         params![
             operation_id,
             receipt.revision,
             receipt.created_id,
             receipt.deletion.map(|d| d.deleted_at_ms),
             receipt.deletion.map(|d| d.purge_after_ms),
+            rows::cause_column(receipt.deletion),
+            restored_column(receipt)?,
         ],
     )
     .map_err(sql)?;
     Ok(())
+}
+
+/// The stored form of a receipt's restored collections: JSON, or `NULL` when none. Pure.
+///
+/// # Errors
+/// An encoding failure.
+fn restored_column(receipt: &CommitReceipt) -> Result<Option<String>, CatalogError> {
+    match receipt.restored_into.is_empty() {
+        true => Ok(None),
+        false => serde_json::to_string(&receipt.restored_into)
+            .map(Some)
+            .map_err(|e| failed(format!("encode restored collections: {e}"))),
+    }
 }
 
 /// Refuse a record that names a library other than this file's. Pure.
@@ -349,18 +371,20 @@ fn apply_change(
         CatalogChange::DeleteCollectionFiles {
             collection_id,
             deletion,
+            title,
+        } => delete_collection_files(tx, collection_id, deletion, title),
+        CatalogChange::RehomeFile {
+            file_id,
+            collection_id,
         } => tx
             .execute(
-                "UPDATE files SET deleted_at_ms = ?2, purge_after_ms = ?3
-                 WHERE home_collection_id = ?1 AND deleted_at_ms IS NULL",
-                params![
-                    collection_id.as_str(),
-                    deletion.deleted_at_ms,
-                    deletion.purge_after_ms
-                ],
+                "UPDATE files SET home_collection_id = ?2, removed_home_title = NULL
+                 WHERE id = ?1",
+                params![file_id.as_str(), collection_id.as_str()],
             )
             .map(drop)
             .map_err(sql),
+        CatalogChange::SetRetention(days) => set_retention(tx, *days),
         CatalogChange::PutVirtualCollection(v) => {
             same_library(library_id, v.library_id())?;
             put_virtual(tx, v)
@@ -385,7 +409,62 @@ fn apply_change(
             set_file_state(tx, file_id.as_str(), state)
         }
         CatalogChange::PurgeFile(id) => exec(tx, "DELETE FROM files WHERE id = ?1", id.as_str()),
+        CatalogChange::ExpireFile { .. } => Err(failed("an expiry is applied with its commit")),
     }
+}
+
+/// Remove the expired `file_id` and its memberships, and record its object work under
+/// `mode` and `commit`'s operation ID in the same transaction (ADR 041 Decision 11), so the
+/// purge's journal entry and its object work are stored together. Database I/O.
+fn expire_file(
+    tx: &Transaction<'_>,
+    file_id: &FileId,
+    commit: &CatalogCommit,
+    mode: ExpiryMode,
+) -> Result<(), CatalogError> {
+    exec(tx, "DELETE FROM files WHERE id = ?1", file_id.as_str())?;
+    tx.execute(
+        "INSERT INTO pending_purges (file_id, operation_id, mode, recorded_at_ms)
+         VALUES (?1, ?2, ?3, ?4)
+         ON CONFLICT(file_id) DO UPDATE SET operation_id = excluded.operation_id,
+             mode = excluded.mode",
+        params![
+            file_id.as_str(),
+            commit.operation_id.as_str(),
+            mode.as_str(),
+            commit.journal.time_ms
+        ],
+    )
+    .map(drop)
+    .map_err(sql)
+}
+
+/// Delete every file of `collection_id` that is not deleted yet with `deletion`, and keep
+/// `title` as the removed home title of every file of the collection (ADR 041 Decision 8).
+/// Database I/O.
+fn delete_collection_files(
+    tx: &Transaction<'_>,
+    collection_id: &CollectionId,
+    deletion: &Deletion,
+    title: &str,
+) -> Result<(), CatalogError> {
+    tx.execute(
+        "UPDATE files SET deleted_at_ms = ?2, purge_after_ms = ?3, deletion_cause = ?4
+         WHERE home_collection_id = ?1 AND deleted_at_ms IS NULL",
+        params![
+            collection_id.as_str(),
+            deletion.deleted_at_ms,
+            deletion.purge_after_ms,
+            rows::cause_column(Some(*deletion)),
+        ],
+    )
+    .map_err(sql)?;
+    tx.execute(
+        "UPDATE files SET removed_home_title = ?2 WHERE home_collection_id = ?1",
+        params![collection_id.as_str(), title],
+    )
+    .map(drop)
+    .map_err(sql)
 }
 
 /// Refuse a commit that removes a collection still holding a file that is not deleted, unless
@@ -534,13 +613,29 @@ pub(crate) fn set_file_state(
     state: &FileState,
 ) -> Result<(), CatalogError> {
     tx.execute(
-        "UPDATE files SET hidden = ?2, deleted_at_ms = ?3, purge_after_ms = ?4 WHERE id = ?1",
+        "UPDATE files SET hidden = ?2, deleted_at_ms = ?3, purge_after_ms = ?4,
+             deletion_cause = ?5 WHERE id = ?1",
         params![
             file_id,
             state.hidden,
             state.deletion.map(|d| d.deleted_at_ms),
             state.deletion.map(|d| d.purge_after_ms),
+            rows::cause_column(state.deletion),
         ],
+    )
+    .map(drop)
+    .map_err(sql)
+}
+
+/// Set or clear the title a file's deleted home collection had. Database I/O.
+pub(crate) fn set_removed_home_title(
+    tx: &Transaction<'_>,
+    file_id: &FileId,
+    title: Option<&str>,
+) -> Result<(), CatalogError> {
+    tx.execute(
+        "UPDATE files SET removed_home_title = ?2 WHERE id = ?1",
+        params![file_id.as_str(), title],
     )
     .map(drop)
     .map_err(sql)

@@ -201,6 +201,7 @@ fn bad_commit(w: &mut CatalogWorld) {
         journal: JournalEntry::new("library.virtual_collection.add", Outcome::Succeeded),
         created_id: None,
         deletion: None,
+        restored_into: Vec::new(),
     };
     w.failed = w.fx().catalog.commit(commit).is_err();
 }

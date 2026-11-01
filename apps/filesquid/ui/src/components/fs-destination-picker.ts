@@ -283,6 +283,7 @@ export class FsDestinationPicker extends HTMLElement {
     ) => {
       for (const node of nodes) {
         if (node.kind === "virtual_collection" || node.kind === "repository") continue;
+        if (node.kind === "recently_deleted") continue;
         const place = isPlace(node.kind) && (inside || node.kind === "collection");
         const path = [...trail, nodeName(node, (this.options as DestinationPickerOptions).labels)];
         if (node.kind === "folder" && !inside) continue;

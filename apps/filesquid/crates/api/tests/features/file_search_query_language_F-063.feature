@@ -46,7 +46,6 @@ Feature: File search query language and filter chips
       | tag:finance                | dcterms:subject contains finance                             |
       | is:favorite                | Ana marked the file as a favorite                            |
       | is:deleted                 | the file is recoverable in deleted files                     |
-      | is:unfiled                 | the file's folder or collection was removed                  |
       | after:2026-01-01           | the latest OCFL version was created on or after 2026-01-01   |
       | createdbefore:2020-01-01   | the original creation date is before 2020-01-01              |
       | source:example.org         | the acquisition origin recorded by the clipping module       |

@@ -125,28 +125,36 @@ async fn view_page(
     let filter = check_filter(request.filter.as_deref())?;
     let files = files(state)?;
     let inputs = read_view_inputs(state, principal, &request).await?;
-    let library_id = inputs.scope.library_id.clone();
-    let facts = files.file_facts(library_id, inputs.scope.files).await?;
+    let mut complete = inputs.scope.complete;
     let mut candidates: Vec<Candidate> = inputs
         .scope
         .folders
         .into_iter()
         .map(|folder| folder_candidate(folder, request.sort))
         .collect();
-    candidates.extend(facts.facts.into_iter().map(|file| {
-        let mine = inputs
-            .mine
-            .get(&file.object_id)
-            .copied()
-            .unwrap_or_default();
-        file_candidate(file, mine, request.sort)
-    }));
+    let across = inputs.scope.across_libraries;
+    for mut library in inputs.scope.libraries {
+        let facts = match files.file_facts(library.library_id, library.files).await {
+            Ok(facts) => facts,
+            Err(err) if across && err.code() == crate::ErrorCode::NotFound => {
+                complete = false;
+                continue;
+            }
+            Err(err) => return Err(err),
+        };
+        complete &= facts.complete;
+        candidates.extend(facts.facts.into_iter().map(|file| {
+            let mine = inputs
+                .mine
+                .get(&file.object_id)
+                .copied()
+                .unwrap_or_default();
+            let deleted = library.deleted.remove(&file.file_id);
+            file_candidate(file, mine, request.sort, deleted)
+        }));
+    }
     candidates.retain(|candidate| matches_filter(candidate, filter.as_deref()));
-    page(
-        &request,
-        candidates,
-        inputs.scope.complete && facts.complete,
-    )
+    page(&request, candidates, complete)
 }
 
 /// The scope and the caller's own times of `request`, read on a blocking thread.
@@ -157,14 +165,19 @@ async fn read_view_inputs(
 ) -> Result<ViewInputs, FileError> {
     let navigation = navigation(state)?;
     let store = state.monitor().map(|monitor| monitor.store());
+    let home = state.home_collections();
     let node = NodeRef::from_handle(&request.node).ok_or_else(FileError::not_found)?;
     let (principal, view) = (principal.clone(), request.view);
     let read = move || {
-        let scope = view_scope(&navigation, &principal, &node, view)?;
-        let mine = match store {
-            Some(store) => my_times(store.as_ref(), principal.actor(), &scope.library_id)?,
-            None => HashMap::new(),
-        };
+        let scope = view_scope(&navigation, &principal, &node, view, home.as_deref())?;
+        let mut mine = HashMap::new();
+        let libraries = store.as_deref().map(|journal| (journal, &scope.libraries));
+        for (journal, library) in libraries
+            .into_iter()
+            .flat_map(|(j, l)| l.iter().map(move |x| (j, x)))
+        {
+            mine.extend(my_times(journal, principal.actor(), &library.library_id)?);
+        }
         Ok(ViewInputs { scope, mine })
     };
     tokio::task::spawn_blocking(read)

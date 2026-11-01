@@ -53,6 +53,7 @@ export const OPERATION_KINDS: readonly OperationKind[] = [
   "scrub",
   "publish",
   "backfill",
+  "tombstone",
   "unknown",
 ];
 
@@ -79,6 +80,7 @@ const KIND_KEYS: Readonly<Record<OperationKind, LabelKey>> = {
   scrub: "provenanceKindScrub",
   publish: "provenanceKindPublish",
   backfill: "provenanceKindBackfill",
+  tombstone: "provenanceKindTombstone",
   unknown: "provenanceKindUnknown",
 };
 

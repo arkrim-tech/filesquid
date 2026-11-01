@@ -226,6 +226,7 @@ impl Desktop {
         let nodes = page["nodes"].as_array().expect("nodes");
         nodes
             .iter()
+            .filter(|n| n["kind"] == "library")
             .map(|n| n["name"].as_str().expect("name").to_string())
             .collect()
     }
@@ -509,14 +510,32 @@ fn the_navigation_lists_the_installations_repository_and_its_libraries() {
     let repository = nodes[0]["node"].as_str().expect("handle").to_string();
     let (status, page) = desktop.get(&format!("/api/v1/navigation?node={repository}"));
     assert_eq!(status, 200, "{page}");
-    let libraries = page["nodes"].as_array().expect("nodes");
+    let libraries: Vec<&serde_json::Value> = page["nodes"]
+        .as_array()
+        .expect("nodes")
+        .iter()
+        .filter(|n| n["kind"] == "library")
+        .collect();
     assert_eq!(libraries.len(), 1, "the repository's library: {page}");
+    assert_eq!(
+        page["nodes"]
+            .as_array()
+            .expect("nodes")
+            .last()
+            .expect("node")["kind"],
+        "recently_deleted",
+        "then its one Recently deleted node: {page}"
+    );
     assert_eq!(libraries[0]["name"], UNTITLED_LIBRARY, "{page}");
     let repository = nodes[0]["node"].as_str().expect("handle").to_string();
     let (status, page) = desktop.get(&format!("/api/v1/navigation?node={repository}"));
     assert_eq!(status, 200, "{page}");
     let libraries = page["nodes"].as_array().expect("nodes");
-    assert_eq!(libraries.len(), 1, "{page}");
+    assert_eq!(
+        libraries.len(),
+        2,
+        "the library, then Recently deleted: {page}"
+    );
     assert_eq!(libraries[0]["name"], UNTITLED_LIBRARY, "{page}");
     assert!(page.to_string().contains(&library) || libraries[0]["node"].is_string());
     let filter = owner_event_filter(&desktop.state).expect("filter");
@@ -959,5 +978,67 @@ fn recent_libraries_and_their_facts_survive_a_restart_without_a_path() {
     }
     let text = format!("{recent}{facts}");
     assert!(!text.contains("loc-"), "no location ID: {text}");
+    desktop.stop();
+}
+
+/// Task API-F2.15: the desktop installs the Recently deleted library service with its
+/// settings in the operational store, the settings routes answer through the scheme, and one
+/// expiry job run completes over the attached libraries.
+#[test]
+fn recently_deleted_settings_and_the_expiry_job_are_wired() {
+    use filesquid_desktop_lib::recently_deleted::{install_recently_deleted, ExpiryTask};
+    let dir = fresh_dir("recently-deleted");
+    let desktop = Desktop::launch(dir.join("data"));
+    install_navigation(&desktop.state, desktop.catalog.clone(), &installation()).expect("nav");
+    let service = install_recently_deleted(
+        &desktop.state,
+        &desktop.host,
+        desktop.catalog.clone(),
+        &desktop.dir,
+    )
+    .expect("installed");
+    assert!(
+        install_recently_deleted(
+            &desktop.state,
+            &desktop.host,
+            desktop.catalog.clone(),
+            &desktop.dir
+        )
+        .is_err(),
+        "installed once"
+    );
+    let folder = dir.join("Library A");
+    std::fs::create_dir_all(&folder).expect("folder");
+    let location = desktop.register(&folder);
+    let (status, body) = desktop.command("/api/v1/libraries", json!({ "location_id": location }));
+    assert_eq!(status, 200, "{body}");
+    let (status, view) = desktop.get("/api/v1/settings/recently-deleted");
+    assert_eq!(status, 200, "{view}");
+    assert_eq!(view["default_retention_days"], 30);
+    assert_eq!(view["expiry"], "keep_version_history");
+    assert_eq!(view["may_change"], true);
+    assert_eq!(view["libraries"].as_array().expect("libraries").len(), 1);
+    let set = json!({
+        "envelope": {"schema_version": 1, "operation_id": "op-settings",
+                     "expected_revision": "0", "scope": "installation"},
+        "input": { "default_retention_days": 45, "expiry": "keep_version_history" },
+    });
+    let (status, changed) =
+        desktop.send("PUT", "/api/v1/settings/recently-deleted", Some(set), true);
+    assert_eq!(status, 200, "{changed}");
+    assert_eq!(changed["kind"], "committed");
+    assert_eq!(changed["result"]["default_retention_days"], 45);
+    let jobs = open_jobs(&desktop.dir, &desktop.host).expect("jobs");
+    let task = ExpiryTask::new(
+        service,
+        desktop.catalog.clone(),
+        jobs.clone(),
+        &installation(),
+    );
+    task.run_once(None, &AtomicBool::new(false));
+    let finished = jobs
+        .unfinished_of(filesquid_api::library::EXPIRY_JOB_KIND, 1)
+        .expect("jobs");
+    assert!(finished.is_empty(), "the run completed its job");
     desktop.stop();
 }

@@ -42,7 +42,7 @@ pub enum LibraryQuery {
         /// The library.
         library_id: LibraryId,
     },
-    /// Files of a library, collection, virtual collection or the unfiled files, in one view.
+    /// Files of a library, collection or virtual collection, in one view.
     ListFiles {
         /// The library.
         library_id: LibraryId,

@@ -4,8 +4,8 @@
 
 use super::failed;
 use filesquid_api::library::{
-    CatalogError, CommitReceipt, Deletion, FileEntry, FileListing, FileScope, FileState, Keyed,
-    LibraryRecord, PageKey, VisibilityFilter, MAX_RETENTION_DAYS,
+    CatalogError, CommitReceipt, Deletion, DeletionCause, FileEntry, FileListing, FileScope,
+    FileState, Keyed, LibraryRecord, PageKey, VisibilityFilter, MAX_RETENTION_DAYS,
 };
 use filesquid_core::{
     Collection, CollectionId, CollectionSort, File, FileId, Folder, FolderId, Library, LibraryId,
@@ -15,7 +15,16 @@ use rusqlite::{params, Connection, OptionalExtension, Row};
 
 /// Columns of a file listing row: ID, home collection, listing order, hidden flag, deletion
 /// and purge-after times.
-type FileRow = (String, String, i64, bool, Option<i64>, Option<i64>);
+type FileRow = (
+    String,
+    String,
+    i64,
+    bool,
+    Option<i64>,
+    Option<i64>,
+    Option<String>,
+    Option<String>,
+);
 
 /// Map a database error to a store failure. The message never names a path.
 pub(crate) fn sql(err: rusqlite::Error) -> CatalogError {
@@ -104,29 +113,82 @@ pub(crate) fn receipt(
     library_id: &LibraryId,
     operation_id: &str,
 ) -> Result<Option<CommitReceipt>, CatalogError> {
-    conn.query_row(
-        "SELECT revision, created_id, deleted_at_ms, purge_after_ms FROM receipts
-         WHERE operation_id = ?1",
-        params![operation_id],
-        |r| {
-            Ok(CommitReceipt {
-                library_id: library_id.clone(),
-                revision: r.get(0)?,
-                created_id: r.get(1)?,
-                deletion: deletion(r.get(2)?, r.get(3)?),
-            })
-        },
-    )
-    .optional()
-    .map_err(sql)
+    type Raw = (
+        String,
+        Option<String>,
+        Option<i64>,
+        Option<i64>,
+        Option<String>,
+        Option<String>,
+    );
+    let raw: Option<Raw> = conn
+        .query_row(
+            "SELECT revision, created_id, deleted_at_ms, purge_after_ms, deletion_cause,
+                 restored_into
+             FROM receipts WHERE operation_id = ?1",
+            params![operation_id],
+            |r| {
+                Ok((
+                    r.get(0)?,
+                    r.get(1)?,
+                    r.get(2)?,
+                    r.get(3)?,
+                    r.get(4)?,
+                    r.get(5)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(sql)?;
+    let Some((revision, created_id, deleted, purge, cause, restored)) = raw else {
+        return Ok(None);
+    };
+    let restored_into = match restored {
+        Some(text) => serde_json::from_str(&text)
+            .map_err(|_| failed("a receipt's restored collections are unreadable"))?,
+        None => Vec::new(),
+    };
+    Ok(Some(CommitReceipt {
+        library_id: library_id.clone(),
+        revision,
+        created_id,
+        deletion: deletion(deleted, purge, cause)?,
+        restored_into,
+    }))
 }
 
-/// A deletion from its two stored times (both present or both absent). Pure.
-fn deletion(deleted_at_ms: Option<i64>, purge_after_ms: Option<i64>) -> Option<Deletion> {
-    Some(Deletion {
-        deleted_at_ms: deleted_at_ms?,
-        purge_after_ms: purge_after_ms?,
-    })
+/// A deletion from its two stored times (both present or both absent) and its stored cause
+/// (`NULL` or `one_by_one` for one by one). Pure.
+///
+/// # Errors
+/// [`CatalogError::Failed`] for a cause this host does not know, so a newer or damaged
+/// catalog is never misreported.
+fn deletion(
+    deleted_at_ms: Option<i64>,
+    purge_after_ms: Option<i64>,
+    cause: Option<String>,
+) -> Result<Option<Deletion>, CatalogError> {
+    let cause = match cause.as_deref() {
+        None | Some("one_by_one") => DeletionCause::OneByOne,
+        Some("with_collection") => DeletionCause::WithCollection,
+        Some(_) => return Err(failed("a stored deletion cause is unknown")),
+    };
+    let (Some(deleted_at_ms), Some(purge_after_ms)) = (deleted_at_ms, purge_after_ms) else {
+        return Ok(None);
+    };
+    Ok(Some(Deletion {
+        deleted_at_ms,
+        purge_after_ms,
+        cause,
+    }))
+}
+
+/// The stored form of a deletion cause: `NULL` for one by one. Pure.
+pub(crate) fn cause_column(deletion: Option<Deletion>) -> Option<&'static str> {
+    deletion
+        .map(|d| d.cause)
+        .filter(|cause| *cause == DeletionCause::WithCollection)
+        .map(DeletionCause::as_str)
 }
 
 /// Columns read by [`collection_row`].
@@ -258,7 +320,8 @@ pub(crate) fn folder(
 
 /// Columns read by [`file_row`], with `{ORD}` standing for the listing's order expression.
 const FILE_COLUMNS: &str =
-    "f.id, f.home_collection_id, {ORD}, f.hidden, f.deleted_at_ms, f.purge_after_ms";
+    "f.id, f.home_collection_id, {ORD}, f.hidden, f.deleted_at_ms, f.purge_after_ms, \
+     f.deletion_cause, f.removed_home_title";
 
 /// A raw file listing row.
 fn file_row(row: &Row<'_>) -> rusqlite::Result<FileRow> {
@@ -269,12 +332,14 @@ fn file_row(row: &Row<'_>) -> rusqlite::Result<FileRow> {
         row.get(3)?,
         row.get(4)?,
         row.get(5)?,
+        row.get(6)?,
+        row.get(7)?,
     ))
 }
 
 /// A keyed file entry of `library_id` from a raw row. Pure.
 fn file_entry(library_id: &LibraryId, row: FileRow) -> Result<Keyed<FileEntry>, CatalogError> {
-    let (raw_id, home, order, hidden, deleted, purge) = row;
+    let (raw_id, home, order, hidden, deleted, purge, cause, removed_home_title) = row;
     let file = File::new(
         id(FileId::new, raw_id.clone())?,
         library_id.clone(),
@@ -282,11 +347,15 @@ fn file_entry(library_id: &LibraryId, row: FileRow) -> Result<Keyed<FileEntry>, 
     );
     let state = FileState {
         hidden,
-        deletion: deletion(deleted, purge),
+        deletion: deletion(deleted, purge, cause)?,
     };
     Ok(Keyed {
         key: PageKey { order, id: raw_id },
-        item: FileEntry { file, state },
+        item: FileEntry {
+            file,
+            state,
+            removed_home_title,
+        },
     })
 }
 
@@ -327,7 +396,7 @@ fn visibility_sql(visibility: VisibilityFilter) -> &'static str {
 }
 
 /// The source, order expression and scope condition of a listing; `?4` is the scope's
-/// identifier, or the empty string for the library and unfiled scopes (which check it is
+/// identifier, or the empty string for the library scope (which check it is
 /// empty, so every listing binds the same four parameters). Pure.
 fn scope_sql(scope: &FileScope) -> (&'static str, &'static str, &'static str) {
     match scope {
@@ -337,12 +406,6 @@ fn scope_sql(scope: &FileScope) -> (&'static str, &'static str, &'static str) {
             "virtual_members m JOIN files f ON f.id = m.file_id",
             "m.order_key",
             "m.virtual_collection_id = ?4",
-        ),
-        FileScope::Unfiled => (
-            "files f",
-            "f.list_order",
-            "?4 = '' AND f.deleted_at_ms IS NULL
-             AND NOT EXISTS (SELECT 1 FROM collections c WHERE c.id = f.home_collection_id)",
         ),
     }
 }
@@ -354,7 +417,7 @@ fn scope_id(scope: &FileScope) -> &str {
         FileScope::VirtualCollection {
             virtual_collection_id,
         } => virtual_collection_id.as_str(),
-        FileScope::Library | FileScope::Unfiled => "",
+        FileScope::Library => "",
     }
 }
 

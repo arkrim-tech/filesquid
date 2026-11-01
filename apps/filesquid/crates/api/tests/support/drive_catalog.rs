@@ -105,8 +105,9 @@ impl DriveCatalog {
         self.insert(file, id);
     }
 
-    /// Place `file` in no existing collection (an unfiled file).
-    pub fn unfiled_file(&self, file: &str) {
+    /// Place `file` in a collection outside this fixture's library view (a home the
+    /// fixture's collection does not hold).
+    pub fn outside_file(&self, file: &str) {
         self.insert(file, CollectionId::new("removed").expect("collection"));
     }
 
@@ -127,6 +128,7 @@ impl DriveCatalog {
             deletion: Some(Deletion {
                 deleted_at_ms: 1_000,
                 purge_after_ms: 2_000,
+                cause: Default::default(),
             }),
         };
         let change = CatalogChange::SetFileState {
@@ -159,6 +161,21 @@ impl DriveCatalog {
     }
 
     /// Store `file` with home `collection`, in insertion order.
+    /// Place `file` in the collection with ID `collection` of this library.
+    pub fn file_in_collection_id(&self, file: &str, collection: &str) {
+        self.insert(file, CollectionId::new(collection).expect("collection id"));
+    }
+
+    /// Place `file` in `collection` of another library `library` of the same catalog.
+    pub fn file_in_library(&self, file: &str, library: &str, collection: &str) {
+        let order = self.next_member.get() + 1;
+        self.next_member.set(order);
+        let library = LibraryId::new(library).expect("library id");
+        let collection = CollectionId::new(collection).expect("collection id");
+        let file = File::new(file_id(file), library, collection);
+        self.catalog.insert_file(file, order).expect("insert file");
+    }
+
     fn insert(&self, file: &str, collection: CollectionId) {
         let order = self.next_member.get() + 1;
         self.next_member.set(order);
@@ -193,6 +210,7 @@ fn commit(
         journal: JournalEntry::new("library.seed", Outcome::Succeeded),
         created_id: None,
         deletion: None,
+        restored_into: Vec::new(),
     };
     catalog.commit(commit).expect("seed commit");
 }

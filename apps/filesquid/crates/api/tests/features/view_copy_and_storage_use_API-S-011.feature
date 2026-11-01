@@ -21,10 +21,10 @@ Feature: View operation, copy and storage use per collection
     When the owner pages through "Holidays" by "size" "descending" one row at a time
     Then the rows should be "Alpha.jpg, beta.jpg, gamma.png"
 
-  Scenario: A library view puts its collections on top as folders
-    Given the unfiled file "Zebra.txt"
+  Scenario: A library view lists its collections as folders and none of their files
+    Given the file "Zebra.txt" in another collection "Archive"
     When the owner pages through the library by "name" "descending" one row at a time
-    Then the rows should be "Holidays, Favourites, Zebra.txt"
+    Then the rows should be "Holidays, Favourites, Archive"
 
   Scenario: A virtual collection lists its members
     Given "Alpha.jpg" and "gamma.png" are in "Favourites"

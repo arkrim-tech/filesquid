@@ -146,6 +146,16 @@ async fn results(w: &mut MonitorWorld, expected: String) {
     assert_eq!(names, expected);
 }
 
+#[then(expr = "the refusal message should name {string}")]
+async fn refusal_names(w: &mut MonitorWorld, operator: String) {
+    let answer = w.search.answer.as_ref().expect("an answer");
+    let message = answer.json()["message"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
+    assert!(message.contains(&operator), "{message}");
+}
+
 #[then(expr = "the search should be refused as {string}")]
 async fn refused(w: &mut MonitorWorld, code: String) {
     let answer = w.search.answer.as_ref().expect("an answer");

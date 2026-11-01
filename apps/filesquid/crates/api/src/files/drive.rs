@@ -5,10 +5,12 @@
 //! A request names the node, the view (`all` or `deleted` for now), the sort key (`name`,
 //! `size`, `modified`, `modified_by_me`, `opened_by_me`), the direction, the folder placement
 //! (`on_top` or `mixed`), an optional view-local filter on the name and a cursor. A library
-//! node's `all` view shows its collections and virtual collections as folder rows beside its
-//! unfiled files, since a file of the per-file model has no folder of its own; a collection
-//! node shows its files, a virtual-collection node its members, and a `deleted` view the
-//! recoverably deleted files of the node with no folder rows.
+//! node's `all` view shows its collections and virtual collections as folder rows (every file
+//! has a home collection; none is ever "unfiled", ADR 041 Decision 3); a collection node shows
+//! its files, a virtual-collection node its members, and a `deleted` view the recoverably
+//! deleted files of the node with no folder rows. The repository's Recently deleted node
+//! shows the deleted files of every library the caller may read, whatever the view, each
+//! row with its [`DeletedRow`] (Task API-F2.15, ADR 041 Decision 8).
 //!
 //! Every page sorts the whole scope again and starts after the cursor's row key. The cursor
 //! also carries a digest of every row key of the scope, so when the rows or their order
@@ -154,6 +156,38 @@ pub struct FileRow {
     pub modified_by_me: Option<String>,
     /// When the caller last opened it, from the caller's own journal entries only.
     pub opened_by_me: Option<String>,
+    /// What Recently deleted shows of a deleted file; present in a deleted view and in the
+    /// Recently deleted node's view only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deleted: Option<Box<DeletedRow>>,
+}
+
+/// The Recently deleted facts of one deleted file (mockup 16: Library, Was in, Deleted, How
+/// and Expires; API-S-019).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct DeletedRow {
+    /// Its library.
+    pub library_id: String,
+    /// The library's name.
+    pub library_name: String,
+    /// When it was deleted (RFC 3339 UTC).
+    pub deleted_at: String,
+    /// When it expires (RFC 3339 UTC), under its own library's retention at deletion time.
+    pub purge_after: String,
+    /// Whole days left before it expires; `0` when it is due.
+    pub days_left: i64,
+    /// Deleted one by one or with its collection.
+    pub cause: crate::library::DeletionCause,
+    /// Its home collection.
+    pub home_collection_id: String,
+    /// The home collection's title, also after that collection was deleted; `null` for a
+    /// file deleted before titles were kept.
+    pub home_collection_title: Option<String>,
+    /// True when the home collection no longer exists (a restore then creates an "untitled
+    /// collection").
+    pub home_collection_deleted: bool,
+    /// The folder inside the home collection, `null` at its root or when unknown.
+    pub folder: Option<String>,
 }
 
 /// One row of a view.
@@ -278,7 +312,12 @@ pub fn folder_candidate(folder: FolderRow, sort: SortKey) -> Candidate {
 }
 
 /// The file row of `facts` and the caller's `mine` as a candidate under `sort`.
-pub fn file_candidate(facts: FileFacts, mine: MyTimes, sort: SortKey) -> Candidate {
+pub fn file_candidate(
+    facts: FileFacts,
+    mine: MyTimes,
+    sort: SortKey,
+    deleted: Option<DeletedRow>,
+) -> Candidate {
     let value = match sort {
         SortKey::Name => Some(SortValue::Text(facts.display_name.to_lowercase())),
         SortKey::Size => Some(SortValue::Number(
@@ -303,6 +342,7 @@ pub fn file_candidate(facts: FileFacts, mine: MyTimes, sort: SortKey) -> Candida
         modified: format_rfc3339_ms(facts.modified_ms),
         modified_by_me: mine.modified_ms.map(format_rfc3339_ms),
         opened_by_me: mine.opened_ms.map(format_rfc3339_ms),
+        deleted: deleted.map(Box::new),
     };
     Candidate {
         row: ViewRow::File(row),
@@ -573,7 +613,7 @@ mod tests {
             modified_ms: ms,
             statements: Vec::new(),
         };
-        file_candidate(facts, MyTimes::default(), sort)
+        file_candidate(facts, MyTimes::default(), sort, None)
     }
 
     /// A folder candidate named `name`.

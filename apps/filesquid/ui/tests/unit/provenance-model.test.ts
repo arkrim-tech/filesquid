@@ -174,11 +174,12 @@ describe("activityViews", () => {
 
 describe("kindWords", () => {
   it("has words for every operation kind of the contract, in the label table", () => {
-    expect(OPERATION_KINDS).toHaveLength(22);
+    expect(OPERATION_KINDS).toHaveLength(23);
     for (const kind of OPERATION_KINDS) expect(kindWords(kind, labels).length).toBeGreaterThan(0);
     expect(kindWords("metadata.edit", labels)).toBe("metadata edit");
     expect(kindWords("delete", labels)).toBe("remove");
     expect(kindWords("revert", labels)).toBe("restore");
+    expect(kindWords("tombstone", labels)).toBe("tombstone");
   });
 });
 

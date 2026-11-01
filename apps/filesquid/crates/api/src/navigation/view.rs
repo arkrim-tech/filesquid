@@ -14,6 +14,8 @@ pub enum NodeKind {
     Collection,
     /// A virtual collection.
     VirtualCollection,
+    /// The repository's one Recently deleted node (ADR 041 Decision 8).
+    RecentlyDeleted,
     /// A folder implied by logical paths.
     Folder,
 }

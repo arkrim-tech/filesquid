@@ -46,6 +46,7 @@ mod outbox;
 mod placement;
 mod project;
 mod provenance;
+mod purge;
 mod reconcile;
 mod register;
 mod rows;
@@ -56,6 +57,7 @@ pub use attach::{AttachReport, LibraryFolder, DEFAULT_LIBRARY_NAME, ENTITY_RENAM
 pub use canonical::WORK_DIR_SUFFIX;
 pub use intent::{intent_entry, PendingIntent, INTENT_RECORDED_OPERATION};
 pub use provenance::{CatalogRoots, HostRoots, LibraryBackfill, MAX_BACKFILL_RUNS};
+pub use purge::PurgeStep;
 pub use reconcile::RECONCILE_OPERATION;
 pub use register::{RegisterFile, Registration, REGISTER_OPERATION};
 
@@ -87,7 +89,7 @@ pub const CATALOG_FILE_EXTENSION: &str = "sqlite";
 
 /// Version of the catalog schema this host writes (`PRAGMA user_version`). A file with a
 /// newer version is refused rather than misread.
-pub const CATALOG_SCHEMA_VERSION: i64 = 4;
+pub const CATALOG_SCHEMA_VERSION: i64 = 5;
 
 /// Most library catalogs one catalog directory may hold; opening more fails (AGENTS.md §22).
 pub const MAX_LIBRARIES: usize = 256;
@@ -159,6 +161,9 @@ pub struct SqliteCatalog {
     provenance: Option<ProvenanceContext>,
     failures: Option<JournalSender>,
     libraries: Mutex<BTreeMap<String, OpenLibrary>>,
+    /// Where expired files' object work stops as a crash would (crash-recovery tests only;
+    /// `None` in every host).
+    purge_stop: Mutex<Option<PurgeStep>>,
 }
 
 impl std::fmt::Debug for SqliteCatalog {
@@ -201,6 +206,7 @@ impl SqliteCatalog {
             provenance: None,
             failures: None,
             libraries: Mutex::new(BTreeMap::new()),
+            purge_stop: Mutex::new(None),
         };
         catalog.forward_existing()?;
         Ok(catalog)
