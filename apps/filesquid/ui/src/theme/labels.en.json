@@ -395,6 +395,7 @@
   "provenanceKindScrub": "scrub",
   "provenanceKindPublish": "publish",
   "provenanceKindBackfill": "backfill",
+  "provenanceKindTombstone": "tombstone",
   "provenanceKindUnknown": "unknown",
   "versionsBack": "Back",
   "versionsCountOne": "{count} version",
