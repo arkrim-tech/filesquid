@@ -14,6 +14,8 @@ const MAX_LIBRARIES = 64;
 /** Libraries seen in this page's session, oldest first, bounded to 64. */
 export class LibraryRegistry {
   private readonly views = new Map<string, LibraryView>();
+  /** Libraries whose remembered revision a later command may have moved on. */
+  private readonly stale = new Set<string>();
 
   /** How many libraries are remembered. */
   get size(): number {
@@ -28,12 +30,25 @@ export class LibraryRegistry {
    */
   remember(view: LibraryView): void {
     this.views.delete(view.library_id);
+    this.stale.delete(view.library_id);
     this.views.set(view.library_id, view);
     while (this.views.size > MAX_LIBRARIES) {
       const oldest = this.views.keys().next().value;
       if (oldest === undefined) return;
       this.views.delete(oldest);
+      this.stale.delete(oldest);
     }
+  }
+
+  /**
+   * Stop trusting the remembered revision of a library: a command that changed it (the first
+   * collection of first use) may have advanced it, so the next copy or rebuild reads the current
+   * one from the library's facts. The view's other facts stay.
+   *
+   * @param libraryId The library ID.
+   */
+  invalidateRevision(libraryId: string): void {
+    if (this.views.has(libraryId)) this.stale.add(libraryId);
   }
 
   /**
@@ -55,6 +70,6 @@ export class LibraryRegistry {
    *   library (the page then reads the current one through `LibrarySource.revision`).
    */
   revisionOf(libraryId: string): string | undefined {
-    return this.views.get(libraryId)?.revision;
+    return this.stale.has(libraryId) ? undefined : this.views.get(libraryId)?.revision;
   }
 }
