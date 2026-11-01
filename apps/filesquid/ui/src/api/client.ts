@@ -101,6 +101,17 @@ export type RunRequest = components["schemas"]["RunRequest"];
 /** The libraries whose validation run started, and those refused with their error code. */
 export type RunAccepted = components["schemas"]["RunAccepted"];
 
+/** A journal entry as the journal routes answer it: with its PROV-O link and, on request, the file's name. */
+export type JournalEntryView = components["schemas"]["JournalEntryView"];
+/** The PROV-O link of a journal entry, or its journal-only mark (API-S-031). */
+export type ProvenanceLink = components["schemas"]["ProvenanceLink"];
+/** One page of journal entries with their PROV-O links, newest or oldest first. */
+export type JournalViewPage = components["schemas"]["JournalViewPage"];
+/** A batch of client events for `POST /api/v1/client-events` (API-S-030). */
+export type ClientEventsRequest = components["schemas"]["ClientEventsRequest"];
+/** The route's acknowledgement of a batch: the client event IDs and the credential's principal. */
+export type ClientEventsAck = components["schemas"]["ClientEventsAck"];
+
 /** Filters for journal queries and exports; every field is optional. */
 export interface JournalFilters {
   /** Earliest time, RFC 3339. */
@@ -117,12 +128,24 @@ export interface JournalFilters {
   level?: Level;
   /** Exact process id. */
   process?: string;
-  /** Cursor from the previous page. */
+  /** A library ID among the entry's targets. */
+  library?: string;
+  /** An object ID: the object of the entry's object reference, or one of its targets. */
+  object?: string;
+  /** A file ID (a UUID): the same as `object=urn:uuid:<file>`; not together with `object`. */
+  file?: string;
+  /** Exact operation ID, shared by every entry and version of one operation. */
+  operation_id?: string;
+  /** Cursor from the previous page (the next entries in the order asked for). */
   after?: number;
   /** Page size. */
   limit?: number;
-  /** `desc` for newest first (the Monitor dashboard); `asc` (default) otherwise. */
+  /** `desc` for newest first (the Monitor dashboard, the Logs view); `asc` (default) otherwise. */
   order?: "asc" | "desc";
+  /** Add the display name of the file each entry names, for display only (journal pages). */
+  names?: boolean;
+  /** `jsonl` (default) or `csv` (exports only). */
+  format?: "jsonl" | "csv";
 }
 
 /** Response header naming the cursor to continue a truncated journal export. */
@@ -201,6 +224,34 @@ function queryString(filters: JournalFilters): string {
   return text ? `?${text}` : "";
 }
 
+/**
+ * Read a `Retry-After` header as milliseconds. Only whole seconds are read (the route sends
+ * whole seconds, API-S-030); an HTTP date or any other text is not a wait the client can trust.
+ * Pure.
+ *
+ * @param value The header value, or null.
+ * @returns The wait in milliseconds, or undefined.
+ */
+function retryAfter(value: string | null): number | undefined {
+  if (value === null || !/^\d{1,6}$/.test(value.trim())) return undefined;
+  return Number(value.trim()) * 1000;
+}
+
+/**
+ * Join the text of the responses of one export. JSON Lines responses are joined as they are; the
+ * CSV responses each start with the header row, which only the first keeps. Pure.
+ *
+ * @param parts The response texts in order.
+ * @param format The export format.
+ * @returns The one export text.
+ */
+function joinExport(parts: readonly string[], format: "jsonl" | "csv"): string {
+  if (format !== "csv") return parts.join("");
+  return parts
+    .map((part, index) => (index === 0 ? part : part.slice(part.indexOf("\n") + 1)))
+    .join("");
+}
+
 /** Facts about the host the UI is running in. */
 export interface HostEnvironment {
   /** True inside a Tauri desktop webview. */
@@ -223,16 +274,20 @@ export class ApiError extends Error {
   public readonly reason?: DenialReason;
   /** True when repeating the same request unchanged may succeed. */
   public readonly retryable: boolean;
+  /** How long the API asked the caller to wait (`Retry-After`, whole seconds), in milliseconds. */
+  public readonly retryAfterMs?: number;
 
   /**
    * @param status HTTP status code returned by the API, or 0 when nothing was sent.
    * @param path API path that failed.
    * @param body Parsed contract error body, when there was one.
+   * @param retryAfterMs The `Retry-After` of the answer in milliseconds, when it had one.
    */
   constructor(
     public readonly status: number,
     public readonly path: string,
     body: Partial<ApiErrorBody> = {},
+    retryAfterMs?: number,
   ) {
     const detail = body.reason ?? body.code;
     super(`FileSquid API ${path} failed with HTTP ${status}${detail ? ` (${detail})` : ""}`);
@@ -240,6 +295,7 @@ export class ApiError extends Error {
     this.code = body.code;
     this.reason = body.reason;
     this.retryable = body.retryable ?? false;
+    if (retryAfterMs !== undefined) this.retryAfterMs = retryAfterMs;
   }
 }
 
@@ -600,6 +656,57 @@ export class FileSquidClient {
   }
 
   /**
+   * One page of the activity journal with each entry's PROV-O link and, with `names`, the display
+   * name of the file its object names (`GET /api/v1/admin/journal`, API-S-031). Network I/O.
+   *
+   * @param filters The filters, the cursor, the page size and the order.
+   * @returns The page; `next_cursor` continues in the same order.
+   * @throws ApiError on a non-2xx answer: 401 or 403 for a caller who is not the owner.
+   */
+  async adminJournalPage(filters: JournalFilters = {}): Promise<JournalViewPage> {
+    return this.request<JournalViewPage>(`/api/v1/admin/journal${queryString(filters)}`);
+  }
+
+  /**
+   * One journal entry by its ID (`GET /api/v1/admin/journal/entries/{entry}`, API-S-031).
+   * Network I/O.
+   *
+   * @param id The entry ID.
+   * @param options `names` adds the display name of the file the entry names.
+   * @returns The entry with its PROV-O link.
+   * @throws ApiError on a non-2xx answer: 404 for an unknown entry.
+   */
+  async adminJournalEntry(
+    id: number,
+    options: { names?: boolean } = {},
+  ): Promise<JournalEntryView> {
+    const query = options.names ? "?names=true" : "";
+    return this.request<JournalEntryView>(`/api/v1/admin/journal/entries/${id}${query}`);
+  }
+
+  /**
+   * Journal one batch of the UI's console events (`POST /api/v1/client-events`, API-S-030):
+   * at most 20 events and 16 KiB. Network I/O.
+   *
+   * @param request The events.
+   * @param options `keepalive` lets the request outlive the page (the page-close overflow count).
+   * @returns The acknowledged client event IDs and the credential's principal.
+   * @throws ApiError on a non-2xx answer; a 429 carries `retryAfterMs`.
+   */
+  async postClientEvents(
+    request: ClientEventsRequest,
+    options: { keepalive?: boolean } = {},
+  ): Promise<ClientEventsAck> {
+    const response = await this.send("/api/v1/client-events", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(request),
+      ...(options.keepalive ? { keepalive: true } : {}),
+    });
+    return (await response.json()) as ClientEventsAck;
+  }
+
+  /**
    * The open OCFL validation findings (at most 1,000, `truncated` when more are open), the
    * schedule in force and each open library's runs (`GET /api/v1/admin/ocfl/findings`,
    * API-S-022). Network I/O.
@@ -637,22 +744,28 @@ export class FileSquidClient {
   }
 
   /**
-   * All matching journal entries as JSON Lines text (`GET /api/v1/admin/journal/export`),
-   * oldest first. A response cut at the server's size cap carries `X-Journal-Next-Cursor`;
-   * this follows it for at most {@link MAX_EXPORT_REQUESTS} requests and throws if entries
-   * still remain, rather than returning an incomplete export. Network I/O.
+   * All matching journal entries as JSON Lines or CSV text (`GET /api/v1/admin/journal/export`),
+   * in the order asked for (oldest first by default). A response cut at the server's size cap
+   * carries `X-Journal-Next-Cursor`; this follows it for at most {@link MAX_EXPORT_REQUESTS}
+   * requests and throws if entries still remain, rather than returning an incomplete export. A
+   * CSV export keeps one header row. Opaque IDs only: the route adds no names. Network I/O.
+   *
+   * @param filters The filters, the format and the order.
+   * @returns The export text.
+   * @throws ApiError on a non-2xx answer: 401 or 403 for a caller who is not the owner.
+   * @throws Error when more than {@link MAX_EXPORT_REQUESTS} requests would be needed.
    */
   async adminJournalExport(
-    filters: Omit<JournalFilters, "after" | "limit" | "order"> = {},
+    filters: Omit<JournalFilters, "after" | "limit" | "names"> = {},
   ): Promise<string> {
-    let text = "";
+    const parts: string[] = [];
     let after: number | undefined;
     for (let i = 0; i < MAX_EXPORT_REQUESTS; i++) {
       const path = `/api/v1/admin/journal/export${queryString({ ...filters, after })}`;
       const response = await this.send(path);
-      text += await response.text();
+      parts.push(await response.text());
       const next = response.headers.get(NEXT_CURSOR_HEADER);
-      if (next === null) return text;
+      if (next === null) return joinExport(parts, filters.format ?? "jsonl");
       after = Number(next);
     }
     throw new Error(`journal export exceeds ${MAX_EXPORT_REQUESTS} requests; narrow the filters`);
@@ -855,8 +968,9 @@ export class FileSquidClient {
    */
   private async send(path: string, init: RequestInit = {}): Promise<Response> {
     const response = await this.transmit(path, init);
-    if (!response.ok) throw new ApiError(response.status, path, await readErrorBody(response));
-    return response;
+    if (response.ok) return response;
+    const retryAfterMs = retryAfter(response.headers.get("Retry-After"));
+    throw new ApiError(response.status, path, await readErrorBody(response), retryAfterMs);
   }
 
   /**
