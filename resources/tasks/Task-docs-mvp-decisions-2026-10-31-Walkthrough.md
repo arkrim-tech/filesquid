@@ -110,4 +110,6 @@ After main was merged (merge commit `1d6cac73`, which keeps main's DE-0.10 and U
 ✅ All Pre-Commit Hooks Passed! Test scope: full (775s)
 ```
 
+Main was merged twice more while the review ran (UI-1.2 in PR #168, then UI-1.3 and the close of Task 1.2 in PR #167): each merge keeps main's ticks, moves a task main closed into the finished block of the checklist, and redraws the progress block ("about 1029 of 1260 estimated hours", 21 of 28 tasks done). The full suite passed on `25d406ac` (`✅ All Pre-Commit Hooks Passed! Test scope: full (641s)`) and is rerun on the head, as the pull request records.
+
 One existing step of `content_handles_F-056.feature`, "no log line or journal entry should contain the presented handle", fails now and then under machine load ("the refusal was logged"). It failed in some runs with and without this PR's feature files and passed on rerun with no change; it is outside this documentation task, and a separate task to make it deterministic was suggested.
