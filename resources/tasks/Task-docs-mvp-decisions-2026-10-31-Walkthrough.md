@@ -102,3 +102,11 @@ The PR's change scope is `rust:` and `npm:` (the API, UI and desktop SRS, plans 
 ```
 
 The 494 scenarios are the `filesquid-api` harness; the new scenarios of this PR are among the skipped ones until their rows add step definitions.
+
+After main was merged (merge commit `1d6cac73`, which keeps main's DE-0.10 and UI-F2.15 ticks, reopens Task FS-2.8 for API-F2.23 in the plan and the checklist, and redraws the progress block), the full suite passed again:
+
+```text
+✅ All Pre-Commit Hooks Passed! Test scope: full (775s)
+```
+
+One existing step of `content_handles_F-056.feature`, "no log line or journal entry should contain the presented handle", fails now and then under machine load ("the refusal was logged"). It failed in some runs with and without this PR's feature files and passed on rerun with no change; it is outside this documentation task, and a separate task to make it deterministic was suggested.
