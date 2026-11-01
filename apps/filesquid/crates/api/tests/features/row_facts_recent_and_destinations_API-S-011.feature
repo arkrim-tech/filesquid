@@ -36,6 +36,10 @@ Feature: Row facts, the Recent view and destination identifiers
     Then row-facts node "Summer" should carry the collection ID of "Summer"
     And row-facts node of folder "Summer/Trips" should carry the collection ID of "Summer"
 
+  Scenario: A collection or folder node resolves to the destination an upload names
+    When row-facts caller asks the destination of the navigation node of folder "Summer/Trips"
+    Then row-facts destination should be the library ID of "Family", the collection ID of "Summer" and the folder "Trips"
+
   Scenario: The Recent view lists the caller's own actions newest first
     Given row-facts caller uploaded "a.txt", then opened "beach.jpg", then renamed "notes.md"
     When row-facts caller reads the Recent view
@@ -76,6 +80,15 @@ Feature: Row facts, the Recent view and destination identifiers
     Given row-facts fixture: "Summer/beach.jpg" and "Summer/beach-1.jpg" through "Summer/beach-9999.jpg" are taken
     When row-facts caller uploads "beach.jpg" into collection "Summer"
     Then row-facts answer should be HTTP 409 with sub-code "path_suffix_exhausted"
+
+  Scenario: A node that is not a collection or folder is no destination
+    When row-facts caller asks the destination of the navigation node of library "Family"
+    Then row-facts answer should be refused as invalid_request
+
+  Scenario: A restore with no free untitled collection name carries its sub-code
+    Given row-facts fixture: a deleted file whose collection is gone and every "untitled collection" title up to the cap is taken
+    When row-facts caller restores it
+    Then row-facts answer should carry sub-code "restore_name_exhausted"
 
   Scenario: The Recent view never shows another caller's actions
     Given row-facts second caller opened "beach.jpg"
