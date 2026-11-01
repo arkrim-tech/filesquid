@@ -220,6 +220,20 @@ $ (cd crates/desktop/tests/e2e && xvfb-run -a npx wdio run ./wdio.conf.mjs --spe
 Spec Files:	 2 passed, 2 total (100% completed) in 00:00:06  
 ```
 
+## Cubic round 2
+
+- **A failed refill reserves IDs too.** After a failed refill the launch goes on over the new, incomplete store. Its entries could take IDs in the sealed range, and the retry would then keep those entries and skip the sealed ones as `already_present`. Now a failed refill moves the store's ID counter to `FAILED_REFILL_FLOOR` (2^40, still exact as a JavaScript number). The launch's entries land above every sealed ID, and the retry restores the sealed entries under their own IDs. `a_failed_refill_runs_again_at_the_next_launch` now journals from a launch over the failed store and checks both sets of entries.
+
+```text
+$ cargo test -p filesquid-desktop --locked --test integration_journal_sealing
+test the_close_seal_seals_what_is_pending ... ok
+test a_failed_refill_runs_again_at_the_next_launch ... ok
+test a_served_library_is_sealed_into_its_own_root_and_restored_by_its_rebuild ... ok
+test a_launch_catches_up_a_missed_seal_and_refills_a_lost_store ... ok
+test the_hourly_seal_runs_without_a_call_and_ends_with_the_app ... ok
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.42s
+```
+
 ## Sync Execution Report
 
 - `apps/filesquid/crates/desktop/resources/srs.md` DE-S-013 gains desktop specifics: both restores target a fresh, host-injected journal store; a refill stays marked pending until it succeeds; runs with work to seal are registered and journaled; the refill runs before the monitor opens the store, then reserves the sealed IDs and journals `journal.refill`; each library's journal object lives in its own root; the app close is each library's close; the close-time seal waits at most 30 s.

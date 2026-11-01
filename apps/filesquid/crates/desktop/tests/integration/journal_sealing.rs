@@ -23,7 +23,7 @@ use filesquid_desktop_lib::sealing::{
     start_sealing, REFILL_OPERATION, REFILL_PENDING_FILE,
 };
 use filesquid_desktop_lib::{load_installation, local_library_service, open_host_monitor};
-use filesquid_native::journal_objects::INSTALLATION_JOURNAL_DIR;
+use filesquid_native::journal_objects::{FAILED_REFILL_FLOOR, INSTALLATION_JOURNAL_DIR};
 use filesquid_native::{HostLeases, HostMonitor, HostRoot, SqliteJournal, JOURNAL_FILE};
 use filesquid_ocfl::storage::FsBackend;
 use filesquid_ocfl::write::{LeaseConfig, LeaseStore, SystemClock};
@@ -207,6 +207,17 @@ async fn a_failed_refill_runs_again_at_the_next_launch() {
         data.join(REFILL_PENDING_FILE).is_file(),
         "the refill is still pending"
     );
+    let (host, _) = launch(&data);
+    host.monitor()
+        .journal()
+        .send(JournalEntry::new("host.event", Outcome::Succeeded));
+    host.stop(); // the launch goes on over the incomplete store
+    let written = journal_of(&data);
+    assert!(!written.is_empty());
+    assert!(
+        written.iter().all(|e| e.id >= Some(FAILED_REFILL_FLOOR)),
+        "no entry takes a sealed ID after a failed refill: {written:?}"
+    );
     std::fs::write(&inventory, kept).expect("repair");
     let retried = refill_before_open(&data, false).await;
     assert!(
@@ -224,6 +235,10 @@ async fn a_failed_refill_runs_again_at_the_next_launch() {
         .find(|e| e.operation == "library.create")
         .expect("journaled");
     assert_eq!(refilled.iter().find(|e| e.id == old.id), Some(old));
+    for entry in &written {
+        let kept = refilled.iter().find(|e| e.id == entry.id);
+        assert_eq!(kept, Some(entry), "the launch's own entries stay");
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]

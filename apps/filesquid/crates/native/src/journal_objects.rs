@@ -220,11 +220,18 @@ fn append_segment(
 /// failed (leaving a new, incomplete `filesquid.sqlite` behind) runs again at the next launch.
 pub const REFILL_PENDING_FILE: &str = "journal-refill.pending";
 
+/// The journal ID a store's counter is moved to when its refill failed: 2^40, far above any ID
+/// a sealed journal holds, and still exact as a JavaScript number. Entries the launch writes
+/// after a failed refill then never take an ID the retry has still to restore.
+pub const FAILED_REFILL_FLOOR: i64 = 1 << 40;
+
 /// When `store_lost` (the launch found no `filesquid.sqlite`), or an earlier refill did not
 /// finish ([`REFILL_PENDING_FILE`]), and `data_dir` holds the installation's sealed journal:
 /// mark the refill pending, recreate (or open) the operational store, refill it
-/// ([`restore_installation_journal`]) and clear the mark once that succeeded. A second run over
-/// a partly refilled store adds only what is missing. `None` when there was nothing to refill.
+/// ([`restore_installation_journal`]) and clear the mark once that succeeded. When it fails,
+/// the store's ID counter moves to [`FAILED_REFILL_FLOOR`], so the launch, which goes on with
+/// that store, writes no entry under an ID still to be restored. A second run over a partly
+/// refilled store adds only what is missing. `None` when there was nothing to refill.
 /// Run it before anything else opens the store. Filesystem and database I/O.
 pub async fn refill_lost_store(
     data_dir: &Path,
@@ -239,12 +246,30 @@ pub async fn refill_lost_store(
         return Some(Err("the refill could not be marked as pending".to_string()));
     }
     let refilled = refill_store(data_dir).await;
-    if refilled.is_ok() {
-        if let Err(err) = std::fs::remove_file(&marker) {
-            tracing::warn!(error = %err.kind(), "the finished refill's marker could not be removed");
-        }
+    match &refilled {
+        Ok(_) => clear_marker(&marker),
+        Err(_) => reserve_after_failure(data_dir),
     }
     Some(refilled)
+}
+
+/// Remove the pending-refill marker of a finished refill; a failure is logged (stdout), and
+/// the next launch then refills again, which adds nothing. Filesystem I/O.
+fn clear_marker(marker: &Path) {
+    if let Err(err) = std::fs::remove_file(marker) {
+        tracing::warn!(error = %err.kind(), "the finished refill's marker could not be removed");
+    }
+}
+
+/// After a failed refill, move the store's ID counter to [`FAILED_REFILL_FLOOR`], so what the
+/// launch journals until the retry never takes a sealed ID. A store that cannot be opened is
+/// logged (stdout): the host's own open fails the same way. Database I/O.
+fn reserve_after_failure(data_dir: &Path) {
+    let reserved = SqliteJournal::open(&data_dir.join(crate::JOURNAL_FILE), "filesquid-desktop")
+        .and_then(|store| store.reserve_through(FAILED_REFILL_FLOOR));
+    if let Err(err) = reserved {
+        tracing::error!(error = %err.0, "a failed refill could not reserve the sealed IDs");
+    }
 }
 
 /// Recreate (or open) the operational store of `data_dir` and refill it from the sealed
