@@ -6,7 +6,7 @@
 import { ApiError } from "../../src/api/client";
 import type {
   CollectionView,
-  JobSource,
+  RebuildJobSource,
   JobView,
   JobWatchEvent,
   LibraryFacts,
@@ -281,8 +281,8 @@ export function jobView(change: Partial<JobView> = {}): JobView {
   return { ...REBUILD_JOB.job, state: "running", done: 1204, total: 2418, ...change };
 }
 
-/** A recording, scriptable {@link JobSource} whose watch the test drives. */
-export class FakeJobSource implements JobSource {
+/** A recording, scriptable {@link RebuildJobSource} whose watch the test drives. */
+export class FakeJobSource implements RebuildJobSource {
   /** Every call as `name:job`, in order. */
   readonly calls: string[] = [];
   current: Answer<JobView> = jobView();

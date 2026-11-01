@@ -19,9 +19,10 @@ export type Scheme = "light" | "dark";
  * with 503 `unavailable` until they install the navigation service (DE-1.1), and the UI shows
  * that as its unavailable state. `GET /api/v1/preferences` (UI-F2.8, API-S-011) and
  * `GET /api/v1/libraries/recent` (API-S-038) answer 503 until a host installs a preference
- * store or a library registry. The production-build (preview) specs run with no host at all and
+ * store or a library registry, and `GET /api/v1/jobs` (the Jobs button's start-up read, UI-1.2,
+ * API-S-037) answers 503 on a host without per-file job progress. The production-build (preview) specs run with no host at all and
  * leave them to the preview server's proxy, which answers 500 to 504; the UI keeps working on
- * both (the choices apply until the page closes, file actions stay off). A 503 from those two
+ * both (the choices apply until the page closes, file actions stay off). A 503 from those
  * routes is excused everywhere; the proxy's 500 to 504 only in the preview suite
  * (`FILESQUID_E2E_PREVIEW=1`, set by `playwright.preview.config.ts`), so the server-backed suite
  * still fails on a real 500 from them. The browser logs each refused fetch
@@ -41,7 +42,7 @@ export function isNavigationUnavailable(
   const navigation = /status of 503 \(/.test(text) && /\/api\/v1\/navigation(\?|$)/.test(url);
   const status = preview ? /status of 50[0-4] \(/ : /status of 503 \(/;
   const optional =
-    status.test(text) && /\/api\/v1\/(preferences|libraries\/recent)(\?|$)/.test(url);
+    status.test(text) && /\/api\/v1\/(preferences|libraries\/recent|jobs)(\?|$)/.test(url);
   return navigation || optional;
 }
 

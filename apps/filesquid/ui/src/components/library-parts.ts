@@ -4,7 +4,7 @@
  * with `textContent` from the label table; every colour, size and duration comes from a token.
  */
 import type { Failure, LibraryAction } from "../libraries/errors";
-import type { JobSource } from "../libraries/job-source";
+import type { RebuildJobSource } from "../libraries/job-source";
 import type { LibrarySource } from "../libraries/model";
 import type { LibraryRegistry } from "../libraries/registry";
 import type { LabelTable } from "../theme/labels";
@@ -35,7 +35,7 @@ export interface LibraryPageOptions {
   /** Start page only: the release version for the footer line `appFooter`; left out if absent. */
   version?: string;
   /** The job routes the rebuild page follows (UI-1.3); without them that page says unavailable. */
-  jobs?: JobSource;
+  jobs?: RebuildJobSource;
   /** The clock the recent libraries' "Opened {when}" reads; `new Date()` by default. */
   now?: () => Date;
   /**

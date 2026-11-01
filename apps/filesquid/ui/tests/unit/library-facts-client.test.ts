@@ -1,6 +1,6 @@
 /**
  * Unit tests for the library routes UI-1.3 adds to `ClientLibrarySource` (API-S-038 facts and
- * recent libraries, a named create, the first collection) and for `ClientJobSource` (API-S-037
+ * recent libraries, a named create, the first collection) and for `ClientRebuildJobSource` (API-S-037
  * job read, pause, resume, cancel and the `job.update` watch): every call goes through
  * `FileSquidClient` to the contract's route, the controls send no body, and an answer that
  * breaks the contract is a `TypeError`.
@@ -8,7 +8,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   ApiError,
-  ClientJobSource,
+  ClientRebuildJobSource,
   ClientLibrarySource,
   FileSquidClient,
   type ApiEvent,
@@ -168,12 +168,12 @@ describe("ClientLibrarySource named create and first collection", () => {
   });
 });
 
-describe("ClientJobSource", () => {
+describe("ClientRebuildJobSource", () => {
   const job = REBUILD_JOB.job;
 
   it("reads one job from its route", async () => {
     const { client, seen } = setup(job);
-    await expect(new ClientJobSource(client).job("job-1")).resolves.toEqual(job);
+    await expect(new ClientRebuildJobSource(client).job("job-1")).resolves.toEqual(job);
     expect(seen[0]).toMatchObject({ url: "/api/v1/jobs/job-1", method: "GET" });
   });
 
@@ -186,7 +186,7 @@ describe("ClientJobSource", () => {
     async (name, state, paused) => {
       const answered = { ...job, state: state === "paused" ? "running" : state, paused };
       const { client, seen } = setup({ job: answered, scheduled: true }, 200, false);
-      const source = new ClientJobSource(client);
+      const source = new ClientRebuildJobSource(client);
       await expect(source[name]("job-1")).resolves.toEqual(answered);
       expect(seen).toEqual([
         { url: `/api/v1/jobs/job-1/${name}`, method: "POST", body: undefined },
@@ -196,22 +196,24 @@ describe("ClientJobSource", () => {
 
   it("escapes a job id in the route", async () => {
     const { client, seen } = setup(job);
-    await new ClientJobSource(client).job("a/b");
+    await new ClientRebuildJobSource(client).job("a/b");
     expect(seen[0]?.url).toBe("/api/v1/jobs/a%2Fb");
   });
 
   it("refuses a job that breaks the contract", async () => {
     const { client } = setup({ ...job, state: "sleeping" });
-    await expect(new ClientJobSource(client).job("job-1")).rejects.toBeInstanceOf(TypeError);
+    await expect(new ClientRebuildJobSource(client).job("job-1")).rejects.toBeInstanceOf(TypeError);
   });
 
   it("passes the 409 of a refused control through as the ApiError", async () => {
     const { client } = setup({ code: "conflict", retryable: false }, 409);
-    await expect(new ClientJobSource(client).pause("job-1")).rejects.toBeInstanceOf(ApiError);
+    await expect(new ClientRebuildJobSource(client).pause("job-1")).rejects.toBeInstanceOf(
+      ApiError,
+    );
   });
 });
 
-describe("ClientJobSource.watch", () => {
+describe("ClientRebuildJobSource.watch", () => {
   /** A client whose event channel the test drives. */
   function channel() {
     let listener: ((event: ApiEvent) => void) | undefined;
@@ -236,7 +238,7 @@ describe("ClientJobSource.watch", () => {
   it("delivers a checked job.update and ignores other topics", () => {
     const { client, emit } = channel();
     const seen: unknown[] = [];
-    new ClientJobSource(client).watch((event) => seen.push(event));
+    new ClientRebuildJobSource(client).watch((event) => seen.push(event));
     emit({ topic: "health.change", data: {} });
     emit({ topic: "job.update", data: REBUILD_JOB.job });
     expect(seen).toEqual([{ kind: "update", job: REBUILD_JOB.job }]);
@@ -245,7 +247,7 @@ describe("ClientJobSource.watch", () => {
   it("asks for a reread on events.resync and when the channel opens", () => {
     const { client, emit, open } = channel();
     const seen: string[] = [];
-    new ClientJobSource(client).watch((event) => seen.push(event.kind));
+    new ClientRebuildJobSource(client).watch((event) => seen.push(event.kind));
     emit({ topic: "events.resync", data: { missed: 3 } });
     open();
     expect(seen).toEqual(["resync", "resync"]);
@@ -255,7 +257,7 @@ describe("ClientJobSource.watch", () => {
     const { client, emit } = channel();
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const seen: string[] = [];
-    new ClientJobSource(client).watch((event) => seen.push(event.kind));
+    new ClientRebuildJobSource(client).watch((event) => seen.push(event.kind));
     emit({ topic: "job.update", data: { id: "job-1" } });
     expect(seen).toEqual([]);
     expect(warn).toHaveBeenCalled();
@@ -266,7 +268,7 @@ describe("ClientJobSource.watch", () => {
     const { client, emit } = channel();
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const seen: string[] = [];
-    new ClientJobSource(client).watch((event) => seen.push(event.kind));
+    new ClientRebuildJobSource(client).watch((event) => seen.push(event.kind));
     const result = { objects: [], unreadable: [] };
     emit({ topic: "job.update", data: { ...REBUILD_JOB.job, state: "completed", result } });
     expect(seen).toEqual([]);
@@ -276,7 +278,7 @@ describe("ClientJobSource.watch", () => {
 
   it("closes the channel when the watcher is stopped", () => {
     const { client, close } = channel();
-    const stop = new ClientJobSource(client).watch(() => undefined);
+    const stop = new ClientRebuildJobSource(client).watch(() => undefined);
     stop();
     expect(close).toHaveBeenCalledOnce();
   });

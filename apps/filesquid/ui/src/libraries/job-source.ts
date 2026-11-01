@@ -15,8 +15,8 @@ import type { JobView } from "./model";
 export type JobWatchEvent =
   { readonly kind: "update"; readonly job: JobView } | { readonly kind: "resync" };
 
-/** What the library screens need from the job routes (the live one is `ClientJobSource`). */
-export interface JobSource {
+/** What the library screens need from the job routes (the live one is `ClientRebuildJobSource`). */
+export interface RebuildJobSource {
   /** Read one job (`GET /api/v1/jobs/{job}`), with its report once it has completed. */
   job(jobId: string): Promise<JobView>;
   /** Pause the job: a running worker suspends at its next checkpoint. Answers the job. */
@@ -36,7 +36,7 @@ export interface JobSource {
 }
 
 /** The part of the API client the source needs (injectable in tests). */
-export interface JobClient {
+export interface RebuildJobClient {
   /** Send a JSON request and parse the JSON answer. */
   request<T>(path: string, options?: RequestOptions): Promise<T>;
   /** Subscribe to the event channel; `onOpen` runs each time it opens. */
@@ -47,9 +47,9 @@ export interface JobClient {
 type Control = "pause" | "resume" | "cancel";
 
 /** A job source over the FileSquid API. */
-export class ClientJobSource implements JobSource {
+export class ClientRebuildJobSource implements RebuildJobSource {
   /** @param client The API client (`FileSquidClient`, or a fake in tests). */
-  constructor(private readonly client: JobClient) {}
+  constructor(private readonly client: RebuildJobClient) {}
 
   /**
    * Read one job. Network I/O.
