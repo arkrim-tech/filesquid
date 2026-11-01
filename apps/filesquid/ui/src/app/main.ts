@@ -45,11 +45,14 @@ import {
   defineElements,
   detectHost,
   libraryRepairHref,
+  mountImports,
+  clientDestinationLookup,
   memoryTokenStore,
   resolveLocale,
   sharedNavigationStore,
   type Distribution,
   type FsAppShell,
+  type MountedImports,
   type FsNavTree,
   type FsNewMenu,
   type FsSearchBar,
@@ -71,8 +74,10 @@ theme.start();
 defineElements();
 const shell = document.querySelector<FsAppShell>("fs-app-shell");
 const tree = document.createElement("fs-nav-tree") as FsNavTree;
+let imports: MountedImports | undefined;
 const tokens = memoryTokenStore(() => {
   void shell?.refreshHealth();
+  void imports?.panel.reconnect(); // the Jobs panel's first read may have been refused
   navigation.reconnect();
   void tree.reload();
   void preferences.start(); // reads again when the first read was refused before the token
@@ -113,6 +118,13 @@ shell?.append(tree);
 if (shell) bindNavigationRoute(shell, { labels, source: navigation, tree, drive });
 if (shell) bindDriveRoute(shell, { labels, navigation, drive, newMenu, searchBar });
 if (shell) bindStorage(shell, client);
+// The upload dialog, the Jobs panel and the footer status (UI-1.2). The API gives no collection ID
+// for a navigation node yet; the lookup asks the route the platform engineer is to add, and the
+// dialog says it cannot name the collection, sending nothing, until a host answers it.
+if (shell) {
+  const lookup = clientDestinationLookup(client);
+  imports = mountImports(shell, { labels, client, navigation, newMenu, lookup });
+}
 if (shell) {
   const settings = { labels, client, theme, distribution: filesquid };
   bindSettingsRoute(shell, { ...settings, contractVersion: CONTRACT_VERSION, preferences });
