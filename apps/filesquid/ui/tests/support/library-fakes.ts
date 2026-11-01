@@ -5,11 +5,17 @@
  */
 import { ApiError } from "../../src/api/client";
 import type {
+  CollectionView,
+  RebuildJobSource,
+  JobView,
+  JobWatchEvent,
+  LibraryFacts,
   LibrarySource,
   LibraryView,
   LocationChoice,
   RebuildJobAnswer,
   RebuildReport,
+  RecentLibraries,
   RepairAnswer,
   RepairCandidate,
   RepairCandidates,
@@ -94,6 +100,40 @@ export const REBUILD_JOB: RebuildJobAnswer = {
   scheduled: true,
 };
 
+/** The facts of {@link LIBRARY}: a name, 1.4 TB free and the revision it is open at. */
+export const FACTS: LibraryFacts = {
+  library_id: "lib-1",
+  name: "Family archive",
+  free_bytes: 1_400_000_000_000,
+  free_bytes_reason: null,
+  revision: "1",
+};
+
+/** The libraries the host opened: one open now, one remembered with an unreadable volume. */
+export const RECENT: RecentLibraries = {
+  libraries: [
+    {
+      library_id: "lib-1",
+      name: "Family archive",
+      last_opened: "2026-10-31T08:00:00Z",
+      open: true,
+      free_bytes: 1_400_000_000_000,
+      free_bytes_reason: null,
+    },
+    {
+      library_id: "lib-2",
+      name: "Studio work",
+      last_opened: "2026-10-20T10:00:00Z",
+      open: false,
+      free_bytes: null,
+      free_bytes_reason: "volume_unreadable",
+    },
+  ],
+};
+
+/** The first collection the first-use flow creates. */
+export const COLLECTION: CollectionView = { collection_id: "col-1", title: "untitled collection" };
+
 /** A copy that wrote two objects, one with validation errors. */
 export const COPY_REPORT: SnapshotCopyReport = {
   objects: 2,
@@ -137,6 +177,9 @@ export class FakeLibrarySource implements LibrarySource {
   readonly revisions: string[] = [];
   choice: Answer<LocationChoice> = { outcome: "chosen", location_id: "loc-1" };
   created: Answer<LibraryView> = LIBRARY;
+  factsAnswer: Answer<LibraryFacts> = FACTS;
+  recentAnswer: Answer<RecentLibraries> = RECENT;
+  collection: Answer<CollectionView> = COLLECTION;
   opened: Answer<LibraryView> = LIBRARY;
   /** The current revision the facts answer for a library the page did not open. */
   current: Answer<string> = "1";
@@ -170,9 +213,29 @@ export class FakeLibrarySource implements LibrarySource {
     return answer(this.choice);
   }
   /** @inheritdoc */
-  create(locationId: string): Promise<LibraryView> {
-    this.calls.push(`create:${locationId}`);
+  create(locationId: string, name?: string): Promise<LibraryView> {
+    this.calls.push(name === undefined ? `create:${locationId}` : `create:${locationId}:${name}`);
     return answer(this.created);
+  }
+  /** @inheritdoc */
+  createCollection(
+    libraryId: string,
+    title: string,
+    expectedRevision: string,
+  ): Promise<CollectionView> {
+    this.calls.push(`collection:${libraryId}:${title}`);
+    this.revisions.push(expectedRevision);
+    return answer(this.collection);
+  }
+  /** @inheritdoc */
+  recent(): Promise<RecentLibraries> {
+    this.calls.push("recent");
+    return answer(this.recentAnswer);
+  }
+  /** @inheritdoc */
+  facts(libraryId: string): Promise<LibraryFacts> {
+    this.calls.push(`facts:${libraryId}`);
+    return answer(this.factsAnswer);
   }
   /** @inheritdoc */
   open(locationId: string): Promise<LibraryView> {
@@ -210,5 +273,53 @@ export class FakeLibrarySource implements LibrarySource {
     this.calls.push(`repair:${request.library_id}`);
     this.repairs.push(request);
     return answer(this.repaired);
+  }
+}
+
+/** A job view with fields overridden, as the rebuild page reads it. */
+export function jobView(change: Partial<JobView> = {}): JobView {
+  return { ...REBUILD_JOB.job, state: "running", done: 1204, total: 2418, ...change };
+}
+
+/** A recording, scriptable {@link RebuildJobSource} whose watch the test drives. */
+export class FakeJobSource implements RebuildJobSource {
+  /** Every call as `name:job`, in order. */
+  readonly calls: string[] = [];
+  current: Answer<JobView> = jobView();
+  paused: Answer<JobView> = jobView({ paused: true });
+  resumed: Answer<JobView> = jobView();
+  cancelled: Answer<JobView> = jobView({ state: "cancelled" });
+  /** The listener of the live watch, when one is open. */
+  listener?: (event: JobWatchEvent) => void;
+  /** How many times the watch was stopped. */
+  stopped = 0;
+
+  /** @inheritdoc */
+  job(jobId: string): Promise<JobView> {
+    this.calls.push(`job:${jobId}`);
+    return answer(this.current);
+  }
+  /** @inheritdoc */
+  pause(jobId: string): Promise<JobView> {
+    this.calls.push(`pause:${jobId}`);
+    return answer(this.paused);
+  }
+  /** @inheritdoc */
+  resume(jobId: string): Promise<JobView> {
+    this.calls.push(`resume:${jobId}`);
+    return answer(this.resumed);
+  }
+  /** @inheritdoc */
+  cancel(jobId: string): Promise<JobView> {
+    this.calls.push(`cancel:${jobId}`);
+    return answer(this.cancelled);
+  }
+  /** @inheritdoc */
+  watch(listener: (event: JobWatchEvent) => void): () => void {
+    this.listener = listener;
+    return () => {
+      this.stopped += 1;
+      this.listener = undefined;
+    };
   }
 }

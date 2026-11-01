@@ -11,7 +11,7 @@
  * console errors, and no filesystem path in any request or in the page.
  */
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import { LIB, OBJECTS, serveLibraries } from "../support/library-api";
+import { JOB, LIB, OBJECTS, serveLibraries } from "../support/library-api";
 import {
   activeLabels,
   expectElementsDefined,
@@ -22,6 +22,9 @@ import {
 } from "../support/strict-dom";
 
 const labels = activeLabels();
+
+/** The route that lists the libraries the host opened (API-S-038). */
+const RECENT = "/api/v1/libraries/recent";
 const text = (key: string) => label(labels, key);
 
 /** Console lines the browser prints for the refusals these tests provoke on purpose. */
@@ -68,7 +71,7 @@ test("the start page offers create, open and recover in the active vocabulary", 
     "fs-states",
   ]);
   await expect(start(page).locator(".intro")).toHaveText(text("libraryIntro"));
-  await expect(start(page).locator(".eyebrow")).toHaveText(text("libraries"));
+  await expect(start(page).locator(".page > .eyebrow")).toHaveText(text("libraries"));
   // UI-S-027: the welcome screen is drawn without the shell's sidebar, header and footer.
   await expect(page.locator("fs-app-shell")).toHaveAttribute("frameless", "");
   await expect(page.locator("fs-app-shell nav")).toBeHidden();
@@ -100,8 +103,14 @@ test("(1) create asks for a folder, passes the location ID on and shows the libr
     LIB,
     text("libraryFactFormatValue").replace("{version}", "1.1"),
     "2",
+    text("libraryFactFreeUnknown"),
   ]);
-  expect(api.seen.slice(0, 2).map(({ path, method, body }) => [method, path, body])).toEqual([
+  expect(
+    api.seen
+      .filter(({ path }) => path !== RECENT)
+      .slice(0, 2)
+      .map(({ path, method, body }) => [method, path, body]),
+  ).toEqual([
     ["POST", "/api/v1/libraries/location-choices", { purpose: "create" }],
     [
       "POST",
@@ -135,26 +144,23 @@ test("(1) recover opens the copy, starts its rebuild job expecting the opened re
   const api = await serveLibraries(page);
   await openStart(page);
   await flow(page, "recover").click();
-  await expect(page).toHaveURL(new RegExp(`#/library/${LIB}$`));
-  // Polled: the library page reads its repair candidates once it is mounted after navigating.
-  await expect
-    .poll(() => api.seen.map(({ path }) => path))
-    .toEqual([
-      "/api/v1/libraries/location-choices",
-      "/api/v1/libraries/openings",
-      "/api/v1/libraries/rebuilds",
-      "/api/v1/libraries/repair-candidates",
-    ]);
+  await expect(page).toHaveURL(new RegExp(`#/library/${LIB}/recover/${JOB}$`));
+  // The recover page follows the pending job over the job routes (UI-1.3, mockup 04).
+  await expect(page.locator("fs-library-rebuild .job .chip")).toHaveText(text("jobStateRunning"));
+  expect(
+    api.seen.filter(({ path }) => path.startsWith("/api/v1/libraries")).map(({ path }) => path),
+  ).toEqual([
+    RECENT,
+    "/api/v1/libraries/location-choices",
+    "/api/v1/libraries/openings",
+    "/api/v1/libraries/rebuilds",
+  ]);
   expect(api.to("/api/v1/libraries/rebuilds").map(({ body }) => body)).toEqual([
     command(`library:${LIB}`, "1", { library_id: LIB }),
   ]);
-  // The rebuild is a pending job (API-S-025): no report yet; UI-1.3 follows the job.
-  await expect(detail(page).locator('[data-result="rebuild"] p')).toHaveCount(0);
-  await expect(detail(page).locator('[data-section="repair-note"] p')).toHaveText([
-    text("libraryReadOnly").replace("{count}", "2"),
-    text("libraryReadOnlyReason"),
-  ]);
   expect(api.to("/api/v1/libraries/repairs")).toEqual([]);
+  // The page follows the job the rebuild command answered.
+  expect(api.to(`/api/v1/jobs/${JOB}`).length).toBeGreaterThan(0);
   expect(errors).toEqual([]);
 });
 
@@ -170,7 +176,7 @@ test("(1) copy asks for a destination and passes it as destination_location_id",
   expect(api.to("/api/v1/libraries/location-choices").map(({ body }) => body)).toEqual([
     { purpose: "copy_destination" },
   ]);
-  expect(api.to(`/api/v1/libraries/${LIB}/facts`)).toHaveLength(1);
+  expect(api.to(`/api/v1/libraries/${LIB}/facts`)).toHaveLength(2);
   expect(api.to("/api/v1/libraries/snapshot-copies").map(({ body }) => body)).toEqual([
     command(`library:${LIB}`, "1", {
       library_id: LIB,
@@ -194,7 +200,7 @@ test("(1) copy of a library the host has not open sends the initial revision for
   await page.goto(`/#/library/${LIB}`);
   await detail(page).locator('button[data-action="copy"]').click();
   await expect(detail(page).locator('[data-result="copy"] p').first()).toBeVisible();
-  expect(api.to(`/api/v1/libraries/${LIB}/facts`)).toHaveLength(1);
+  expect(api.to(`/api/v1/libraries/${LIB}/facts`)).toHaveLength(2);
   const sent = api.to("/api/v1/libraries/snapshot-copies").map(({ body }) => body);
   expect(sent).toEqual([
     command(`library:${LIB}`, "1", {
@@ -216,7 +222,7 @@ test("(1) copy of a library the host does not know reads its facts, sends no cop
   await expect(detail(page).locator('[data-for="actions"] > p.alert')).toHaveText(
     text("libraryNotFound"),
   );
-  expect(api.to(`/api/v1/libraries/${LIB}/facts`)).toHaveLength(1);
+  expect(api.to(`/api/v1/libraries/${LIB}/facts`)).toHaveLength(2);
   expect(api.to("/api/v1/libraries/snapshot-copies")).toEqual([]);
   expect(errors).toEqual([]);
 });
@@ -230,7 +236,7 @@ test("(2) a cancelled folder choice sends no library request and says nothing ch
   await openStart(page);
   await flow(page, "create").click();
   await expect(start(page).locator(".feedback > p.status")).toHaveText(text("libraryCancelled"));
-  expect(api.seen.map(({ path }) => path)).toEqual(["/api/v1/libraries/location-choices"]);
+  expect(api.seen.map(({ path }) => path)).toEqual([RECENT, "/api/v1/libraries/location-choices"]);
   await expect(page).toHaveURL(/#\/library$/);
   expect(errors).toEqual([]);
 });

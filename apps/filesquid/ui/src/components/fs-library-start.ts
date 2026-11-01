@@ -13,27 +13,41 @@
  * ever shown. Words come only from the label table, styling only from tokens.
  *
  * Recover opens the chosen copy and then starts the rebuild of its catalog from the OCFL files
- * alone as a durable job (API-F2.19); the job's progress and report come from the job routes
- * (UI-1.3), not from this page. Nothing is repaired or adopted. Retry
+ * alone as a durable job (API-F2.19), then goes to the page that follows the job
+ * (`#/library/<id>/recover/<job>`, UI-1.3, mockup 04). Nothing is repaired or adopted. Retry
  * resumes from the step that failed: a folder already chosen is not asked for again, and a
  * library already opened is not opened again.
+ *
+ * UI-1.3 adds the libraries this host opened (API-S-038, mockup 01) as the RECENT LIBRARIES
+ * column, and first use (UI-S-034, mockup 57): when the host knows no library the page opens
+ * `<fs-first-use>` over itself, and the Create card opens it again after it was closed. A host
+ * without a library registry (503) shows neither the column nor the dialog.
  */
 import { RETRY_EVENT } from "./fs-states";
 import { formatLabel } from "../theme/labels";
+import { FIRST_USE_CANCEL_EVENT, type FsFirstUse } from "./fs-first-use";
 import type { FsHostIndicator } from "./fs-host-indicator";
 import { icon, type IconName } from "./icons";
+import { ApiError } from "../api/client";
 import { libraryFailure, type LibraryAction } from "../libraries/errors";
-import { libraryHref, type LibraryView } from "../libraries/model";
+import {
+  libraryHref,
+  libraryRecoverHref,
+  type LibraryView,
+  type RecentLibrary,
+} from "../libraries/model";
 import {
   Feedback,
   StepFailure,
   actionButton,
   browserOnline,
+  goTo,
   node,
   pageStyle,
   step,
   type LibraryPageOptions,
 } from "./library-parts";
+import { RECENT_STYLE, recentSection } from "./recent-libraries";
 
 /** The three ways into a library. */
 type Flow = "create" | "open" | "recover";
@@ -60,7 +74,12 @@ interface Progress {
   readonly flow: Flow;
   locationId?: string;
   library?: LibraryView;
+  /** The recovered copy's rebuild job, once started. */
+  jobId?: string;
 }
+
+/** HTTP status of a host that keeps no library registry. */
+const HTTP_UNAVAILABLE = 503;
 
 /** Custom element that shows the library start page. */
 export class FsLibraryStart extends HTMLElement {
@@ -69,6 +88,8 @@ export class FsLibraryStart extends HTMLElement {
   private busy = false;
   private progress?: Progress;
   private generation = 0;
+  /** True once the host answered that it knows no library: the first-use dialog applies. */
+  private noLibraryKnown = false;
 
   constructor() {
     super();
@@ -110,6 +131,7 @@ export class FsLibraryStart extends HTMLElement {
     const { labels } = options;
     this.generation += 1;
     this.busy = false;
+    this.noLibraryKnown = false;
     const feedback = new Feedback(labels);
     this.feedback = feedback;
     const cards = node("div", "cards");
@@ -124,7 +146,68 @@ export class FsLibraryStart extends HTMLElement {
       ...privacyBox(options),
       ...footerLine(options),
     );
-    this.shadowRoot.replaceChildren(pageStyle(), page);
+    this.shadowRoot.replaceChildren(pageStyle(RECENT_STYLE), page);
+    void this.loadRecent(this.generation);
+  }
+
+  /**
+   * Read the libraries this host opened and show them, or, when it knows none, open the
+   * first-use dialog. A host without a registry (503) shows neither; another failure is logged
+   * and the three choices stay usable. Network I/O through the source.
+   */
+  private async loadRecent(generation: number): Promise<void> {
+    const options = this.options as LibraryPageOptions;
+    try {
+      const { libraries } = await options.source.recent();
+      if (generation !== this.generation) return;
+      this.noLibraryKnown = libraries.length === 0;
+      if (this.noLibraryKnown) this.openFirstUse();
+      else this.showRecent(libraries);
+    } catch (error) {
+      if (generation !== this.generation) return;
+      const quiet = error instanceof ApiError && error.status === HTTP_UNAVAILABLE;
+      if (!quiet) console.warn("FileSquid could not read the recent libraries", error);
+    }
+  }
+
+  /** Add the RECENT LIBRARIES column beside the title. */
+  private showRecent(libraries: readonly RecentLibrary[]): void {
+    const options = this.options as LibraryPageOptions;
+    const page = this.shadowRoot?.querySelector(".page");
+    if (!page) return;
+    const now = (options.now ?? (() => new Date()))();
+    const section = recentSection(
+      libraries,
+      options.labels,
+      now,
+      (library) => void this.openRecent(library),
+    );
+    page.classList.add("has-recent");
+    page.querySelector(".intro")?.after(section);
+  }
+
+  /**
+   * Open a recent library: its page when the host has it open now; otherwise the Open flow,
+   * because the API reopens a library only from the folder the owner chooses.
+   */
+  private async openRecent(library: RecentLibrary): Promise<void> {
+    if (library.open) {
+      ((this.options as LibraryPageOptions).navigate ?? goTo)(libraryHref(library.library_id));
+      return;
+    }
+    await this.run("open");
+  }
+
+  /** Open the first-use dialog over the page, unless it is open; the page waits behind it. */
+  private openFirstUse(): void {
+    const root = this.shadowRoot;
+    if (!root || !this.options || root.querySelector("fs-first-use")) return;
+    const dialog = document.createElement("fs-first-use") as FsFirstUse;
+    dialog.configure(this.options);
+    const page = root.querySelector(".page");
+    dialog.addEventListener(FIRST_USE_CANCEL_EVENT, () => page?.removeAttribute("inert"));
+    page?.setAttribute("inert", "");
+    root.append(dialog);
   }
 
   /** One card: icon, title, help and the button that starts its flow (Create is primary). */
@@ -133,7 +216,7 @@ export class FsLibraryStart extends HTMLElement {
     const section = node("section");
     section.dataset.flow = name;
     const button = actionButton(name, labels[action], name === "create" ? "primary" : "secondary");
-    button.addEventListener("click", () => void this.run(name));
+    button.addEventListener("click", () => void this.press(name));
     const glyph = icon(FLOW_ICON[name], 20);
     section.append(glyph, node("h3", undefined, labels[title]), node("p", "help", labels[help]));
     section.append(button);
@@ -147,6 +230,19 @@ export class FsLibraryStart extends HTMLElement {
       if (busy) button.setAttribute("aria-disabled", "true");
       else button.removeAttribute("aria-disabled");
     }
+  }
+
+  /**
+   * A card was pressed. While the host knows no library, Create opens the first-use dialog,
+   * which also names the library and makes its first collection (UI-S-034); any other press
+   * starts its flow.
+   */
+  private async press(flow: Flow): Promise<void> {
+    if (flow === "create" && this.noLibraryKnown) {
+      this.openFirstUse();
+      return;
+    }
+    await this.run(flow);
   }
 
   /**
@@ -176,10 +272,10 @@ export class FsLibraryStart extends HTMLElement {
       if (generation !== this.generation || progress.locationId === undefined) return;
       feedback.note(options.labels.libraryWorking);
       progress.library ??= await this.enter(progress.flow, progress.locationId);
-      if (progress.flow === "recover") await this.rebuild(progress.library);
+      if (progress.flow === "recover") progress.jobId ??= await this.rebuild(progress.library);
       if (generation !== this.generation) return;
       feedback.clear();
-      (options.navigate ?? goTo)(libraryHref(progress.library.library_id));
+      (options.navigate ?? goTo)(this.destination(progress, progress.library));
     } catch (error) {
       if (generation === this.generation) this.fail(error);
     } finally {
@@ -221,12 +317,20 @@ export class FsLibraryStart extends HTMLElement {
 
   /**
    * Start the rebuild of a recovered copy's catalog from its files as a durable job, expecting
-   * the revision the open answered (API-F2.19); its progress and report are the job's (UI-1.3).
-   * Network I/O.
+   * the revision the open answered (API-F2.19). Network I/O.
+   *
+   * @returns The job's ID, which the recover page follows (UI-1.3, mockup 04).
    */
-  private async rebuild(view: LibraryView): Promise<void> {
+  private async rebuild(view: LibraryView): Promise<string> {
     const { source } = this.options as LibraryPageOptions;
-    await step("rebuild", () => source.rebuild(view.library_id, view.revision));
+    const answer = await step("rebuild", () => source.rebuild(view.library_id, view.revision));
+    return answer.job_id;
+  }
+
+  /** Where a finished flow goes: the recover page of its job, else the library's page. */
+  private destination(progress: Progress, library: LibraryView): string {
+    if (progress.jobId !== undefined) return libraryRecoverHref(library.library_id, progress.jobId);
+    return libraryHref(library.library_id);
   }
 
   /** Show a failed step, and log it to the console. */
@@ -256,9 +360,4 @@ function footerLine(options: LibraryPageOptions): HTMLElement[] {
   if (!options.version) return [];
   const text = formatLabel(options.labels.appFooter, { version: options.version });
   return [node("p", "app-footer", text)];
-}
-
-/** Go to a hash address in the current window. Side effect: changes the location. */
-function goTo(hash: string): void {
-  window.location.hash = hash;
 }
