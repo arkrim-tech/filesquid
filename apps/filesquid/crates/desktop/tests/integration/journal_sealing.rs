@@ -20,7 +20,7 @@ use filesquid_api::ApiState;
 use filesquid_core::{InstallationId, LibraryId};
 use filesquid_desktop_lib::sealing::{
     launch_sealing, open_library, refill_before_open, seal_before_close, spawn_hourly,
-    start_sealing, REFILL_OPERATION,
+    start_sealing, REFILL_OPERATION, REFILL_PENDING_FILE,
 };
 use filesquid_desktop_lib::{load_installation, local_library_service, open_host_monitor};
 use filesquid_native::journal_objects::INSTALLATION_JOURNAL_DIR;
@@ -154,9 +154,9 @@ async fn a_launch_catches_up_a_missed_seal_and_refills_a_lost_store() {
     for old in &before {
         let back = refilled.iter().find(|e| e.id == old.id);
         assert_eq!(
-            back.map(|e| (&e.operation, e.time_ms)),
-            Some((&old.operation, old.time_ms)),
-            "entry {:?} keeps its journal ID, and no new entry took it",
+            back,
+            Some(old),
+            "entry {:?} comes back whole under its journal ID, and no new entry took it",
             old.id
         );
     }
@@ -171,6 +171,59 @@ async fn a_launch_catches_up_a_missed_seal_and_refills_a_lost_store() {
         !text.contains(data.to_string_lossy().as_ref()),
         "no path: {text}"
     );
+}
+
+/// A refill that fails leaves its marker, so the next launch refills again even though the
+/// failed refill already recreated `filesquid.sqlite`; the marker goes once a refill succeeds.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_failed_refill_runs_again_at_the_next_launch() {
+    let scratch = Scratch::new("refill-retry");
+    let data = scratch.data();
+    let (host, installation) = launch(&data);
+    host.monitor()
+        .journal()
+        .send(JournalEntry::new("library.create", Outcome::Succeeded).target("lib-opaque"));
+    host.monitor().journal().flush();
+    let sealing = start_sealing(&host, &data, &installation)
+        .await
+        .expect("sealing");
+    sealing.service.seal_all().await;
+    host.stop();
+    let before = journal_of(&data);
+    let inventory = data
+        .join(INSTALLATION_JOURNAL_DIR)
+        .join("journal")
+        .join("inventory.json");
+    let kept = std::fs::read(&inventory).expect("inventory");
+    std::fs::write(&inventory, b"not an inventory").expect("corrupt");
+    delete_store(&data);
+    let failed = refill_before_open(&data, true).await;
+    assert!(failed.is_some_and(|r| r.is_err()), "the refill fails");
+    assert!(
+        data.join(JOURNAL_FILE).exists(),
+        "a new, incomplete store is left"
+    );
+    assert!(
+        data.join(REFILL_PENDING_FILE).is_file(),
+        "the refill is still pending"
+    );
+    std::fs::write(&inventory, kept).expect("repair");
+    let retried = refill_before_open(&data, false).await;
+    assert!(
+        retried.is_some_and(|r| r.is_ok()),
+        "the next launch refills again"
+    );
+    assert!(!data.join(REFILL_PENDING_FILE).exists(), "the marker goes");
+    assert!(
+        refill_before_open(&data, false).await.is_none(),
+        "nothing more to refill"
+    );
+    let refilled = journal_of(&data);
+    let old = before
+        .iter()
+        .find(|e| e.operation == "library.create")
+        .expect("journaled");
+    assert_eq!(refilled.iter().find(|e| e.id == old.id), Some(old));
 }
 
 #[tokio::test(flavor = "multi_thread")]

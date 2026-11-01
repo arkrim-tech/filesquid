@@ -13,6 +13,8 @@ describe("the journal survives a deleted operational store (refill)", () => {
   it("refills the new store from the sealed journal under the same IDs", async () => {
     const kept = keptEntry();
     const refill = await waitForEntry("journal.refill");
+    const refills = await journalEntries("journal.refill");
+    expect(refills.length).toBe(1);
     expect(refill.outcome).toBe("succeeded");
     const started = await journalEntries("host.started");
     const back = started.find((entry) => entry.id === kept.id);

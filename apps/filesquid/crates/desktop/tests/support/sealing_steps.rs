@@ -344,13 +344,10 @@ fn back_under_ids(world: &mut DesktopWorld) {
     let first = scenario(world).first_launch.clone();
     assert!(!first.is_empty());
     for old in &first {
+        // Both sides were read back from the store, so redaction and the host default are
+        // applied to each: the whole entry must come back, not only its ID.
         let back = entries.iter().find(|e| e.id == old.id);
-        assert_eq!(
-            back.map(|e| (&e.operation, e.time_ms)),
-            Some((&old.operation, old.time_ms)),
-            "{:?}",
-            old.id
-        );
+        assert_eq!(back, Some(old), "{:?}", old.id);
     }
 }
 

@@ -28,7 +28,7 @@ use filesquid_api::journal::seal::{
 };
 use filesquid_api::journal::{JournalEntry, JournalStore};
 use filesquid_core::{InstallationId, LibraryId};
-use filesquid_ocfl::read::Object;
+use filesquid_ocfl::read::{Object, StorageRoot};
 use filesquid_ocfl::storage::{FsBackend, StorageBackend};
 use filesquid_ocfl::write::{LeaseConfig, LeaseStore, SystemClock};
 use std::path::Path;
@@ -53,7 +53,8 @@ pub struct Refill {
     pub restored: u64,
     /// Entries the store already held under their ID.
     pub already_present: u64,
-    /// Segments that could not be read (the other segments are restored).
+    /// Segments that could not be read, and sealed entries without a journal ID (the rest is
+    /// restored).
     pub unreadable: u64,
 }
 
@@ -172,16 +173,24 @@ async fn sealed_through(backend: &FsBackend) -> Result<i64, String> {
     Ok(state.paths().filter_map(segment_through).max().unwrap_or(0))
 }
 
-/// The `through` ID of a segment path `segments/<first>-<through>.jsonl`. Pure.
+/// The `through` ID of a segment path, only when the path is exactly the canonical form
+/// `segments/<first>-<through>.jsonl`: two 20-digit IDs with `first <= through`. Pure.
 fn segment_through(path: &str) -> Option<i64> {
     let name = path.strip_prefix(&format!("{SEGMENT_DIR}/"))?;
-    let (_, through) = name.strip_suffix(".jsonl")?.split_once('-')?;
-    let canonical = through.len() == 20 && through.bytes().all(|b| b.is_ascii_digit());
-    canonical.then(|| through.parse().ok()).flatten()
+    let (first, through) = name.strip_suffix(".jsonl")?.split_once('-')?;
+    let (first, through) = (canonical_id(first)?, canonical_id(through)?);
+    (first <= through).then_some(through)
+}
+
+/// A journal ID written as exactly 20 ASCII digits. Pure.
+fn canonical_id(text: &str) -> Option<i64> {
+    let canonical = text.len() == 20 && text.bytes().all(|b| b.is_ascii_digit());
+    canonical.then(|| text.parse().ok()).flatten()
 }
 
 /// Append one segment's `entries` to `store` in batches, counting what was stored now and
-/// what was held already. Database I/O.
+/// what was held already. An entry without a journal ID is counted as unreadable and never
+/// appended, since the store would give it a new ID. Database I/O.
 ///
 /// # Errors
 /// The store refused an append.
@@ -190,7 +199,12 @@ fn append_segment(
     entries: &[JournalEntry],
     refill: &mut Refill,
 ) -> Result<(), String> {
-    for batch in entries.chunks(REFILL_BATCH) {
+    let (with_id, without): (Vec<JournalEntry>, Vec<JournalEntry>) = entries
+        .iter()
+        .cloned()
+        .partition(|entry| entry.id.is_some());
+    refill.unreadable += without.len() as u64;
+    for batch in with_id.chunks(REFILL_BATCH) {
         let stored = store
             .append_new(batch)
             .map_err(|_| "the journal store refused the refill".to_string())?;
@@ -210,15 +224,19 @@ fn installation_backend(data_dir: &Path) -> Result<FsBackend, String> {
     FsBackend::new(root, parts).map_err(|_| "the installation journal could not be opened".into())
 }
 
-/// Make `backend` an OCFL storage root when it is still empty; a non-empty one is taken as
-/// the root an earlier launch created (opening the journal object checks it). Storage I/O.
+/// Make `backend` an OCFL storage root when it is still empty; a non-empty one must pass the
+/// storage-root checks (`StorageRoot::open`: hierarchy, OCFL 1.1 declaration, no Git
+/// metadata) before it is used. Storage I/O.
 async fn ensure_storage_root(backend: &FsBackend) -> Result<(), String> {
     let page = backend
         .list("", None, 1)
         .await
         .map_err(|_| "the installation journal could not be read".to_string())?;
     if !page.keys.is_empty() {
-        return Ok(());
+        return StorageRoot::open(backend)
+            .await
+            .map(drop)
+            .map_err(|_| "the installation journal is not a valid storage root".to_string());
     }
     create_storage_root(backend)
         .await
@@ -245,5 +263,35 @@ fn journal_root(
         staging: Arc::new(staging),
         transform,
         holder: SEAL_HOLDER.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! The segment-path parser that bounds the refill's id reservation.
+
+    use super::segment_through;
+
+    #[test]
+    fn only_canonical_ordered_segment_paths_count() {
+        let path = |first: &str, through: &str| format!("segments/{first}-{through}.jsonl");
+        let id = |n: i64| format!("{n:020}");
+        assert_eq!(segment_through(&path(&id(1), &id(7))), Some(7));
+        assert_eq!(segment_through(&path(&id(7), &id(7))), Some(7));
+        assert_eq!(segment_through(&path(&id(8), &id(7))), None, "reversed");
+        assert_eq!(
+            segment_through(&path("1", &id(7))),
+            None,
+            "first not canonical"
+        );
+        assert_eq!(
+            segment_through(&path(&id(1), "7")),
+            None,
+            "through not canonical"
+        );
+        assert_eq!(
+            segment_through("other/00000000000000000001-00000000000000000007.jsonl"),
+            None
+        );
     }
 }

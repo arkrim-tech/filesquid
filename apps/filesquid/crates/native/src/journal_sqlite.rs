@@ -80,10 +80,18 @@ fn sql_err(err: rusqlite::Error) -> JournalError {
 impl SqliteJournal {
     /// Open (creating if needed) the database at `path` in WAL mode and ensure the schema.
     /// On Unix the file is made owner-only (mode 0600) first; SQLite gives its `-wal` and
-    /// `-shm` files the same mode, so other local users cannot read the journal directly.
+    /// `-shm` files the same mode, so other local users cannot read the journal directly. The
+    /// folders above it are resolved once and the file is never opened through a symbolic link
+    /// (`SQLITE_OPEN_NOFOLLOW`), so a link put in its place is refused, not followed.
     pub fn open(path: &Path, host: impl Into<String>) -> Result<Self, JournalError> {
+        let path = &crate::owner_only::resolve_folders(path)
+            .map_err(|err| JournalError(format!("{}: {err}", path.display())))?;
         restrict_to_owner(path)?;
-        let conn = Connection::open(path).map_err(sql_err)?;
+        let flags = rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE
+            | rusqlite::OpenFlags::SQLITE_OPEN_CREATE
+            | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX
+            | rusqlite::OpenFlags::SQLITE_OPEN_NOFOLLOW;
+        let conn = Connection::open_with_flags(path, flags).map_err(sql_err)?;
         conn.pragma_update(None, "journal_mode", "WAL")
             .map_err(sql_err)?;
         conn.pragma_update(None, "synchronous", "NORMAL")

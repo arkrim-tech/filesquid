@@ -137,6 +137,7 @@ async fn a_lost_store_is_refilled_from_the_sealed_segments_once_under_the_same_i
     monitor.journal().flush();
     let before = all(store.as_ref());
     monitor.shutdown();
+    drop(monitor);
     drop(store);
     for name in [JOURNAL_FILE, "filesquid.sqlite-wal", "filesquid.sqlite-shm"] {
         let _ = std::fs::remove_file(dir.0.join(name));

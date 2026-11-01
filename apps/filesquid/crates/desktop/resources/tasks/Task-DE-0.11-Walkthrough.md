@@ -12,7 +12,7 @@ Module task of global [Task FS-2.9](../../../../../../resources/implementation-p
   - **At launch:** a store refilled before the monitor opens it (`refill_before_open`, journaled afterwards as `journal.refill`), then the seal status installed for the `journal_unsealed` health reason, a catch-up seal of whatever an earlier launch left unsealed, and the hourly loop (`SEAL_INTERVAL_MS`), which checks the app's stop flag every second.
   - **At app close:** a seal that waits at most 30 s (`CLOSE_SEAL_WAIT`).
   - **Each served library** is opened for sealing when `DesktopLibraries::serve` serves it.
-  - **Every run** is a registered `journal.seal` process and journals `journal.seal` for each scope (API-S-032).
+  - **Every run with something to seal** is a registered `journal.seal` process and journals `journal.seal` for each scope. A run that finds only seal bookkeeping commits and journals nothing (API-S-032).
 - **Library rebuild:** the desktop's `local_library_service` now carries `with_journal_restore` over the SQLite journal store (`Monitor::store`) with the `OwnerReadable` transform, so a library's rebuild from files restores its per-commit entries and sealed segments (CL-1.9).
 - **Packaged-window tests:** the test-instrumented build reads `FILESQUID_E2E_DATA_DIR`, which `wdio.conf.mjs` sets to `app-data` in the run directory. The suite therefore never touches the developer's data directory on any platform, including macOS, where `XDG_DATA_HOME` does not apply. Shipping builds read no test variable.
 
@@ -159,9 +159,70 @@ Spec Files:	 6 passed, 1 failed, 7 total (100% completed) in 00:00:21
 
 The full-suite hook run on the head commit is recorded in the pull request (`Test scope:` line).
 
+## Cubic round 1
+
+- **A failed refill now runs again.** `refill_before_open` writes `journal-refill.pending` to the data directory before it recreates the store, and removes it only after a successful refill. A refill that failed after creating `filesquid.sqlite` therefore runs again at the next launch (`a_failed_refill_runs_again_at_the_next_launch`).
+- **No-follow open.** `SqliteJournal::open` now resolves the folders once and opens the file with `SQLITE_OPEN_NOFOLLOW`, like the other operational stores. A symbolic link put in place of `filesquid.sqlite` is refused, for the refill and for the monitor.
+- **Stricter refill and root checks.** The refill counts a sealed entry without an ID as unreadable instead of appending it under a new ID. A segment path counts toward the ID reservation only in its exact canonical form, two 20-digit IDs with `first <= through` (in-module test `only_canonical_ordered_segment_paths_count`). A non-empty `journal.ocfl/` must pass `StorageRoot::open` (hierarchy, declaration, Git guard) before use.
+- **Library sealing opens earlier.** `serve` now opens a library for sealing before it attaches the folder, which narrows the window in which an hourly seal can put that library's entries into the installation's object. An entry sealed into both objects is still restored only once, because every restore de-duplicates by journal ID.
+- **Stronger checks.** The integration test and the BDD step compare whole entries, not only the ID, operation and time. The refill spec asserts exactly one `journal.refill`. The packaged quit waits for eight refused connections in a row, about two seconds; a timeout or a slow answer never counts as the exit. The native refill test drops the monitor before deleting the store.
+
+```text
+running 22 tests
+test a_preset_id_repeating_a_held_client_event_id_answers_the_holder ... ok
+test a_client_event_id_that_is_not_opaque_is_dropped_and_its_entry_kept ... ok
+test an_older_journal_gains_the_client_event_id_column_on_open ... ok
+test both_stores_assign_ids_before_the_entries_are_written ... ok
+test an_older_journal_gains_the_linkage_columns_on_open ... ok
+test append_then_query_returns_entries_in_order_with_ids ... ok
+test both_stores_filter_by_library_object_and_operation_id ... ok
+test both_stores_store_each_client_event_id_once ... ok
+test both_stores_keep_the_operation_id_and_object_reference ... ok
+test client_event_de_duplication_survives_a_restart ... ok
+test entries_serialize_rfc3339_utc_time_and_lowercase_enums ... ok
+test descending_queries_page_newest_first ... ok
+test log_file_names_match_the_original_suffix_rule ... ok
+test opaque_identifiers_are_kept ... ok
+test domain_operations_are_journaled_in_the_callers_transaction ... ok
+test opening_creates_the_database_and_writes_no_log_files ... ok
+test filters_and_cursor_paging ... ok
+test identifiers_that_are_not_opaque_are_redacted_by_both_stores ... ok
+test reserving_through_an_id_makes_new_ids_greater ... ok
+test the_sqlite_journal_and_its_wal_are_owner_only ... ok
+test sqlite_journal_is_append_only ... ok
+test retention_keeps_everything_by_default_and_journals_its_own_deletions ... ok
+test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+running 3 tests
+test a_data_directory_without_a_journal_object_restores_nothing ... ok
+test host_events_are_sealed_into_the_installation_object_in_the_data_directory ... ok
+test a_lost_store_is_refilled_from_the_sealed_segments_once_under_the_same_ids ... ok
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+running 1 test
+test journal_objects::tests::only_canonical_ordered_segment_paths_count ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 0.00s
+running 5 tests
+test the_close_seal_seals_what_is_pending ... ok
+test a_failed_refill_runs_again_at_the_next_launch ... ok
+test a_served_library_is_sealed_into_its_own_root_and_restored_by_its_rebuild ... ok
+test a_launch_catches_up_a_missed_seal_and_refills_a_lost_store ... ok
+test the_hourly_seal_runs_without_a_call_and_ends_with_the_app ... ok
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.42s
+$ cargo test -p filesquid-desktop --features test-webdriver --locked --test features -- --name "seal|hourly|Closing the app|deleted database|served library"
+5 scenarios (5 passed)
+21 steps (21 passed)
+$ (cd crates/desktop/tests/e2e && xvfb-run -a npx wdio run ./wdio.conf.mjs --spec specs/journal-rebuild-1-close.e2e.mjs --spec specs/journal-rebuild-2-refill.e2e.mjs)
+[0-0] PASSED in undefined - file:///specs/journal-rebuild-1-close.e2e.mjs
+[0-1] PASSED in undefined - file:///specs/journal-rebuild-2-refill.e2e.mjs
+[WebKitGTK 605.1.15 linux #0-0]    ✓ has journaled the app's start under a journal ID
+[WebKitGTK 605.1.15 linux #0-0] 1 passing (77ms)
+[WebKitGTK 605.1.15 linux #0-1]    ✓ refills the new store from the sealed journal under the same IDs
+[WebKitGTK 605.1.15 linux #0-1] 1 passing (260ms)
+Spec Files:	 2 passed, 2 total (100% completed) in 00:00:06  
+```
+
 ## Sync Execution Report
 
-- `apps/filesquid/crates/desktop/resources/srs.md` DE-S-013 gains desktop specifics: the refill runs before the monitor opens the store, then reserves the sealed IDs and journals `journal.refill`; each library's journal object lives in its own root; the app close is each library's close; the close-time seal waits at most 30 s.
+- `apps/filesquid/crates/desktop/resources/srs.md` DE-S-013 gains desktop specifics: both restores target a fresh, host-injected journal store; a refill stays marked pending until it succeeds; runs with work to seal are registered and journaled; the refill runs before the monitor opens the store, then reserves the sealed IDs and journals `journal.refill`; each library's journal object lives in its own root; the app close is each library's close; the close-time seal waits at most 30 s.
 - Root `README.md`: a "Sealed journal on the desktop" item under "View logs", and `FILESQUID_E2E_DATA_DIR` and the journal-rebuild specs in the packaged-window section.
 - No PRD, product-vision, ADR or API contract change: the behaviour is the one ADR 033 Decision 7, API-S-032 and DE-S-013 already require.
 

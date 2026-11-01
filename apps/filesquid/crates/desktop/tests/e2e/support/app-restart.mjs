@@ -36,19 +36,39 @@ function driverBase() {
   return `http://127.0.0.1:${Number(process.env.TAURI_WEBDRIVER_PORT ?? "4445")}`;
 }
 
+/** Consecutive refused connections that confirm the app has quit (about two seconds). */
+const REFUSALS_TO_QUIT = 8;
+
 /**
- * Wait, at most `limit` milliseconds, until the app's embedded WebDriver no longer answers,
- * which means the app has quit.
+ * Whether the embedded WebDriver refused the connection outright: nothing listens on its port.
+ * A timeout or any other failure is not a refusal, since a quitting app may still be sealing.
+ *
+ * @returns `true` only for a refused connection.
+ */
+async function refused() {
+  try {
+    await fetch(`${driverBase()}/status`, { signal: AbortSignal.timeout(5000) });
+    return false;
+  } catch (error) {
+    return error?.cause?.code === "ECONNREFUSED";
+  }
+}
+
+/**
+ * Wait, at most `limit` milliseconds, until the app's embedded WebDriver refuses connections
+ * `REFUSALS_TO_QUIT` times in a row, 250 ms apart: the app has quit. A slow answer, a
+ * timeout or a single refusal never counts as the exit, so the store is never deleted while
+ * the app is still sealing its journal at close (which may take up to 30 s).
  *
  * @param limit The longest wait, in milliseconds.
  * @returns Whether the app quit in time.
  */
 export async function waitForQuit(limit) {
   const deadline = Date.now() + limit;
+  let streak = 0;
   while (Date.now() < deadline) {
-    try {
-      await fetch(`${driverBase()}/status`, { signal: AbortSignal.timeout(1000) });
-    } catch {
+    streak = (await refused()) ? streak + 1 : 0;
+    if (streak >= REFUSALS_TO_QUIT) {
       return true;
     }
     await new Promise((resolve) => setTimeout(resolve, 250));

@@ -12,8 +12,9 @@
 //!   desktop has no separate library close: a library stays open until the app exits, so this
 //!   seal is also the close-time seal of every open library.
 //!
-//! Each run is a registered `journal.seal` process and journals `journal.seal` per scope
-//! (API-S-032). Host events go into the installation's journal object at
+//! Each run with something to seal is a registered `journal.seal` process and journals
+//! `journal.seal` per scope; a run that finds only seal bookkeeping commits and journals
+//! nothing (API-S-032). Host events go into the installation's journal object at
 //! `<data dir>/journal.ocfl/`; a library's events into its own storage root, opened for
 //! sealing when the library is served ([`open_library`]). The service is the source of the
 //! `journal_unsealed` health reason.
@@ -182,27 +183,48 @@ pub async fn seal_before_close(sealing: &DesktopSealing, limit: Duration) -> Opt
     }
 }
 
-/// When the launch found no operational store (`store_lost`) but the data directory holds the
-/// installation's sealed journal, recreate the store and refill it from the sealed segments
-/// under their own journal IDs, reserving the ids the seals read ([`restore_installation_journal`]).
-/// It runs before the host monitor opens the store, so no entry of this launch can take an id
-/// still to be restored. `None` when there was nothing to refill. Filesystem and database I/O.
+/// The marker of a refill that has not finished, in the data directory. It is written before
+/// the refill recreates the store and removed only when the refill succeeded, so a refill that
+/// failed (leaving a new, incomplete `filesquid.sqlite` behind) runs again at the next launch.
+pub const REFILL_PENDING_FILE: &str = "journal-refill.pending";
+
+/// When the launch found no operational store (`store_lost`), or an earlier refill did not
+/// finish ([`REFILL_PENDING_FILE`]), and the data directory holds the installation's sealed
+/// journal: recreate the store and refill it from the sealed segments under their own journal
+/// IDs, reserving the ids the seals read ([`restore_installation_journal`]). It runs before
+/// the host monitor opens the store, so no entry of this launch can take an id still to be
+/// restored; a second run over a partly refilled store adds only what is missing. `None` when
+/// there was nothing to refill. Filesystem and database I/O.
 pub async fn refill_before_open(
     data_dir: &Path,
     store_lost: bool,
 ) -> Option<Result<Refill, String>> {
-    if !store_lost || !data_dir.join(INSTALLATION_JOURNAL_DIR).is_dir() {
+    let marker = data_dir.join(REFILL_PENDING_FILE);
+    let pending = store_lost || marker.is_file();
+    if !pending || !data_dir.join(INSTALLATION_JOURNAL_DIR).is_dir() {
         return None;
     }
-    let store = match SqliteJournal::open(&data_dir.join(JOURNAL_FILE), "filesquid-desktop") {
-        Ok(store) => store,
-        Err(_) => {
-            return Some(Err(
-                "the operational store could not be recreated".to_string()
-            ))
+    if std::fs::write(&marker, b"").is_err() {
+        return Some(Err("the refill could not be marked as pending".to_string()));
+    }
+    let refilled = refill_store(data_dir).await;
+    if refilled.is_ok() {
+        if let Err(err) = std::fs::remove_file(&marker) {
+            tracing::warn!(error = %err.kind(), "the finished refill's marker could not be removed");
         }
-    };
-    Some(restore_installation_journal(data_dir, &store).await)
+    }
+    Some(refilled)
+}
+
+/// Recreate (or open) the operational store of `data_dir` and refill it from the sealed
+/// journal. Filesystem and database I/O.
+///
+/// # Errors
+/// The store cannot be opened, or the refill failed.
+async fn refill_store(data_dir: &Path) -> Result<Refill, String> {
+    let store = SqliteJournal::open(&data_dir.join(JOURNAL_FILE), "filesquid-desktop")
+        .map_err(|_| "the operational store could not be recreated".to_string())?;
+    restore_installation_journal(data_dir, &store).await
 }
 
 /// Journal the refill [`refill_before_open`] did, as [`REFILL_OPERATION`] `succeeded` or
