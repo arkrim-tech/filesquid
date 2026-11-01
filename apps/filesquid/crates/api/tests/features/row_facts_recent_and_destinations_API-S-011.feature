@@ -36,9 +36,24 @@ Feature: Row facts, the Recent view and destination identifiers
     Then row-facts node "Summer" should carry the collection ID of "Summer"
     And row-facts node of folder "Summer/Trips" should carry the collection ID of "Summer"
 
-  Scenario: A collection or folder node resolves to the destination an upload names
+  Scenario: A collection node resolves to the destination an upload names
+    When row-facts caller asks the destination of the navigation node of collection "Summer"
+    Then row-facts destination should be the library ID of "Family" and the collection ID of "Summer", with no folder
+
+  Scenario: A folder node resolves to its collection and folder
     When row-facts caller asks the destination of the navigation node of folder "Summer/Trips"
     Then row-facts destination should be the library ID of "Family", the collection ID of "Summer" and the folder "Trips"
+
+  Scenario Outline: A node that cannot be read gets the listing's one not_found answer
+    When row-facts caller asks the destination of <node>
+    Then row-facts answer should be the same not_found answer as a navigation listing of an unknown node
+
+    Examples:
+      | node                                    |
+      | an unknown node                         |
+      | a malformed handle                      |
+      | a node the caller may not read          |
+      | a node of a collection that was removed |
 
   Scenario: The Recent view lists the caller's own actions newest first
     Given row-facts caller uploaded "a.txt", then opened "beach.jpg", then renamed "notes.md"
@@ -88,7 +103,7 @@ Feature: Row facts, the Recent view and destination identifiers
   Scenario: A restore with no free untitled collection name carries its sub-code
     Given row-facts fixture: a deleted file whose collection is gone and every "untitled collection" title up to the cap is taken
     When row-facts caller restores it
-    Then row-facts answer should carry sub-code "restore_name_exhausted"
+    Then row-facts answer should be HTTP 409 with sub-code "restore_name_exhausted"
 
   Scenario: The Recent view never shows another caller's actions
     Given row-facts second caller opened "beach.jpg"
