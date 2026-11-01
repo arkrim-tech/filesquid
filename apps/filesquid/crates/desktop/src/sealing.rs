@@ -28,11 +28,8 @@
 use filesquid_api::journal::seal::{SealConfig, SealReport, SealService, SEAL_INTERVAL_MS};
 use filesquid_api::journal::{JournalEntry, Level, Outcome};
 use filesquid_core::{InstallationId, LibraryId};
-use filesquid_native::journal_objects::{
-    library_journal, open_installation_journal, restore_installation_journal, Refill,
-    INSTALLATION_JOURNAL_DIR,
-};
-use filesquid_native::{HostMonitor, HostRoot, SqliteJournal, JOURNAL_FILE};
+use filesquid_native::journal_objects::{self, library_journal, open_installation_journal, Refill};
+use filesquid_native::{HostMonitor, HostRoot};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -183,48 +180,19 @@ pub async fn seal_before_close(sealing: &DesktopSealing, limit: Duration) -> Opt
     }
 }
 
-/// The marker of a refill that has not finished, in the data directory. It is written before
-/// the refill recreates the store and removed only when the refill succeeded, so a refill that
-/// failed (leaving a new, incomplete `filesquid.sqlite` behind) runs again at the next launch.
-pub const REFILL_PENDING_FILE: &str = "journal-refill.pending";
+/// The marker of a refill that has not finished ([`journal_objects::REFILL_PENDING_FILE`]).
+pub use filesquid_native::journal_objects::REFILL_PENDING_FILE;
 
 /// When the launch found no operational store (`store_lost`), or an earlier refill did not
-/// finish ([`REFILL_PENDING_FILE`]), and the data directory holds the installation's sealed
-/// journal: recreate the store and refill it from the sealed segments under their own journal
-/// IDs, reserving the ids the seals read ([`restore_installation_journal`]). It runs before
-/// the host monitor opens the store, so no entry of this launch can take an id still to be
-/// restored; a second run over a partly refilled store adds only what is missing. `None` when
-/// there was nothing to refill. Filesystem and database I/O.
+/// finish, recreate the store and refill it from the installation's sealed journal before the
+/// host monitor opens it, so no entry of this launch can take an id still to be restored
+/// ([`journal_objects::refill_lost_store`], which keeps the refill marked pending until it
+/// succeeds). `None` when there was nothing to refill. Filesystem and database I/O.
 pub async fn refill_before_open(
     data_dir: &Path,
     store_lost: bool,
 ) -> Option<Result<Refill, String>> {
-    let marker = data_dir.join(REFILL_PENDING_FILE);
-    let pending = store_lost || marker.is_file();
-    if !pending || !data_dir.join(INSTALLATION_JOURNAL_DIR).is_dir() {
-        return None;
-    }
-    if std::fs::write(&marker, b"").is_err() {
-        return Some(Err("the refill could not be marked as pending".to_string()));
-    }
-    let refilled = refill_store(data_dir).await;
-    if refilled.is_ok() {
-        if let Err(err) = std::fs::remove_file(&marker) {
-            tracing::warn!(error = %err.kind(), "the finished refill's marker could not be removed");
-        }
-    }
-    Some(refilled)
-}
-
-/// Recreate (or open) the operational store of `data_dir` and refill it from the sealed
-/// journal. Filesystem and database I/O.
-///
-/// # Errors
-/// The store cannot be opened, or the refill failed.
-async fn refill_store(data_dir: &Path) -> Result<Refill, String> {
-    let store = SqliteJournal::open(&data_dir.join(JOURNAL_FILE), "filesquid-desktop")
-        .map_err(|_| "the operational store could not be recreated".to_string())?;
-    restore_installation_journal(data_dir, &store).await
+    journal_objects::refill_lost_store(data_dir, store_lost).await
 }
 
 /// Journal the refill [`refill_before_open`] did, as [`REFILL_OPERATION`] `succeeded` or
