@@ -53,6 +53,22 @@ pub struct FileEntry {
     pub file: File,
     /// Hidden flag and recoverable deletion.
     pub state: FileState,
+    /// The title its home collection had when that collection was deleted, kept so the
+    /// Recently deleted view still names it ("Was in", mockup 16); `None` while the home
+    /// collection exists (ADR 041 Decisions 8 and 9).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub removed_home_title: Option<String>,
+}
+
+impl FileEntry {
+    /// A file with `state` whose home collection exists. Pure.
+    pub fn new(file: File, state: FileState) -> Self {
+        Self {
+            file,
+            state,
+            removed_home_title: None,
+        }
+    }
 }
 
 /// Position of an item in a listing: ascending `order`, then ascending `id`.
@@ -89,10 +105,6 @@ pub enum FileScope {
         /// The virtual collection.
         virtual_collection_id: VirtualCollectionId,
     },
-    /// Files that are not deleted and whose collection was removed (`is:unfiled` of F-063).
-    /// A collection's deletion deletes its files in place (ADR 041 Decision 8), so they show
-    /// in the deleted view of their library, never here.
-    Unfiled,
 }
 
 /// A file listing: library, scope and view.
@@ -127,14 +139,40 @@ pub enum CatalogChange {
     RemoveCollection(CollectionId),
     /// Mark every file whose home is the collection and that is not already deleted as
     /// recoverably deleted with `deletion`; a file already deleted keeps its earlier times.
-    /// Nothing is moved: each file keeps its home collection identifier and logical path
-    /// (owner decision 2026-10-22, ADR 041 Decision 8). Only the catalog knows which files
-    /// these are, so a host adds their snapshot entities to the commit's version.
+    /// Every file of the collection, deleted before or now, keeps `title` as its
+    /// [`FileEntry::removed_home_title`]. Nothing is moved: each file keeps its home
+    /// collection identifier and logical path (owner decision 2026-10-22, ADR 041 Decision
+    /// 8). Only the catalog knows which files these are, so a host adds their snapshot
+    /// entities to the commit's version.
     DeleteCollectionFiles {
         /// The collection whose files are deleted.
         collection_id: CollectionId,
         /// The deletion record of the files it newly deletes.
         deletion: Deletion,
+        /// The collection's title, kept by its files.
+        title: String,
+    },
+    /// Give a file whose home collection is gone the home `collection_id` (a collection the
+    /// same commit creates) at its own logical path, clearing its removed home title; the
+    /// restore of ADR 041 Decision 9. A host refuses the commit when that path is taken.
+    RehomeFile {
+        /// The file.
+        file_id: FileId,
+        /// Its new home collection.
+        collection_id: CollectionId,
+    },
+    /// Set or clear the library's own retention period, in days (ADR 041 Decision 10); a
+    /// host keeps it in the library's collection snapshot.
+    SetRetention(Option<u32>),
+    /// Expire a deleted file whose `purge_after` passed (ADR 041 Decision 11): remove it and
+    /// its memberships from the catalog and its entity from the snapshot, and record, in the
+    /// same transaction, its object work under `mode` and the commit's operation ID for the
+    /// host's [`super::ObjectPurger`].
+    ExpireFile {
+        /// The expired file.
+        file_id: FileId,
+        /// What its object becomes.
+        mode: super::policy::ExpiryMode,
     },
     /// Store a virtual collection, replacing one with the same identifier.
     PutVirtualCollection(VirtualCollection),
@@ -186,6 +224,9 @@ pub struct CatalogCommit {
     /// deleted keeps its earlier times, which the deleted view reports per file; `None` when
     /// the command newly deleted no file.
     pub deletion: Option<Deletion>,
+    /// The collections a restore created (ADR 041 Decision 9), kept in the receipt so a
+    /// replay names them again; empty for every other command.
+    pub restored_into: Vec<super::command::RestoredInto>,
 }
 
 /// What a committed operation answered; a replay of its operation ID answers it again.
@@ -201,6 +242,8 @@ pub struct CommitReceipt {
     /// Deletion and purge-after times of the files the command newly deleted, if any (see
     /// [`CatalogCommit::deletion`]).
     pub deletion: Option<Deletion>,
+    /// The collections a restore created (see [`CatalogCommit::restored_into`]).
+    pub restored_into: Vec<super::command::RestoredInto>,
 }
 
 /// A failure of the injected catalog. Details go to stdout only.

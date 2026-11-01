@@ -181,12 +181,16 @@ async fn every_answered_operator_narrows_the_results() {
 }
 
 #[tokio::test]
-async fn unfiled_files_and_folder_rows_are_searchable() {
+async fn is_unfiled_is_retired_and_folder_rows_are_searchable() {
     let (rig, drive) = rig().await;
     library(&rig, &drive).await;
     let loose = add(&rig, &drive, "loose.txt", "text/plain", b"x").await;
-    drive.unfiled_file(&loose);
-    assert_eq!(found(&rig, "is:unfiled", "").await, ["loose.txt"]);
+    drive.outside_file(&loose);
+    assert_refused(
+        &search(&rig, "is:unfiled", "").await,
+        400,
+        "invalid_request",
+    );
     assert_eq!(found(&rig, "holi type:folder", "").await, ["Holidays"]);
     assert_eq!(
         found(&rig, "type:folder", "&sort=name").await,

@@ -181,7 +181,11 @@ pub fn search_page(
                 .get(&file.facts.object_id)
                 .copied()
                 .unwrap_or_default();
-            candidates.push(order(file_candidate(file.facts, mine, sort), key, score));
+            candidates.push(order(
+                file_candidate(file.facts, mine, sort, None),
+                key,
+                score,
+            ));
         }
     }
     let direction = request.direction();

@@ -128,6 +128,7 @@ fn rebuild(
     write::index_files(tx, library_id, &files)?;
     for file in &snapshot.files {
         write::set_file_state(tx, file.file.id().as_str(), &file.state)?;
+        write::set_removed_home_title(tx, file.file.id(), file.removed_home_title.as_deref())?;
         if let (true, Some(path)) = (file.is_registered(), &file.path) {
             placement::place(tx, file.file.id(), path)?;
         }
@@ -169,8 +170,8 @@ fn restore_receipts(
     let mut stmt = tx
         .prepare(
             "INSERT OR IGNORE INTO receipts
-             (operation_id, revision, created_id, deleted_at_ms, purge_after_ms)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
+             (operation_id, revision, created_id, deleted_at_ms, purge_after_ms, deletion_cause)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
         )
         .map_err(sql)?;
     for op in operations {
@@ -180,6 +181,7 @@ fn restore_receipts(
             op.created_id,
             op.deletion.map(|d| d.deleted_at_ms),
             op.deletion.map(|d| d.purge_after_ms),
+            super::rows::cause_column(op.deletion),
         ])
         .map_err(sql)?;
     }

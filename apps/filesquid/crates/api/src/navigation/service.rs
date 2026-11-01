@@ -194,9 +194,10 @@ impl NavigationService {
         let mut nodes = Vec::with_capacity(listed.len());
         for child in &listed {
             let has_children = self.has_children(principal, &child.node)?;
+            let named = !matches!(child.node, NodeRef::RecentlyDeleted(_));
             nodes.push(view_of(
                 &child.node,
-                Some(child.name.clone()),
+                named.then(|| child.name.clone()),
                 has_children,
             )?);
         }
@@ -229,7 +230,10 @@ impl NavigationService {
 
     /// True when `principal` may read at least one child of `node`.
     fn has_children(&self, principal: &Principal, node: &NodeRef) -> Result<bool, NavigationError> {
-        if matches!(node, NodeRef::VirtualCollection(_)) {
+        if matches!(
+            node,
+            NodeRef::VirtualCollection(_) | NodeRef::RecentlyDeleted(_)
+        ) {
             return Ok(false);
         }
         let mut after: Option<Position> = None;
@@ -258,6 +262,7 @@ impl NavigationService {
             NodeRef::Library(id) => self.resolve_library(id)?,
             NodeRef::Collection(id) => self.resolve_collection(id)?,
             NodeRef::VirtualCollection(id) => self.resolve_virtual(id)?,
+            NodeRef::RecentlyDeleted(id) => self.resolve_recently_deleted(id)?,
             NodeRef::Folder { scope, path } => self.resolve_folder(scope, path)?,
         };
         for (step, _) in &chain {
@@ -307,6 +312,16 @@ impl NavigationService {
         Ok(chain)
     }
 
+    /// `[repository, recently deleted]`: the repository's one Recently deleted node.
+    fn resolve_recently_deleted(
+        &self,
+        id: &RepositoryId,
+    ) -> Result<Vec<(NodeRef, Option<String>)>, NavigationError> {
+        let mut chain = self.resolve_repository(id)?;
+        chain.push((NodeRef::RecentlyDeleted(id.clone()), None));
+        Ok(chain)
+    }
+
     /// `[repository, library, virtual collection]`.
     fn resolve_virtual(
         &self,
@@ -331,7 +346,6 @@ impl NavigationService {
     ) -> Result<Vec<(NodeRef, Option<String>)>, NavigationError> {
         let mut chain = match scope {
             FolderScope::Collection(id) => self.resolve_collection(id)?,
-            FolderScope::Unfiled(id) => self.resolve_library(id)?,
         };
         if !self.folders.folder_exists(scope, path)? {
             return Err(NavigationError::NotFound);
@@ -467,6 +481,9 @@ impl NavigationService {
                     })
                     .collect())
             }
+            (NodeRef::Repository(id), Rank::RecentlyDeleted) => {
+                Ok(recently_deleted_child(id, after))
+            }
             (_, Rank::Folder) => self.fetch_folders(parent, after, want),
             _ => Ok(Vec::new()),
         }
@@ -480,7 +497,6 @@ impl NavigationService {
         want: usize,
     ) -> Result<Vec<Child>, NavigationError> {
         let (scope, base) = match parent {
-            NodeRef::Library(id) => (FolderScope::Unfiled(id.clone()), String::new()),
             NodeRef::Collection(id) => (FolderScope::Collection(id.clone()), String::new()),
             NodeRef::Folder { scope, path } => (scope.clone(), path.clone()),
             _ => return Ok(Vec::new()),
@@ -534,11 +550,27 @@ impl NavigationService {
 /// The kinds of child a `parent` lists, in the fixed order of the listing.
 fn child_ranks(parent: &NodeRef) -> &'static [Rank] {
     match parent {
-        NodeRef::Repository(_) => &[Rank::Library],
-        NodeRef::Library(_) => &[Rank::Collection, Rank::VirtualCollection, Rank::Folder],
+        NodeRef::Repository(_) => &[Rank::Library, Rank::RecentlyDeleted],
+        NodeRef::Library(_) => &[Rank::Collection, Rank::VirtualCollection],
         NodeRef::Collection(_) | NodeRef::Folder { .. } => &[Rank::Folder],
-        NodeRef::VirtualCollection(_) => &[],
+        NodeRef::VirtualCollection(_) | NodeRef::RecentlyDeleted(_) => &[],
     }
+}
+
+/// The repository's one Recently deleted child, unless the page already passed it: one node,
+/// whose `name` is `null` so the UI shows its label (API-S-021).
+fn recently_deleted_child(repository: &RepositoryId, after: Option<&Position>) -> Vec<Child> {
+    if after.is_some() {
+        return Vec::new();
+    }
+    vec![Child {
+        node: NodeRef::RecentlyDeleted(repository.clone()),
+        name: String::new(),
+        position: Position {
+            rank: Rank::RecentlyDeleted,
+            key: "recently_deleted".to_string(),
+        },
+    }]
 }
 
 /// A catalog row as a child.
@@ -602,6 +634,7 @@ fn kind_of(node: &NodeRef) -> NodeKind {
         NodeRef::Library(_) => NodeKind::Library,
         NodeRef::Collection(_) => NodeKind::Collection,
         NodeRef::VirtualCollection(_) => NodeKind::VirtualCollection,
+        NodeRef::RecentlyDeleted(_) => NodeKind::RecentlyDeleted,
         NodeRef::Folder { .. } => NodeKind::Folder,
     }
 }

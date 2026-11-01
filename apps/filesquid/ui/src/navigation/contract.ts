@@ -25,9 +25,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** True for a name the kind allows: a string, or `null` only for a repository. */
+/** The kinds whose `name` may be `null`, shown with their kind's label. */
+const UNNAMED_KINDS: readonly NavigationKind[] = ["repository", "recently_deleted"];
+
+/** True for a name the kind allows: a string, or `null` only for an unnamed kind. */
 function validName(kind: NavigationKind, name: unknown): boolean {
-  return typeof name === "string" || (name === null && kind === "repository");
+  return typeof name === "string" || (name === null && UNNAMED_KINDS.includes(kind));
 }
 
 /**

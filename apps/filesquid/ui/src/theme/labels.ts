@@ -401,6 +401,7 @@ export const REQUIRED_LABEL_KEYS = [
   "provenanceKindScrub",
   "provenanceKindPublish",
   "provenanceKindBackfill",
+  "provenanceKindTombstone",
   "provenanceKindUnknown",
   "versionsBack",
   "versionsCountOne",

@@ -49,6 +49,7 @@ fn every_operation_kind_has_a_stable_token() {
         (OperationKind::Scrub, "scrub"),
         (OperationKind::Publish, "publish"),
         (OperationKind::Backfill, "backfill"),
+        (OperationKind::Tombstone, "tombstone"),
         (OperationKind::Unknown, "unknown"),
     ];
     assert_eq!(OperationKind::ALL.len(), expected.len());

@@ -21,14 +21,15 @@ export const NAVIGATION_KINDS: readonly NavigationKind[] = [
   "library",
   "collection",
   "virtual_collection",
+  "recently_deleted",
   "folder",
 ];
 
 /**
  * One node of the navigation tree, as the API lists it (generated from the contract): an
  * opaque handle of at most 512 bytes that is never parsed and never a path, its `kind`, its
- * `name` (`null` for a repository without one, whose label is shown) and `has_children` (true
- * when the caller may read at least one child).
+ * `name` (`null` for a repository without one and for Recently deleted, whose label is shown)
+ * and `has_children` (true when the caller may read at least one child).
  */
 export type NavigationNode = Readonly<components["schemas"]["NavigationNode"]>;
 
@@ -130,6 +131,7 @@ export const KIND_LABEL: Readonly<Record<NavigationKind, LabelKey>> = {
   library: "library",
   collection: "collection",
   virtual_collection: "virtualCollection",
+  recently_deleted: "navigationRecentlyDeleted",
   folder: "folder",
 };
 

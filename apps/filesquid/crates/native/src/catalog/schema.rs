@@ -7,7 +7,8 @@
 //! virtual-collection memberships, files with their hide and delete state, operation
 //! receipts, pending intent and the journal outbox; version 2 the snapshot version the index
 //! reflects; version 3 each file's collection logical path and object, the library's own
-//! retention and the folder the index was built from.
+//! retention and the folder the index was built from; version 5 each file's deletion cause and
+//! removed home title, and the pending object work of expired files (Task API-F2.15).
 
 use super::{failed, CATALOG_FILE_EXTENSION, CATALOG_SCHEMA_VERSION};
 use crate::owner_only::{create_owner_only, resolve_folders};
@@ -143,11 +144,29 @@ CREATE TABLE IF NOT EXISTS reserved_files (
 ";
 
 /// Every migration, by the schema version it produces, applied in order in one transaction.
-const MIGRATIONS: [(i64, &str); 4] = [
+/// Version 5 (Task API-F2.15): how each file was deleted, the title its home collection had
+/// when that collection was deleted, the cause kept by a receipt, and the purges whose object
+/// work (deleting the object, or rewriting it as a tombstone) is still to do.
+const SCHEMA_V5: &str = "
+ALTER TABLE files ADD COLUMN deletion_cause TEXT;
+ALTER TABLE files ADD COLUMN removed_home_title TEXT;
+ALTER TABLE receipts ADD COLUMN deletion_cause TEXT;
+ALTER TABLE receipts ADD COLUMN restored_into TEXT;
+CREATE TABLE IF NOT EXISTS pending_purges (
+    file_id TEXT PRIMARY KEY,
+    operation_id TEXT NOT NULL,
+    mode TEXT NOT NULL,
+    recorded_at_ms INTEGER NOT NULL,
+    attempts INTEGER NOT NULL DEFAULT 0
+);
+";
+
+const MIGRATIONS: [(i64, &str); 5] = [
     (1, SCHEMA_V1),
     (2, SCHEMA_V2),
     (3, SCHEMA_V3),
     (4, SCHEMA_V4),
+    (5, SCHEMA_V5),
 ];
 
 /// The catalog file name of `library_id`: `<uuid>.sqlite`, or `None` when the identifier is

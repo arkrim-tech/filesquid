@@ -250,11 +250,6 @@ fn deleting_a_collection_deletes_its_files_in_place() {
         fx.list_files(FileScope::Library, VisibilityFilter::Deleted),
         vec![file.clone()]
     );
-    assert!(
-        fx.list_files(FileScope::Unfiled, VisibilityFilter::Ordinary)
-            .is_empty(),
-        "no file is ever unfiled"
-    );
     let entry = fx.catalog.file(&file).expect("read").expect("file");
     assert_eq!(
         entry.file.home_collection_id(),
@@ -1197,6 +1192,7 @@ fn raw_commit(
         journal: JournalEntry::new("library.test", Outcome::Succeeded),
         created_id: None,
         deletion: None,
+        restored_into: Vec::new(),
     }
 }
 

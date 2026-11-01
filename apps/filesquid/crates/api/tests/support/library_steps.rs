@@ -132,13 +132,17 @@ fn library_lists(w: &mut MonitorWorld, count: usize) {
     );
 }
 
-#[then(expr = "the unfiled listing should show {int} files")]
-fn unfiled_lists(w: &mut MonitorWorld, count: usize) {
-    assert_eq!(
-        w.library
-            .count(FileScope::Unfiled, VisibilityFilter::Ordinary),
-        count
-    );
+#[then(expr = "no file should be listed outside its home collection")]
+fn no_file_outside_home(w: &mut MonitorWorld) {
+    let known: Vec<CollectionId> = w.library.collections.values().cloned().collect();
+    let fx = w.library.fx();
+    for id in fx.list_files(FileScope::Library, VisibilityFilter::Deleted) {
+        let entry = fx.catalog.file(&id).expect("read").expect("file");
+        assert!(
+            known.contains(entry.file.home_collection_id()),
+            "every deleted file keeps its home collection"
+        );
+    }
 }
 
 #[then(expr = "every deleted file should keep its home collection {string}")]
@@ -556,4 +560,252 @@ fn no_journal_entry(w: &mut MonitorWorld) {
     let fx = w.library.fx();
     assert_eq!(fx.catalog.journal_entries().len(), w.library.journal_before);
     assert!(fx.failure_journal().is_empty());
+}
+
+// ---- Task API-F2.15: one Recently deleted, restore, retention and expiry ----
+
+/// The entry of file number `n` of the scenario.
+fn entry_of(w: &MonitorWorld, n: usize) -> filesquid_api::library::FileEntry {
+    let id = &w.library.files[n];
+    w.library
+        .fx()
+        .catalog
+        .file(id)
+        .expect("read")
+        .expect("file")
+}
+
+#[when(expr = "the owner deletes the first file on its own")]
+fn delete_first(w: &mut MonitorWorld) {
+    let fx = w.library.fx();
+    fx.run(LibraryCommand::DeleteFiles {
+        library_id: fx.library(),
+        file_ids: vec![w.library.files[0].clone()],
+    });
+}
+
+#[when(expr = "the owner deletes the second file on its own")]
+fn delete_second(w: &mut MonitorWorld) {
+    let fx = w.library.fx();
+    fx.run(LibraryCommand::DeleteFiles {
+        library_id: fx.library(),
+        file_ids: vec![w.library.files[1].clone()],
+    });
+}
+
+#[then(expr = "the first file should be deleted one by one")]
+fn first_one_by_one(w: &mut MonitorWorld) {
+    let deletion = entry_of(w, 0).state.deletion.expect("deleted");
+    assert_eq!(
+        deletion.cause,
+        filesquid_api::library::DeletionCause::OneByOne
+    );
+}
+
+#[then(expr = "the second file should be deleted with its collection")]
+fn second_with_collection(w: &mut MonitorWorld) {
+    let deletion = entry_of(w, 1).state.deletion.expect("deleted");
+    assert_eq!(
+        deletion.cause,
+        filesquid_api::library::DeletionCause::WithCollection
+    );
+}
+
+#[then(expr = "every deleted file should remember the collection title {string}")]
+fn remember_title(w: &mut MonitorWorld, title: String) {
+    for n in 0..w.library.files.len() {
+        assert_eq!(
+            entry_of(w, n).removed_home_title.as_deref(),
+            Some(title.as_str())
+        );
+    }
+}
+
+#[given(expr = "a collection titled {string} already exists")]
+fn titled_collection(w: &mut MonitorWorld, title: String) {
+    let id = w.library.fx().create_collection(&title);
+    w.library.collections.insert(title, id);
+}
+
+#[given(expr = "the owner deletes the collection {string}")]
+fn given_delete_collection(w: &mut MonitorWorld, title: String) {
+    delete_collection(w, title);
+}
+
+#[given(expr = "every untitled collection title up to 9999 is taken")]
+fn every_title_taken(w: &mut MonitorWorld) {
+    let fx = w.library.fx();
+    for n in 1..=filesquid_api::library::MAX_UNTITLED_TITLES {
+        let title = match n {
+            1 => filesquid_api::library::UNTITLED_COLLECTION_TITLE.to_string(),
+            n => format!("{} {n}", filesquid_api::library::UNTITLED_COLLECTION_TITLE),
+        };
+        let id = CollectionId::new(format!("taken-{n}")).expect("id");
+        let collection = filesquid_core::Collection::new(id, fx.library(), title).expect("c");
+        fx.catalog.insert_collection(collection).expect("insert");
+    }
+}
+
+#[when(expr = "the owner restores the file")]
+fn restore_file(w: &mut MonitorWorld) {
+    let fx = w.library.fx();
+    let result = fx.try_run(LibraryCommand::RestoreFiles {
+        library_id: fx.library(),
+        file_ids: vec![w.library.files[0].clone()],
+    });
+    w.library.results.push(result);
+}
+
+#[then(expr = "the file should be restored into a new collection titled {string}")]
+fn restored_into(w: &mut MonitorWorld, title: String) {
+    let result = w
+        .library
+        .results
+        .last()
+        .expect("a result")
+        .as_ref()
+        .expect("restored");
+    let made = &result.restored_into[0];
+    assert_eq!(made.title, title);
+    assert_eq!(
+        entry_of(w, 0).file.home_collection_id(),
+        &made.collection_id
+    );
+}
+
+#[then(expr = "it should keep its place in its object")]
+fn keeps_place(w: &mut MonitorWorld) {
+    let entry = entry_of(w, 0);
+    assert!(entry.state.deletion.is_none());
+    assert_eq!(
+        entry.file.id(),
+        &w.library.files[0],
+        "the same file and object"
+    );
+}
+
+#[then(expr = "the file should still be deleted")]
+fn still_deleted(w: &mut MonitorWorld) {
+    assert!(entry_of(w, 0).state.deletion.is_some());
+}
+
+#[when(expr = "the owner sets the library's retention to {int} days")]
+fn set_retention(w: &mut MonitorWorld, days: u32) {
+    let fx = w.library.fx();
+    let result = fx.try_run(LibraryCommand::SetLibraryRetention {
+        library_id: fx.library(),
+        retention_days: Some(days),
+    });
+    w.library.results.push(result);
+}
+
+#[then(expr = "the second file should be purged {int} days after deletion")]
+fn second_purged_after(w: &mut MonitorWorld, days: i64) {
+    let deletion = entry_of(w, 1).state.deletion.expect("deleted");
+    assert_eq!(
+        deletion.purge_after_ms - deletion.deleted_at_ms,
+        days * DAY_MS
+    );
+}
+
+/// Run the expiry `days` later under `expiry` and keep its report.
+fn run_expiry(w: &mut MonitorWorld, days: i64, expiry: &str) {
+    use filesquid_api::library::{
+        ExpiryMode, InstallationSettings, MemorySettings, RetentionSettings,
+    };
+    let fx = w.library.fx();
+    let mode = match expiry {
+        "delete_all_version_history" => ExpiryMode::DeleteAllVersionHistory,
+        _ => ExpiryMode::KeepVersionHistory,
+    };
+    let settings = std::sync::Arc::new(MemorySettings::new());
+    let stored = InstallationSettings {
+        default_retention_days: 30,
+        expiry: mode,
+    };
+    let seed =
+        filesquid_api::journal::JournalEntry::new("x", filesquid_api::journal::Outcome::Succeeded);
+    settings.store(&stored, seed).expect("settings");
+    let later = NOW_MS + days * DAY_MS;
+    let service = fx
+        .service
+        .clone()
+        .with_clock(std::sync::Arc::new(move || later))
+        .with_settings(settings);
+    service
+        .expire_library("system", &fx.library(), fx.catalog.as_ref())
+        .expect("expiry");
+}
+
+#[when(expr = "the expiry runs {int} days later under {string}")]
+fn expiry_runs(w: &mut MonitorWorld, days: i64, expiry: String) {
+    run_expiry(w, days, &expiry);
+}
+
+#[given(expr = "the next object purge fails")]
+fn next_purge_fails(w: &mut MonitorWorld) {
+    w.library.fx().catalog.fail_next_purges(1);
+}
+
+#[then(expr = "no file should be listed in the deleted view")]
+fn none_deleted(w: &mut MonitorWorld) {
+    assert_eq!(
+        w.library
+            .count(FileScope::Library, VisibilityFilter::Deleted),
+        0
+    );
+}
+
+/// The in-memory catalog's object purger records each object work it was handed; the
+/// tombstone written to a real OCFL object (its state, retained history and no content) is
+/// asserted over the desktop catalog by `filesquid-native`'s `assert_tombstone` tests.
+#[then(expr = "each expired file's object should become a tombstone")]
+fn objects_tombstoned(w: &mut MonitorWorld) {
+    let catalog = &w.library.fx().catalog;
+    let done = catalog.purged_objects();
+    let mut ids: Vec<&str> = done.iter().map(|(id, _)| id.as_str()).collect();
+    let mut expected: Vec<&str> = w.library.files.iter().map(FileId::as_str).collect();
+    ids.sort();
+    expected.sort();
+    assert_eq!(ids, expected, "one object work per expired file");
+    assert!(done
+        .iter()
+        .all(|(_, mode)| *mode == filesquid_api::library::ExpiryMode::KeepVersionHistory));
+}
+
+#[then(expr = "each expired file's object should be deleted")]
+fn objects_deleted(w: &mut MonitorWorld) {
+    let done = w.library.fx().catalog.purged_objects();
+    assert_eq!(done.len(), w.library.files.len());
+    assert!(done
+        .iter()
+        .all(|(_, mode)| *mode == filesquid_api::library::ExpiryMode::DeleteAllVersionHistory));
+}
+
+#[then(expr = "the purge should be journaled once with opaque IDs only")]
+fn purge_journaled(w: &mut MonitorWorld) {
+    let journal = w.library.fx().catalog.journal_entries();
+    let purges: Vec<_> = journal
+        .iter()
+        .filter(|e| e.operation == filesquid_api::library::EXPIRY_OPERATION)
+        .collect();
+    assert_eq!(purges.len(), 1);
+    let text = serde_json::to_string(purges[0]).expect("json");
+    assert!(!text.contains("Trips"), "{text}");
+}
+
+#[then(expr = "the object purge should be journaled as failed")]
+fn purge_failed(w: &mut MonitorWorld) {
+    let failed = w.library.fx().failure_journal();
+    assert!(failed.iter().any(|e| {
+        e.operation == filesquid_api::library::EXPIRY_OBJECT_OPERATION
+            && e.outcome == filesquid_api::journal::Outcome::Failed
+    }));
+}
+
+#[then(expr = "the command should be refused as {string} with the code {string}")]
+fn refused_with_code(w: &mut MonitorWorld, general: String, code: String) {
+    refused_as(w, general);
+    let last = w.library.results.last().expect("a command ran");
+    assert_eq!(last.as_ref().expect_err("refused").error_code(), code);
 }

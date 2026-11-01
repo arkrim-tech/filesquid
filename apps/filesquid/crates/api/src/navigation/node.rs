@@ -21,14 +21,12 @@ const HANDLE_PREFIX: &str = "n1.";
 /// The base64url alphabet (RFC 4648 section 5).
 const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
-/// Where the files that imply a folder live: one collection, or the files of a library that
-/// belong to no collection.
+/// Where the files that imply a folder live: one collection. Every file has exactly one home
+/// collection, so no other scope exists (ADR 041 Decision 3; the "unfiled" scope is retired).
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum FolderScope {
     /// The files whose home is this collection.
     Collection(CollectionId),
-    /// The unfiled files of this library (their collection was removed).
-    Unfiled(LibraryId),
 }
 
 /// One node of the navigation tree.
@@ -42,6 +40,10 @@ pub enum NodeRef {
     Collection(CollectionId),
     /// A virtual collection (it has no children here).
     VirtualCollection(VirtualCollectionId),
+    /// The repository's one Recently deleted node: a navigation filter over the deleted files
+    /// of every library this host has opened, never a storage location (it has no children
+    /// here; ADR 041 Decision 8 as amended 2026-10-23).
+    RecentlyDeleted(RepositoryId),
     /// A folder implied by logical paths.
     Folder {
         /// Where the files that imply it live.
@@ -68,6 +70,7 @@ impl NodeRef {
             Self::Library(id) => field('l', id.as_str()),
             Self::Collection(id) => field('c', id.as_str()),
             Self::VirtualCollection(id) => field('v', id.as_str()),
+            Self::RecentlyDeleted(id) => field('d', id.as_str()),
             Self::Folder { scope, path } => folder_record(scope, path)?,
         };
         let handle = format!("{HANDLE_PREFIX}{}", base64url(record.as_bytes()));
@@ -97,7 +100,6 @@ fn folder_record(scope: &FolderScope, path: &str) -> Option<String> {
     }
     let scoped = match scope {
         FolderScope::Collection(id) => field('c', id.as_str()),
-        FolderScope::Unfiled(id) => field('u', id.as_str()),
     };
     Some(format!("f{scoped}{path}"))
 }
@@ -131,6 +133,7 @@ fn parse_record(record: &str) -> Option<NodeRef> {
         'v' => VirtualCollectionId::new(id)
             .ok()
             .map(NodeRef::VirtualCollection),
+        'd' => RepositoryId::new(id).ok().map(NodeRef::RecentlyDeleted),
         _ => None,
     }
 }
@@ -142,7 +145,6 @@ fn parse_folder(rest: &str) -> Option<NodeRef> {
     let (id, path) = split_id(chars.as_str())?;
     let scope = match tag {
         'c' => FolderScope::Collection(CollectionId::new(id).ok()?),
-        'u' => FolderScope::Unfiled(LibraryId::new(id).ok()?),
         _ => return None,
     };
     is_logical_path(path).then(|| NodeRef::folder(scope, path))
