@@ -6,7 +6,9 @@
  * breadcrumb; the header's search bar (`<fs-search-bar>`, UI-F2.9) opens `#/search/<query>`,
  * the results in the Drive list; `#/settings` shows the Settings page (Appearance with the theme control, Privacy,
  * About with the API status); `#/monitor` shows the Monitor dashboard, whose W010 note links to the library's repair offer;
- * `#/library` creates, opens or recovers a library and `#/library/<id>` shows it; `#/files/<library>/<object>` shows the
+ * `#/library` creates, opens or recovers a library and `#/library/<id>` shows it (a launch with
+ * no address of its own goes there when the host knows no library, UI-S-034; the rebuild of a
+ * library's catalog is followed on `#/library/<id>/rebuild/<job>` and `.../recover/<job>`); `#/files/<library>/<object>` shows the
  * file browser until the API lists files by navigation node, with the file panel (File info and Versions) for the open file. On the desktop host the client
  * uses the per-launch token; on the server host the Monitor asks for the administrator token,
  * which is kept in memory only, and entering it reconnects the event channel and reads the
@@ -27,6 +29,7 @@ import {
   ClientHistorySource,
   ClientProvenanceSource,
   ClientMetadataSource,
+  ClientRebuildJobSource,
   ClientLibrarySource,
   ClientNavigationSource,
   LibraryRegistry,
@@ -48,6 +51,7 @@ import {
   mountImports,
   clientDestinationLookup,
   memoryTokenStore,
+  redirectToFirstUse,
   resolveLocale,
   sharedNavigationStore,
   type Distribution,
@@ -133,10 +137,13 @@ const libraries = {
   labels,
   source: new ClientLibrarySource(client),
   registry: new LibraryRegistry(),
+  jobs: new ClientRebuildJobSource(client),
   host: client,
   version: pkg.version,
 };
 if (shell) bindLibraryRoute(shell, libraries);
+// First use (UI-S-034): with no library known to the host, the launch goes to the welcome screen.
+void redirectToFirstUse(window, libraries.source);
 if (shell) {
   const monitor = { labels, client, tokens: desktop ? undefined : tokens };
   bindMonitorRoute(shell, { ...monitor, repairHref: libraryRepairHref });

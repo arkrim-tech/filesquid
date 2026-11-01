@@ -36,11 +36,18 @@ async function mount(
   id = "lib-1",
 ) {
   const page = document.createElement("fs-library-detail") as FsLibraryDetail;
-  page.configure({ labels, source, registry, online: () => true });
+  const navigated: string[] = [];
+  page.configure({
+    labels,
+    source,
+    registry,
+    online: () => true,
+    navigate: (hash) => navigated.push(hash),
+  });
   page.libraryId = id;
   document.body.replaceChildren(page);
   await settle();
-  return { page, source, registry };
+  return { page, source, registry, navigated };
 }
 
 const rootOf = (page: FsLibraryDetail) => page.shadowRoot as ShadowRoot;
@@ -55,7 +62,7 @@ describe("<fs-library-detail>", () => {
     registry.remember(LIBRARY);
     const { page } = await mount(new FakeLibrarySource(), registry);
     expect(customElements.get("fs-library-detail")).toBeDefined();
-    expect(text(page, "h2")).toBe(labels.library);
+    expect(text(page, "h2")).toBe("Family archive");
     const facts = [
       ...rootOf(page).querySelectorAll('[data-section="facts"] dt, [data-section="facts"] dd'),
     ].map((node) => node.textContent);
@@ -66,6 +73,8 @@ describe("<fs-library-detail>", () => {
       labels.libraryFactFormatValue.replace("{version}", "1.1"),
       labels.libraryFactObjects,
       "3",
+      labels.libraryFactFreeTerm,
+      "1.3 TB on the disk that holds this library",
     ]);
     expect(rootOf(page).textContent).not.toMatch(/[A-Za-z]:\\|\/Users\/|\/home\/|\/Volumes\//);
     expect(rootOf(page).firstElementChild?.tagName).toBe("STYLE");
@@ -77,19 +86,53 @@ describe("<fs-library-detail>", () => {
     const facts = [...rootOf(page).querySelectorAll('[data-section="facts"] dd')].map(
       (node) => node.textContent,
     );
-    expect(facts).toEqual(["lib-1", labels.libraryFactUnknown, labels.libraryFactUnknown]);
+    expect(facts).toEqual([
+      "lib-1",
+      labels.libraryFactUnknown,
+      labels.libraryFactUnknown,
+      "1.3 TB on the disk that holds this library",
+    ]);
   });
 
-  it("links back to all libraries", async () => {
+  it("shows the library name as its breadcrumb and its title (mockup 41), not a link back", async () => {
     const { page } = await mount();
-    const link = rootOf(page).querySelector("a.all") as HTMLAnchorElement;
-    expect(link.textContent).toBe(labels.libraryStartBack);
-    expect(link.getAttribute("href")).toBe("#/library");
+    expect(text(page, ".crumb")).toBe("Family archive");
+    expect(rootOf(page).querySelector("a.crumb")).toBeNull();
+    expect(text(page, "h2")).toBe("Family archive");
+  });
+
+  it("words the free space from the facts and says so when the disk cannot be read", async () => {
+    const source = new FakeLibrarySource();
+    source.factsAnswer = {
+      library_id: "lib-1",
+      name: "Studio work",
+      free_bytes: null,
+      free_bytes_reason: "volume_unreadable",
+      revision: "1",
+    };
+    const { page } = await mount(source);
+    const values = [...rootOf(page).querySelectorAll('[data-section="facts"] dd')].map(
+      (node) => node.textContent,
+    );
+    expect(values.at(-1)).toBe(labels.libraryFactFreeUnknown);
+    expect(values.join(" ")).not.toMatch(/\d+ ?(B|KB|MB|GB|TB)\b/);
+  });
+
+  it("keeps the generic title and the unknown free space when the facts cannot be read", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const source = new FakeLibrarySource();
+    source.factsAnswer = apiError(404, "not_found");
+    const { page } = await mount(source);
+    expect(text(page, "h2")).toBe(labels.library);
+    const values = [...rootOf(page).querySelectorAll('[data-section="facts"] dd')].map(
+      (node) => node.textContent,
+    );
+    expect(values.at(-1)).toBe(labels.libraryFactFreeUnknown);
   });
 
   it("says that files can be read but not changed (W010) and links to the repair offer", async () => {
     const { page, source } = await mount();
-    expect(source.calls).toEqual(["candidates:lib-1"]);
+    expect(source.calls).toEqual(["facts:lib-1", "candidates:lib-1"]);
     const note = rootOf(page).querySelector('[data-section="repair-note"]');
     expect(note?.querySelector("p")?.textContent).toBe(
       labels.libraryReadOnly.replace("{count}", "2"),
@@ -148,6 +191,7 @@ describe("<fs-library-detail>", () => {
     action(page, "copy").click();
     await settle();
     expect(source.calls).toEqual([
+      "facts:lib-1",
       "candidates:lib-1",
       "choose:copy_destination",
       "revision:lib-1",
@@ -183,7 +227,7 @@ describe("<fs-library-detail>", () => {
     const { page } = await mount(source);
     action(page, "copy").click();
     await settle();
-    expect(source.calls).toEqual(["candidates:lib-1", "choose:copy_destination"]);
+    expect(source.calls).toEqual(["facts:lib-1", "candidates:lib-1", "choose:copy_destination"]);
     expect(text(page, '[data-for="actions"] .status')).toBe(labels.libraryCancelled);
   });
 
@@ -211,6 +255,7 @@ describe("<fs-library-detail>", () => {
     states.dispatchEvent(new CustomEvent("fs-retry", { bubbles: true, composed: true }));
     await settle();
     expect(source.calls).toEqual([
+      "facts:lib-1",
       "candidates:lib-1",
       "choose:copy_destination",
       "revision:lib-1",
@@ -245,18 +290,26 @@ describe("<fs-library-detail>", () => {
     expect(text(page, '[data-for="actions"] .alert')).toBe(labels.libraryConflictCopy);
   });
 
-  it("rebuild: starts the durable job expecting the revision this page kept, keeps Working. while it runs, then reads the candidates again", async () => {
+  it("rebuild: starts the durable job expecting the revision this page kept and follows it on the rebuild page", async () => {
     const registry = new LibraryRegistry();
     registry.remember(LIBRARY);
-    const { page, source } = await mount(new FakeLibrarySource(), registry);
+    const { page, source, navigated } = await mount(new FakeLibrarySource(), registry);
     action(page, "rebuild").click();
     await settle();
-    expect(source.calls).toEqual(["candidates:lib-1", "rebuild:lib-1", "candidates:lib-1"]);
+    expect(source.calls).toEqual(["facts:lib-1", "candidates:lib-1", "rebuild:lib-1"]);
     expect(source.revisions).toEqual(["1"]);
-    const result = rootOf(page).querySelector('[data-result="rebuild"]');
-    expect(result).not.toBeNull();
-    expect(result?.children.length).toBe(0);
-    expect(text(page, '[data-for="actions"] .status')).toBe(labels.libraryWorking);
+    expect(navigated).toEqual(["#/library/lib-1/rebuild/job-1"]);
+  });
+
+  it("rebuild: a refused start is worded and the page stays", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const source = new FakeLibrarySource();
+    source.rebuilt = apiError(409, "conflict");
+    const { page, navigated } = await mount(source);
+    action(page, "rebuild").click();
+    await settle();
+    expect(text(page, '[data-for="actions"] .alert')).toBe(labels.libraryFailed);
+    expect(navigated).toEqual([]);
   });
 
   it.each(["copy", "rebuild"] as const)(
@@ -285,10 +338,9 @@ describe("<fs-library-detail>", () => {
     await settle();
     action(page, "copy").click();
     await settle();
-    expect(source.calls.slice(1)).toEqual([
+    expect(source.calls.slice(2)).toEqual([
       "revision:lib-1",
       "rebuild:lib-1",
-      "candidates:lib-1",
       "choose:copy_destination",
       "revision:lib-1",
       "copy:lib-1:loc-1",
@@ -337,7 +389,7 @@ describe("<fs-library-detail>", () => {
     const { page, source } = await mount();
     page.libraryId = "lib-2";
     await settle();
-    expect(source.calls.at(-1)).toBe("candidates:lib-2");
+    expect(source.calls.slice(-2)).toEqual(["facts:lib-2", "candidates:lib-2"]);
     expect(text(page, '[data-section="facts"] dd')).toBe("lib-2");
   });
 });

@@ -13,11 +13,12 @@ import {
   defineElements,
   libraryRepairHref,
   type FsLibraryDetail,
+  type FsLibraryRebuild,
   type FsLibraryRepair,
   type MonitorClient,
 } from "../../src/index";
 import labels from "../../src/theme/labels.en.json";
-import { FakeLibrarySource } from "../support/library-fakes";
+import { FakeJobSource, FakeLibrarySource } from "../support/library-fakes";
 
 beforeEach(() => defineElements());
 
@@ -37,8 +38,9 @@ function setup() {
   shell.focusMain = () => focused.push("main");
   document.body.replaceChildren(shell);
   const source = new FakeLibrarySource();
-  unbind = bindLibraryRoute(shell, { labels, source, registry: new LibraryRegistry() });
-  return { shell, source, focused };
+  const jobs = new FakeJobSource();
+  unbind = bindLibraryRoute(shell, { labels, source, registry: new LibraryRegistry(), jobs });
+  return { shell, source, focused, jobs };
 }
 
 const tags = (shell: HTMLElement) =>
@@ -116,5 +118,41 @@ describe("bindLibraryRoute", () => {
     const { shell: host } = setup();
     await settle();
     expect(tags(host)).toEqual(["fs-library-repair"]);
+  });
+
+  it("mounts the rebuild page for the recover address, frameless, with its library, job and mode", async () => {
+    window.location.hash = "#/library/lib-1/recover/job-1";
+    const { shell, jobs } = setup();
+    await settle();
+    expect(tags(shell)).toEqual(["fs-library-rebuild"]);
+    const page = shell.firstElementChild as FsLibraryRebuild;
+    expect([page.libraryId, page.jobId, page.mode]).toEqual(["lib-1", "job-1", "recover"]);
+    expect(shell.hasAttribute("frameless")).toBe(true);
+    expect(jobs.calls).toEqual(["job:job-1"]);
+  });
+
+  it("mounts the rebuild page inside the shell for a library's own rebuild, and follows another job", async () => {
+    window.location.hash = "#/library/lib-1/rebuild/job-1";
+    const { shell, jobs } = setup();
+    await settle();
+    expect(shell.hasAttribute("frameless")).toBe(false);
+    const page = shell.firstElementChild as FsLibraryRebuild;
+    expect(page.mode).toBe("rebuild");
+    window.location.hash = "#/library/lib-1/rebuild/job-2";
+    window.dispatchEvent(new HashChangeEvent("hashchange"));
+    await settle();
+    expect(shell.firstElementChild).toBe(page);
+    expect(page.jobId).toBe("job-2");
+    // The page reads the new job, not only carries its address.
+    expect(jobs.calls).toEqual(["job:job-1", "job:job-2"]);
+  });
+
+  it("swaps the rebuild page for the library page on hashchange", async () => {
+    window.location.hash = "#/library/lib-1/rebuild/job-1";
+    const { shell } = setup();
+    window.location.hash = "#/library/lib-1";
+    window.dispatchEvent(new HashChangeEvent("hashchange"));
+    await settle();
+    expect(tags(shell)).toEqual(["fs-library-detail"]);
   });
 });
