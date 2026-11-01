@@ -48,7 +48,7 @@ Scrolling the Large list for 35 seconds shows one stall of 117 to 167 ms in some
 
 ### Gaps recorded, not fixed here
 
-- **Mockup 22.** The preview's top bar (collection, badge, zoom chip) and its filmstrip are built by no task so far; the media frame's radius is the 8 px token, the mockup draws 10 px. The composition spec asserts what is built.
+- **Mockup 22.** The preview's top bar (collection, badge, zoom chip) and its filmstrip are built by no task so far; the media frame's radius is the 8 px token; the mockup drew a 4 px corner (not 10 px, as this line first said) and was redrawn with the 8 px corner on 2026-10-31 (owner decision, verbatim: "accept recommendations"). The composition spec asserts what is built.
 - **The navigation tree cap is 10,000 nodes** (1,000 a page, 50 pages), so the "50,000-album" Large tree shows its first 10,000 and says so.
 - **Proposed limits** for the owner to confirm, all in [UI-S-035](../srs.md): N = 120 warm samples after a warm-up of 20 (100 required), 20 cold loads per profile, p99 <= 200 ms, a 5 s sample timeout, missed frame above 25.05 ms, at most 5% missed, frame p99 <= 50 ms, stalls above 100 ms at most 0.1%, a 12-megapixel original p95 <= 2,000 ms warm and 3,000 ms cold, failure state within 2,000 ms.
 
