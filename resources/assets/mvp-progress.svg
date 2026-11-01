@@ -31,7 +31,7 @@ Task 1.2 [x] 111h: DE-1.2 [x] IO-1.7 [x] DE-1.7 [x] API-F2.16 [x] API-F2.17 [x] 
 Task FS-2.4 [ ] 56h: API-F2.1 [x] UI-F2.7 [x] API-F2.27 [ ] UI-F2.21 [ ]
 Task FS-2.5 [ ] 261h: API-F2.2 [x] API-F2.3 [x] API-F2.5 [x] API-F2.13 [x] API-F2.14 [x] API-F2.15 [x] API-F2.19 [x] API-F2.21 [ ] API-F2.22 [ ] API-F2.24 [ ] API-F2.25 [ ] API-F2.26 [ ] UI-F2.18 [x] UI-F2.8 [x] UI-F2.9 [x] UI-F2.11 [x] UI-F2.19 [ ] UI-F2.20 [ ] UI-F2.17 [ ]
 Task FS-2.8 [ ] 83h: CO-0.11 [x] IO-1.5 [x] PV-0.1 [x] MD-0.9 [x] PV-0.2 [x] API-F2.8 [x] DE-0.10 [x] API-F2.9 [x] API-F2.20 [x] API-F2.23 [ ]
-Task FS-2.9 [ ] 70h: API-F2.10 [x] IO-1.6 [x] API-F2.12 [x] CLI-0.2 [x] API-F2.11 [x] CL-1.9 [x] DE-0.11 [ ] UI-F2.15 [x] UI-F2.16 [ ]
+Task FS-2.9 [ ] 70h: API-F2.10 [x] IO-1.6 [x] API-F2.12 [x] CLI-0.2 [x] API-F2.11 [x] CL-1.9 [x] DE-0.11 [x] UI-F2.15 [x] UI-F2.16 [ ]
 Task FS-3.1 [ ] 16h: DE-F3.1 [ ]
 Task FS-3.4 [ ] 41h: UI-F3.1 [x] UI-F3.4 [ ] DE-F3.2 [ ]
 Task FS-3.9 [ ] 12h:
@@ -87,7 +87,7 @@ Task FS-3.9 [ ] 12h:
     <line class="divider" x1="390.00" y1="28" x2="390.00" y2="46"/>
     <rect x="514.29" y="28" width="35.57" height="18" fill="#1a7f37"><title>Task FS-2.8: 75 of 83 hours</title></rect>
     <line class="divider" x1="514.29" y1="28" x2="514.29" y2="46"/>
-    <rect x="553.81" y="28" width="25.93" height="18" fill="#1a7f37"><title>Task FS-2.9: 54 of 70 hours</title></rect>
+    <rect x="553.81" y="28" width="29.63" height="18" fill="#1a7f37"><title>Task FS-2.9: 62 of 70 hours</title></rect>
     <line class="divider" x1="553.81" y1="28" x2="553.81" y2="46"/>
     <rect x="587.14" y="28" width="0.00" height="18" fill="#1a7f37"><title>Task FS-3.1: 0 of 16 hours</title></rect>
     <line class="divider" x1="587.14" y1="28" x2="587.14" y2="46"/>

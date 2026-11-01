@@ -80,10 +80,18 @@ fn sql_err(err: rusqlite::Error) -> JournalError {
 impl SqliteJournal {
     /// Open (creating if needed) the database at `path` in WAL mode and ensure the schema.
     /// On Unix the file is made owner-only (mode 0600) first; SQLite gives its `-wal` and
-    /// `-shm` files the same mode, so other local users cannot read the journal directly.
+    /// `-shm` files the same mode, so other local users cannot read the journal directly. The
+    /// folders above it are resolved once and the file is never opened through a symbolic link
+    /// (`SQLITE_OPEN_NOFOLLOW`), so a link put in its place is refused, not followed.
     pub fn open(path: &Path, host: impl Into<String>) -> Result<Self, JournalError> {
+        let path = &crate::owner_only::resolve_folders(path)
+            .map_err(|err| JournalError(format!("{}: {err}", path.display())))?;
         restrict_to_owner(path)?;
-        let conn = Connection::open(path).map_err(sql_err)?;
+        let flags = rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE
+            | rusqlite::OpenFlags::SQLITE_OPEN_CREATE
+            | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX
+            | rusqlite::OpenFlags::SQLITE_OPEN_NOFOLLOW;
+        let conn = Connection::open_with_flags(path, flags).map_err(sql_err)?;
         conn.pragma_update(None, "journal_mode", "WAL")
             .map_err(sql_err)?;
         conn.pragma_update(None, "synchronous", "NORMAL")
@@ -106,6 +114,39 @@ impl SqliteJournal {
         entry: &JournalEntry,
     ) -> Result<i64, JournalError> {
         insert(tx, host, entry).map(|(id, _)| id)
+    }
+
+    /// Make every id this store assigns from now on greater than `id`, by advancing the
+    /// table's AUTOINCREMENT counter to at least `id`; a counter already past it is left as it
+    /// is. A store refilled after it was lost (Task DE-0.11) calls it with the highest id its
+    /// sealed journal had read, so a new entry never takes the id of an entry still to be
+    /// restored from a library's files. Database I/O.
+    ///
+    /// # Errors
+    /// [`JournalError`] when the counter cannot be read or written.
+    pub fn reserve_through(&self, id: i64) -> Result<(), JournalError> {
+        let mut conn = self.lock()?;
+        let tx = conn.transaction().map_err(sql_err)?;
+        let sequence: i64 = tx
+            .query_row(
+                "SELECT COALESCE(MAX(seq), 0) FROM sqlite_sequence WHERE name = 'activity_journal'",
+                [],
+                |r| r.get(0),
+            )
+            .map_err(sql_err)?;
+        if sequence < id {
+            tx.execute(
+                "DELETE FROM sqlite_sequence WHERE name = 'activity_journal'",
+                [],
+            )
+            .map_err(sql_err)?;
+            tx.execute(
+                "INSERT INTO sqlite_sequence (name, seq) VALUES ('activity_journal', ?1)",
+                rusqlite::params![id],
+            )
+            .map_err(sql_err)?;
+        }
+        tx.commit().map_err(sql_err)
     }
 
     fn lock(&self) -> Result<std::sync::MutexGuard<'_, Connection>, JournalError> {

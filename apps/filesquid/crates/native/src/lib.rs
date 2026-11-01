@@ -29,7 +29,9 @@
 //!   media workers of DE-0.5 join; and the library routes' host side (Task DE-1.1): the folders
 //!   the owner chose ([`HostLocations`], served by [`open_fs_library_root`]) and the
 //!   persistent repair ledger ([`SqliteRepairLedger`]), and each user's UI preferences
-//!   ([`SqlitePreferences`]). Only `filesquid-desktop` enables it.
+//!   ([`SqlitePreferences`]); and the journal objects the sealing service seals into, with the
+//!   refill of a lost operational store ([`journal_objects`], Task DE-0.11). Only
+//!   `filesquid-desktop` enables it.
 //!
 //! `filesquid-desktop` links this crate with `desktop`. `filesquid-server` MAY link it with its
 //! default features only (journal store, data-directory checks, `HostMonitor`), keeping its
@@ -49,6 +51,8 @@ pub mod host_monitor;
 pub mod import;
 pub mod installation;
 pub mod jobs_sqlite;
+#[cfg(feature = "desktop")]
+pub mod journal_objects;
 pub mod journal_sqlite;
 #[cfg(feature = "desktop")]
 pub mod locations;

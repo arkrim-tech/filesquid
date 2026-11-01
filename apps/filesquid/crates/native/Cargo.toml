@@ -79,6 +79,11 @@ name = "unit_installation"
 path = "tests/unit/installation.rs"
 
 [[test]]
+name = "unit_journal_objects"
+path = "tests/unit/journal_objects.rs"
+required-features = ["desktop"]
+
+[[test]]
 name = "unit_host"
 path = "tests/unit/host.rs"
 
