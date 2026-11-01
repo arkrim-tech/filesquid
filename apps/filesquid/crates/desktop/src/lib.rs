@@ -820,11 +820,7 @@ fn start_monitor(
         .inspect_err(|_| host.stop())?;
     let jobs = app.state::<DesktopJobs>().0.clone();
     install_job_routes(&state, &jobs, runtime, stop.clone()).inspect_err(|_| host.stop())?;
-    let expiry = recently_deleted::ExpiryTask::new(trash, catalog, jobs, &installation);
-    let expiry = recently_deleted::ExpiryHandle::new(expiry, stop.clone());
-    state.install_job_runner(filesquid_api::library::EXPIRY_JOB_KIND, expiry.clone());
-    recently_deleted::spawn_expiry(expiry.clone());
-    app.manage(DesktopExpiry(expiry));
+    start_expiry(app, (trash, catalog, jobs), &installation, &stop);
     app.manage(DesktopInstallation(installation));
     open_test_library(app, &data_dir);
     let forwarder = Arc::new(event_channel::register_forwarder(host.monitor().registry()));
@@ -842,6 +838,27 @@ fn start_monitor(
         sealing,
     });
     Ok(())
+}
+
+/// Start the expiry of deleted files (Task API-F2.15): install it as the `library.expiry` job
+/// runner, run it at launch and then hourly until `stop` (the app's exit), and keep its handle
+/// in Tauri's managed state. Starts a task.
+fn start_expiry(
+    app: &tauri::AppHandle,
+    (trash, catalog, jobs): (
+        Arc<filesquid_api::library::LibraryService>,
+        Arc<SqliteCatalog>,
+        Jobs,
+    ),
+    installation: &InstallationId,
+    stop: &Arc<AtomicBool>,
+) {
+    let expiry = recently_deleted::ExpiryTask::new(trash, catalog, jobs, installation);
+    let expiry = recently_deleted::ExpiryHandle::new(expiry, stop.clone());
+    app.state::<ApiState>()
+        .install_job_runner(filesquid_api::library::EXPIRY_JOB_KIND, expiry.clone());
+    recently_deleted::spawn_expiry(expiry.clone());
+    app.manage(DesktopExpiry(expiry));
 }
 
 /// Start this launch's journal sealing ([`sealing::launch_sealing`]) on `runtime`, bounded by
