@@ -263,12 +263,17 @@ fn clear_marker(marker: &Path) {
 
 /// After a failed refill, move the store's ID counter to [`FAILED_REFILL_FLOOR`], so what the
 /// launch journals until the retry never takes a sealed ID. A store that cannot be opened is
-/// logged (stdout): the host's own open fails the same way. Database I/O.
+/// logged (stdout, a fixed error code only, never the path): the host's own open fails the
+/// same way. Database I/O.
 fn reserve_after_failure(data_dir: &Path) {
     let reserved = SqliteJournal::open(&data_dir.join(crate::JOURNAL_FILE), "filesquid-desktop")
         .and_then(|store| store.reserve_through(FAILED_REFILL_FLOOR));
-    if let Err(err) = reserved {
-        tracing::error!(error = %err.0, "a failed refill could not reserve the sealed IDs");
+    if reserved.is_err() {
+        // The store's error may name its path, so only a fixed code is logged.
+        tracing::error!(
+            error_code = "unavailable",
+            "a failed refill could not reserve the sealed IDs"
+        );
     }
 }
 
