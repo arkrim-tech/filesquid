@@ -6,6 +6,9 @@
 # 2026-10-22, verbatim: "1. confirmed": the name and location are the new library's name and folder.
 # Owner answer 10, verbatim: "yes add library facts to v3". Owner answer 13, verbatim: "Yes, proposed
 # strings are approved".
+# Owner decision 2026-11-02, verbatim: "RE: 5 - the desktop user can see folder name and volume so
+# they can better manage their own private desktop" (API-S-034 Folder and volume names); Task UI-F2.22
+# binds the two Location scenarios below.
 # Executable proof: tests/ui/first-use.test.ts, tests/ui/library-recent.test.ts and
 # tests/e2e/preview/first-use.spec.ts (Playwright against vite build plus vite preview at 1440 x 900,
 # in light and dark).
@@ -53,6 +56,17 @@ Feature: First use creates the first library and its first collection
     Then the library should be created without a name
 
   # Edge cases
+  Scenario: The Location row names the chosen folder and its volume
+    Given the first-use dialog is open
+    When I choose the folder "Family archive" on the volume "Photos SSD" in the host's folder dialog
+    Then the Location row should read "Family archive · on Photos SSD"
+    And no filesystem path or parent folder should be shown
+
+  Scenario: A host that answers no names says only that a folder is chosen
+    Given the first-use dialog is open on a host that answers no folder or volume name
+    When I choose a folder in the host's folder dialog
+    Then the Location row should read "Folder chosen"
+
   Scenario: Create waits for the folder
     Given the first-use dialog is open
     When no folder has been chosen
