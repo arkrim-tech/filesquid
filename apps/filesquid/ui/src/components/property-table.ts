@@ -80,6 +80,12 @@ export interface PropertyTableOptions {
   readonly footerElement?: HTMLElement;
   /** An element at the end of the error state (View in Logs), built on each error. */
   readonly errorExtra?: () => HTMLElement | undefined;
+  /**
+   * False leaves out the filter field and the count eyebrow: the Logs entry detail (UI-F2.16,
+   * mockup 38) lists a handful of rows of one entry with the same rows, copy and states, and no
+   * filter. True when absent.
+   */
+  readonly filterable?: boolean;
 }
 
 /** A row's chip: its words and its tone. */
@@ -124,6 +130,9 @@ const STYLE = `
   .row dt { display: flex; align-items: start; justify-content: space-between; gap: var(--fs-space-2); color: var(--fs-on-surface-muted); }
   .row dt .label, .row dt .key { flex: 1 1 auto; min-width: 0; }
   .row dd .value { display: block; padding-inline-end: var(--fs-row-actions); }
+  .row dd .note { display: block; padding-inline-end: var(--fs-row-actions); color: var(--fs-on-surface-variant); }
+  .row.inline-note dd .value, .row dd .note.inline { display: inline; padding-inline-end: 0; }
+  .row dd .note.inline { margin-inline-start: var(--fs-space-1); color: var(--fs-on-surface-muted); }
   .row:hover dt, .row:focus-within dt { color: var(--fs-on-surface-variant); }
   .row dd { color: var(--fs-on-surface); }
   .row dt .key { font-family: var(--fs-font-mono); font-weight: 500; }
@@ -293,7 +302,8 @@ export class PropertyTable {
     this.body = node("div", "body");
     this.announcer = node("p", "announce");
     this.announcer.setAttribute("role", "status");
-    this.element.append(wrap, this.count, this.body, this.announcer);
+    if (options.filterable !== false) this.element.append(wrap, this.count);
+    this.element.append(this.body, this.announcer);
     if (options.footerElement) {
       options.footerElement.classList.add("footer");
       this.element.append(options.footerElement);
@@ -425,7 +435,12 @@ export class PropertyTable {
     // The value keeps clear of the buttons: 1.5rem each, set as a token-named property.
     element.style.setProperty("--fs-row-actions", `${actions.childElementCount * 1.5}rem`);
     const dd = node("dd", "");
-    dd.append(value, actions);
+    dd.append(value);
+    if (row.note !== undefined) {
+      dd.append(node("span", row.noteInline ? "note inline" : "note", row.note));
+      if (row.noteInline) element.classList.add("inline-note");
+    }
+    dd.append(actions);
     element.append(this.term(row), dd);
     return element;
   }

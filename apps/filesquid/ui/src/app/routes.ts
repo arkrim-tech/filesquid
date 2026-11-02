@@ -13,7 +13,12 @@ import type { FileBrowserOptions, FsFileBrowser } from "../components/fs-file-br
 import type { MonitorOptions, TokenStore } from "../components/fs-monitor";
 import type { FsNavigationView, NavigationViewOptions } from "../components/fs-navigation-view";
 import type { FsSettings, SettingsOptions } from "../components/fs-settings";
-import { locationHash, parseLocationHash, type FileLocation } from "../files/model";
+import {
+  locationHash,
+  parseLocationHash,
+  parseOpenRequest,
+  type FileLocation,
+} from "../files/model";
 import type { HistorySource } from "../files/history-source";
 import type { DownloadSource } from "../files/download-source";
 import type { MetadataSource } from "../files/metadata-source";
@@ -378,6 +383,9 @@ function applyFilesRoute(
     return;
   }
   const browser = existing ?? createFileBrowser(shell, options, win, owner);
+  // A link may ask for one file and its panel tab (`?open=<file>&tab=<tab>`, UI-S-021); the
+  // request goes first, so a folder already shown opens the file at once.
+  browser.openRequest = parseOpenRequest(win.location.hash);
   browser.location = location;
 }
 

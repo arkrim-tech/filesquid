@@ -49,6 +49,13 @@ export interface PropertyRow {
    * Provenance activity matches its operation ID, times, agents and entities).
    */
   readonly searchText?: string;
+  /**
+   * A quieter line after the value, in the secondary colour and not copied (the Logs entry
+   * detail's "Owner agent · this installation" and "· looked up in your library", UI-F2.16).
+   */
+  readonly note?: string;
+  /** True when the note follows the value on its line instead of standing on the next one. */
+  readonly noteInline?: boolean;
 }
 
 /** Most fixity algorithms shown besides the content digest. */

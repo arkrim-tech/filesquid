@@ -8,7 +8,7 @@
  * The journal carries opaque IDs only: a name appears solely where the route resolved it
  * (`display_name`, API-S-031), never from a lookup this module invents.
  */
-import type { JournalEntryView, JournalFilters, Level, Outcome } from "../api/client";
+import type { JournalEntry, JournalEntryView, JournalFilters, Level, Outcome } from "../api/client";
 import { formatLabel, type LabelKey, type LabelTable } from "../theme/labels";
 
 /** The operation of every authorisation refusal; its outcome is `failed` (API-S-031). */
@@ -33,7 +33,7 @@ export const DEFAULT_RANGE: RangeId = "day";
 export type OutcomeFilter = Outcome | "refused";
 
 /** The outcomes in menu order. */
-export const OUTCOME_FILTERS: readonly OutcomeFilter[] = [
+export const OUTCOME_FILTERS: readonly Exclude<OutcomeFilter, "info">[] = [
   "succeeded",
   "failed",
   "refused",
@@ -190,18 +190,15 @@ export function searchedFilter(
   search: SearchKind,
   uuidAs: "operation_id" | "file" = "operation_id",
 ): LogsFilterState {
-  const { file: _file, object: _object, operation_id: _id, ...rest } = filter;
-  const base: LogsFilterState = search.kind === "operation" ? omitOperation(rest) : rest;
+  const base: { -readonly [K in keyof LogsFilterState]: LogsFilterState[K] } = { ...filter };
+  delete base.file;
+  delete base.object;
+  delete base.operation_id;
+  if (search.kind === "operation") delete base.operation;
   if (search.kind === "object") return { ...base, object: search.value };
   if (search.kind === "operation") return { ...base, operation: search.value };
   if (search.kind === "uuid") return { ...base, [uuidAs]: search.value };
   return base;
-}
-
-/** The filter without its operation. */
-function omitOperation(filter: LogsFilterState): LogsFilterState {
-  const { operation: _operation, ...rest } = filter;
-  return rest;
 }
 
 /** The kind of outcome an entry shows. */
@@ -640,6 +637,8 @@ export interface DetailRow {
   readonly mono?: boolean;
   /** A quieter line after the value (the actor's role, "looked up in your library"). */
   readonly note?: string;
+  /** True when the note follows the value on its line. */
+  readonly noteInline?: boolean;
 }
 
 /** What the detail rows need besides the entry. */
@@ -702,7 +701,10 @@ export function detailRows(
     optional("process", labels.logsDetailProcess, entry.process_id, { mono: true }),
     libraryRow(entry, labels, ctx),
     optional("object", labels.logsDetailObject, objectRef(entry), { mono: true, text: objectText }),
-    optional("file", labels.logsDetailFile, entry.display_name, { note: labels.logsLookedUp }),
+    optional("file", labels.logsDetailFile, entry.display_name, {
+      note: labels.logsLookedUp,
+      inline: true,
+    }),
     optional(
       "operation-id",
       labels.logsDetailOperationId,
@@ -731,7 +733,12 @@ function optional(
   key: string,
   label: string,
   value: string | undefined,
-  style: { mono?: boolean; note?: string; text?: (value: string) => string } = {},
+  style: {
+    mono?: boolean;
+    note?: string;
+    inline?: boolean;
+    text?: (value: string) => string;
+  } = {},
 ): DetailRow | undefined {
   if (value === undefined || value === "") return undefined;
   const text = style.text ? style.text(value) : value;
@@ -741,6 +748,7 @@ function optional(
     value: text,
     ...(style.mono ? { mono: true } : {}),
     ...(style.note ? { note: style.note } : {}),
+    ...(style.inline ? { noteInline: true } : {}),
   };
 }
 
@@ -857,13 +865,11 @@ export function exportQuery(
       ...(choice.to !== undefined ? { to: choice.to } : {}),
     };
   }
-  const {
-    order: _order,
-    names: _names,
-    limit: _limit,
-    after: _after,
-    ...query
-  } = journalQuery(filter, now);
+  const query = journalQuery(filter, now);
+  delete query.order;
+  delete query.names;
+  delete query.limit;
+  delete query.after;
   return { ...query, format: choice.format };
 }
 
@@ -907,4 +913,59 @@ export function exportFilterLine(
     ? formatLabel(labels.logsExportCountAtLeast, { count: whole(loaded.count) })
     : entryCountText(labels, loaded.count);
   return formatLabel(labels.logsExportFilterLine, { filter: text, count });
+}
+
+/**
+ * Whether the data of an event is a journal entry: an object with a time, an operation and an
+ * outcome. Pure.
+ *
+ * @param data The `data` of a `journal.entry` event.
+ */
+export function isLiveEntry(data: unknown): data is JournalEntry {
+  if (typeof data !== "object" || data === null) return false;
+  const entry = data as Partial<JournalEntry>;
+  return (
+    typeof entry.time === "string" &&
+    typeof entry.operation === "string" &&
+    typeof entry.outcome === "string" &&
+    Array.isArray(entry.target_ids)
+  );
+}
+
+/**
+ * The entry the list shows for a live event. The event has no PROV-O link, so one is built from
+ * what the entry carries: a failed or refused entry and a single-file download have no activity
+ * (journal-only by definition, UI-S-021), any other entry names its operation and object. The
+ * entry detail reads the entry again for its display name. Pure.
+ *
+ * @param entry The data of a `journal.entry` event.
+ */
+export function liveEntryView(entry: JournalEntry): JournalEntryView {
+  const view = { ...entry, provenance: { journal_only: false } } as JournalEntryView;
+  const kind = outcomeKind(view);
+  const none = kind === "failed" || kind === "refused" || entry.operation === "file.download";
+  return {
+    ...view,
+    provenance: {
+      journal_only: none,
+      ...(none || entry.operation_id === undefined ? {} : { operation_id: entry.operation_id }),
+      ...(none || entry.object_ref === undefined ? {} : { object_ref: entry.object_ref }),
+    },
+  };
+}
+
+/**
+ * The list with newer entries put in front, newest first, each ID once (the entry already
+ * listed wins, because the list read it with its display name). Pure.
+ *
+ * @param list The entries listed, newest first.
+ * @param newer Entries that arrived since.
+ */
+export function mergeNewest(
+  list: readonly JournalEntryView[],
+  newer: readonly JournalEntryView[],
+): JournalEntryView[] {
+  const known = new Set(list.map((entry) => entry.id));
+  const fresh = newer.filter((entry) => entry.id === undefined || !known.has(entry.id));
+  return [...fresh.sort((a, b) => (b.id ?? 0) - (a.id ?? 0)), ...list];
 }

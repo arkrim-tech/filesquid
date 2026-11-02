@@ -137,6 +137,22 @@ export class FsFilePanel extends HTMLElement {
     this.deliver();
   }
 
+  /**
+   * Show the tab registered under `id` (a link that opens the file on its Provenance tab,
+   * UI-S-021). Call it before handing the panel the file, so only the chosen tab reads. Returns
+   * from the Versions view to the tabs. An id no tab was registered under changes nothing.
+   *
+   * @param id The id the tab was registered under.
+   * @returns True when such a tab exists.
+   */
+  selectTab(id: string): boolean {
+    const index = this.tabs.findIndex((tab) => tab.id === id);
+    if (index < 0) return false;
+    this.versionsOpen = false;
+    this.select(index, false);
+    return true;
+  }
+
   /** Whether the Versions view is shown in place of the tabs. */
   get versionsShown(): boolean {
     return this.versionsOpen;

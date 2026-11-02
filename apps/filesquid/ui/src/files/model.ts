@@ -424,7 +424,8 @@ function prefixSegments(prefix: string): string[] {
  */
 export function parseLocationHash(hash: string): FileLocation | undefined {
   if (!hash.startsWith(FILES_ROUTE)) return undefined;
-  const raw = hash.slice(FILES_ROUTE.length).replace(/\/$/, "").split("/");
+  const path = hash.slice(FILES_ROUTE.length).split("?", 1)[0] ?? "";
+  const raw = path.replace(/\/$/, "").split("/");
   let segments: string[];
   try {
     segments = raw.map(decodeURIComponent);
@@ -437,6 +438,58 @@ export function parseLocationHash(hash: string): FileLocation | undefined {
   );
   if (!usable || !library_id || !object_id) return undefined;
   return { library_id, object_id, prefix: folders.join("/") };
+}
+
+/** The tabs of the file panel a link may open. */
+export type PanelTabId = "details" | "description" | "provenance";
+
+/** The tab ids a link may name, in panel order. */
+const PANEL_TABS: readonly PanelTabId[] = ["details", "description", "provenance"];
+
+/** A file a link asks the files route to open, and the panel tab to show. */
+export interface OpenRequest {
+  /** The file's UUID: its own object is `urn:uuid:<file>`, its original in `original/`. */
+  readonly file: string;
+  /** The panel tab to show; the panel's first tab when absent. */
+  readonly tab?: PanelTabId;
+}
+
+/** A lower- or upper-case UUID. */
+const FILE_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * The address that opens one file with its panel (UI-S-021: View provenance and Show file of a
+ * Logs entry): the folder of the file's own original,
+ * `#/files/<library>/urn:uuid:<file>/original`, with `?open=<file>` and optionally `&tab=<tab>`.
+ * Pure.
+ *
+ * @param library_id The library the file is in.
+ * @param file The file's UUID.
+ * @param tab The panel tab to show.
+ * @returns The hash.
+ */
+export function openFileHash(library_id: string, file: string, tab?: PanelTabId): string {
+  const base = locationHash({ library_id, object_id: `urn:uuid:${file}`, prefix: "original" });
+  const query = new URLSearchParams({ open: file });
+  if (tab !== undefined) query.set("tab", tab);
+  return `${base}?${query.toString()}`;
+}
+
+/**
+ * The file a files address asks to open, if it asks for one. A tab that is not one of the panel's
+ * is left out (the panel opens on its first tab); an `open` that is not a UUID asks for nothing.
+ * Pure.
+ *
+ * @param hash A location hash.
+ * @returns The request, or undefined.
+ */
+export function parseOpenRequest(hash: string): OpenRequest | undefined {
+  if (!hash.startsWith(FILES_ROUTE)) return undefined;
+  const params = new URLSearchParams(hash.split("?", 2)[1] ?? "");
+  const file = params.get("open");
+  if (file === null || !FILE_UUID.test(file)) return undefined;
+  const tab = PANEL_TABS.find((id) => id === params.get("tab"));
+  return tab === undefined ? { file } : { file, tab };
 }
 
 /** What a preview shows a file as. */

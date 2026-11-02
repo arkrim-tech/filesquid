@@ -16,7 +16,8 @@
  * - `main` with the default slot; a 40 px footer with the `summary` and `commit-state` slots;
  *   and a 320 px file panel region shown while the `panel` slot is filled, under the header and
  *   beside `main` and the footer (mockups 35 and 26: the header keeps the full width, the footer
- *   ends where the panel starts).
+ *   ends where the panel starts); a slotted panel with `data-panel-wide` (the Logs entry detail,
+ *   mockup 38) widens it to 360 px.
  *
  * The fallback New button dispatches a bubbling, composed `fs-new` event for the menu a later
  * task adds (UI-F2.8); the fallback filter and search fields are the fields those tasks wire.
@@ -48,6 +49,7 @@ import { focusElement, recoverFocus } from "../a11y/focus";
 import { HOST_EVENT, type FsHostIndicator, type HostClient } from "./fs-host-indicator";
 import type { FsSettings } from "./fs-settings";
 import { icon, type IconName } from "./icons";
+import { PANEL_WIDE } from "./panel-slot";
 
 /** The part of the API client the shell needs (injectable in tests): the host descriptor. */
 export type ShellClient = HostClient;
@@ -128,6 +130,7 @@ const STYLE = `
   footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--fs-space-2) var(--fs-space-3); box-sizing: border-box; min-block-size: 2.5rem; padding: var(--fs-space-1) var(--fs-space-3); border-block-start: 1px solid var(--fs-outline); color: var(--fs-on-surface-variant); font-size: var(--fs-font-size-small); }
   footer p { margin: 0; min-width: 0; overflow-wrap: anywhere; }
   aside.panel { box-sizing: border-box; flex: 0 0 auto; display: flex; flex-direction: column; inline-size: 20rem; min-width: 0; min-height: 0; overflow: auto; border-inline-start: 1px solid var(--fs-outline); background: var(--fs-surface-card); }
+  aside.panel[data-wide] { inline-size: 22.5rem; }
   aside.panel ::slotted(*) { flex: 1 0 auto; }
   [hidden] { display: none !important; }
   @media (max-width: 40rem) {
@@ -175,6 +178,8 @@ export class FsAppShell extends HTMLElement {
   private readonly onHashChange = () => this.syncCurrent();
   /** The document holding this shell's reference to the document-level rules, while connected. */
   private styledDocument?: Document;
+  /** Watches slotted panels for `data-panel-wide`, which widens the panel region. */
+  private panelObserver?: MutationObserver;
 
   constructor() {
     super();
@@ -260,6 +265,7 @@ export class FsAppShell extends HTMLElement {
   disconnectedCallback(): void {
     this.theme?.removeEventListener("change", this.onThemeChange);
     window.removeEventListener("hashchange", this.onHashChange);
+    this.panelObserver?.disconnect();
     if (this.styledDocument) releaseDocumentA11yStyle(this.styledDocument);
     this.styledDocument = undefined;
   }
@@ -415,14 +421,27 @@ export class FsAppShell extends HTMLElement {
     return indicator;
   }
 
-  /** The file panel region, shown while something is slotted into it. */
+  /**
+   * The panel region, shown while something is slotted into it and 360 px wide instead of
+   * 320 px while a slotted panel carries `data-panel-wide` (the Logs entry detail, UI-S-032).
+   */
   private panelRegion(): HTMLElement {
     const aside = document.createElement("aside");
     aside.className = "panel";
     aside.hidden = true;
     const slot = namedSlot("panel");
-    slot.addEventListener("slotchange", () => {
+    const sync = () => {
       aside.hidden = slot.assignedNodes().length === 0;
+      const wide = slot.assignedElements().some((el) => el.hasAttribute(PANEL_WIDE));
+      aside.toggleAttribute("data-wide", wide);
+    };
+    slot.addEventListener("slotchange", sync);
+    this.panelObserver?.disconnect();
+    this.panelObserver = new MutationObserver(sync);
+    this.panelObserver.observe(this, {
+      attributes: true,
+      attributeFilter: [PANEL_WIDE],
+      subtree: true,
     });
     aside.append(slot);
     return aside;

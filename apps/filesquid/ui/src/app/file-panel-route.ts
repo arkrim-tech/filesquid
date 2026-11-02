@@ -16,7 +16,7 @@ import type { FsFileBrowser } from "../components/fs-file-browser";
 import { HOST_EVENT } from "../components/fs-host-indicator";
 import { FILE_PANEL_CLOSE_EVENT, type FsFilePanel } from "../components/fs-file-panel";
 import type { FsVersionsPanel, VersionsSource } from "../components/fs-versions-panel";
-import type { FileRef } from "../files/model";
+import type { FileRef, PanelTabId } from "../files/model";
 import type { FileSource } from "../files/source";
 import type { HistorySource } from "../files/history-source";
 import type { DownloadSource } from "../files/download-source";
@@ -159,7 +159,8 @@ export function bindFilePanel(
 ): void {
   const panel = createPanel(options, options.canViewLogs ?? (() => false));
   browser.addEventListener("fs-file-open", (event) => {
-    const { file } = (event as CustomEvent<{ file: FileRef | null }>).detail;
+    const { file, tab } = (event as CustomEvent<{ file: FileRef | null; tab?: PanelTabId }>).detail;
+    if (file !== null && tab !== undefined) panel.selectTab(tab);
     panel.fileRef = file;
     if (file === null) panel.remove();
     else if (!panel.isConnected) shell.append(panel);
