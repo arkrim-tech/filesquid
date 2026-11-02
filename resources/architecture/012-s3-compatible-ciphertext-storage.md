@@ -16,6 +16,8 @@ Amended 2026-10-29: resumable upload does not move the hosted acceptor, or the b
 
 Amended 2026-10-29 (owner decision): the owner of a Drive enrolls a device public key as permission to upload into that Drive. Each Drive's backup keeps recovery-point copies in more than one geography.
 
+Amended 2026-10-30 (owner decision): that minimum is three geographies. The working Drive is not one of those copies. Providers and regions stay unnamed.
+
 ## Context / Requirement Reference
 
 Hosted roots need object storage for ciphertext ([FE-033](../product-vision.md#portable-preservation), [FE-034](../product-vision.md#portable-preservation), [ADR 005](./005-sqlite-local-postgres-hosted.md)). The vision listed hosting provider/geography and cloud frameworks as undecided. Naming a single vendor would lock the stack before operations review.
@@ -35,9 +37,9 @@ Resumable uploads are S3 multipart (or an equivalent part protocol on that API).
 - Completion MUST be idempotent. An upload the client failed to record as finished is finished when the store reports the offset equal to the length.
 - A deployment that must terminate bytes itself (many half-open connections, for hours, on a bad network) MAY put a separate tus process in front of these same parts. That process MUST NOT become a second file identity, MUST NOT parse OCFL, and MUST NOT hold library keys. It does not replace the mailbox, `filesquid-ocfl`, or the desktop.
 - The owner of a Drive installation grants upload permission by enrolling another user's device public key (Ed25519, [ADR 009](./009-cryptography-webcrypto-compatible-suite.md)). The mailbox authorises that key for append into that Drive. A password is not that permission. The uploader encrypts before the bytes leave the device. Revoking the key stops later uploads. The key cannot delete recovery points ([F-029](../prd.md#f-029-client-encryption-and-key-custody)).
-- Each Drive has its own backup. That backup stores recovery-point ciphertext in more than one geography. One region is not the backup design ([F-031](../prd.md#f-031-encrypted-backup-and-verified-restore), [F-059](../prd.md#f-059-hosted-encrypted-backup-and-sync-service)).
+- Each Drive has its own backup. That backup stores recovery-point ciphertext in at least three geographies. The working Drive is not one of those copies. Fewer than three geographies is not the backup design ([F-031](../prd.md#f-031-encrypted-backup-and-verified-restore), [F-059](../prd.md#f-059-hosted-encrypted-backup-and-sync-service)).
 
-Which providers and which regions remain an **operations ADR** before a hosted pilot. That choice MUST name more than one geography. Replication class and residency stay in the same operations ADR. The technical stack is the API shape, not “AWS” or “OVH.”
+Which providers and which regions remain an **operations ADR** before a hosted pilot. That choice MUST name at least three geographies. Replication class and residency stay in the same operations ADR. The technical stack is the API shape, not “AWS” or “OVH.”
 
 Default layout: shared bucket, enforced per-user prefix / OCFL root ([ADR 010](./010-ocfl-1-1-dual-profile.md)).
 

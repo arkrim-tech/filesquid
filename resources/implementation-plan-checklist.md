@@ -203,7 +203,7 @@ Ubuntu (GNOME) and Windows Tauri desktop releases are Release 1 and start right 
 
 ## Backup
 
-Encrypted backup and sync is the primary product after the MVP (phase F4), closed by gate Task FS-4.2 (0 of 9 done). The Drive is the interface for day-to-day file work. OCFL stays behind that Drive. A node whitelist holds every device key allowed to upload, and several devices may be on it. Those devices sync with Automerge. OCFL snapshots are the backup package, on demand or every 1 or 24 hours. Upload strips embedded and sidecar metadata into the file's Markdown record and adds Prov-O and a C2PA proof. This section starts after Task FS-3.9 and runs beside the Ubuntu and Windows desktop releases. The rest of phase F3R waits until Task FS-4.2 is checked.
+Encrypted backup and sync is the primary product after the MVP (phase F4), closed by gate Task FS-4.2 (0 of 9 done). The Drive UI is a feature that enables that backup. OCFL stays behind the Drive. A node whitelist holds every device key allowed to upload, and several devices may be on it. Those devices sync with Automerge. OCFL snapshots are the backup package, on demand or every 1 or 24 hours. Upload strips embedded and sidecar metadata into the file's Markdown record and adds Prov-O and a C2PA proof. This section starts after Task FS-3.9 and runs beside the Ubuntu and Windows desktop releases. The rest of phase F3R waits until Task FS-4.2 is checked.
 
 ### Encrypted backup and sync (phase F4)
 
