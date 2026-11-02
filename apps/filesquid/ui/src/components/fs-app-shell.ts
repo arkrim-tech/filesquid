@@ -138,7 +138,7 @@ const STYLE = `
     main { overflow: visible; }
     .body { flex-direction: column; }
     nav { inline-size: auto; border-inline-end: 0; border-block-end: 1px solid var(--fs-outline); }
-    aside.panel { inline-size: auto; }
+    aside.panel, aside.panel[data-wide] { inline-size: auto; max-inline-size: 100%; }
   }
   @media (forced-colors: active) {
     .views a[aria-current="page"], .tools a[aria-current="page"] { forced-color-adjust: none; background: Highlight; color: HighlightText; }

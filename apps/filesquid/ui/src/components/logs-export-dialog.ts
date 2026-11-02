@@ -128,10 +128,73 @@ const FORMAT_FILE: Readonly<Record<ExportFormat, { mime: string; extension: stri
   csv: { mime: "text/csv", extension: ".csv" },
 };
 
-/** `YYYY-MM-DDTHH:mm`, the value of a datetime-local input, for an instant in the browser's zone. */
-function inputValue(at: Date): string {
+/** The wall-clock parts of an instant in an IANA zone (`hour` is `00`–`23`). */
+function zonedParts(at: Date, zone: string): Record<string, string> {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: zone,
+    hourCycle: "h23",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  }).formatToParts(at);
+  const pick = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((part) => part.type === type)?.value ?? "00";
+  return {
+    year: pick("year"),
+    month: pick("month"),
+    day: pick("day"),
+    hour: pick("hour") === "24" ? "00" : pick("hour"),
+    minute: pick("minute"),
+    second: pick("second"),
+  };
+}
+
+/** Minutes `zone` is ahead of UTC at `at`, daylight saving included. */
+function offsetMinutes(at: Date, zone: string): number {
+  const parts = zonedParts(at, zone);
+  const asUtc = Date.UTC(
+    Number(parts.year),
+    Number(parts.month) - 1,
+    Number(parts.day),
+    Number(parts.hour),
+    Number(parts.minute),
+    Number(parts.second),
+  );
+  return Math.round((asUtc - at.getTime()) / 60_000);
+}
+
+/** A `YYYY-MM-DDTHH:mm` wall time in `zone`, as an absolute instant. */
+function wallTimeUtc(value: string, zone: string): Date {
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(value);
+  const num = (index: number) => Number(match?.[index] ?? Number.NaN);
+  const year = num(1);
+  const month = num(2);
+  const day = num(3);
+  const hour = num(4);
+  const minute = num(5);
+  let utc = Date.UTC(year, month - 1, day, hour, minute);
+  for (let pass = 0; pass < 2; pass += 1) {
+    const shift = offsetMinutes(new Date(utc), zone) * 60_000;
+    utc = Date.UTC(year, month - 1, day, hour, minute) - shift;
+  }
+  return new Date(utc);
+}
+
+/**
+ * `YYYY-MM-DDTHH:mm`, the value of a datetime-local input. In `zone` when the dialog names one,
+ * otherwise the browser's zone (the page's zone in production).
+ */
+function inputValue(at: Date, zone?: string): string {
   const pad = (n: number) => String(n).padStart(2, "0");
-  return `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())}T${pad(at.getHours())}:${pad(at.getMinutes())}`;
+  if (zone !== undefined) {
+    const parts = zonedParts(at, zone);
+    return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}`;
+  }
+  const date = `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())}`;
+  return `${date}T${pad(at.getHours())}:${pad(at.getMinutes())}`;
 }
 
 /** A radio with the dialog's look, in a group. */
@@ -199,8 +262,8 @@ function initialState(options: ExportDialogOptions): State {
   return {
     scope: "filter",
     format: "jsonl",
-    from: inputValue(from),
-    to: inputValue(to),
+    from: inputValue(from, options.zone),
+    to: inputValue(to, options.zone),
     name: exportFileName(options.labels, "jsonl", options.now, options.zone),
     edited: false,
     busy: false,
@@ -348,18 +411,22 @@ function fileSection(
 }
 
 /** The choice the controls hold now. */
-function readChoice(dialog: HTMLElement, state: State): ExportChoice {
+function readChoice(dialog: HTMLElement, state: State, zone?: string): ExportChoice {
   const value = (name: string) =>
     dialog.querySelector<HTMLInputElement>(`input[name="${name}"]:checked`)?.value;
   const scope = (value("scope") as ExportScope | undefined) ?? state.scope;
   const format = (value("format") as ExportFormat | undefined) ?? state.format;
   if (scope !== "range") return { scope, format };
-  return { scope, format, from: toUtc(state.from), to: toUtc(state.to) };
+  return { scope, format, from: toUtc(state.from, zone), to: toUtc(state.to, zone) };
 }
 
-/** An input value (the browser's local time) as RFC 3339 UTC, or undefined when it is blank. */
-function toUtc(value: string): string | undefined {
-  const at = new Date(value);
+/**
+ * A datetime-local value as RFC 3339 UTC, or undefined when it is blank. With `zone`, the value
+ * is wall time in that zone; without it, the browser reads the value in its own zone.
+ */
+function toUtc(value: string, zone?: string): string | undefined {
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(value)) return undefined;
+  const at = zone === undefined ? new Date(value) : wallTimeUtc(value, zone);
   return Number.isNaN(at.getTime()) ? undefined : at.toISOString();
 }
 
@@ -396,7 +463,7 @@ function onChange(options: ExportDialogOptions, state: State, parts: Parts, even
     state.target = undefined;
     return;
   }
-  const choice = readChoice(parts.dialog, state);
+  const choice = readChoice(parts.dialog, state, options.zone);
   state.scope = choice.scope;
   if (input === parts.from) state.from = input.value;
   if (input === parts.to) state.to = input.value;
@@ -405,7 +472,9 @@ function onChange(options: ExportDialogOptions, state: State, parts: Parts, even
   parts.rangeLine.textContent = rangeLine(labels, state.from, state.to, zone);
   if (choice.format !== state.format) {
     state.format = choice.format;
-    if (!state.edited && state.target === undefined) {
+    // A chosen file was named for the previous format. Download falls back to the browser.
+    state.target = undefined;
+    if (!state.edited) {
       state.name = exportFileName(labels, choice.format, options.now, options.zone);
       parts.name.value = state.name;
     }
@@ -448,9 +517,11 @@ async function chooseFile(options: ExportDialogOptions, state: State, parts: Par
 /** Disable or enable the controls while a download runs. */
 function setBusy(options: ExportDialogOptions, state: State, parts: Parts, busy: boolean): void {
   state.busy = busy;
-  for (const control of [parts.submit, parts.cancel, parts.name, parts.choose]) {
-    if (control === parts.choose) control.disabled = busy || !options.canChoose;
-    else control.disabled = busy;
+  const controls = parts.dialog.querySelectorAll<HTMLInputElement | HTMLButtonElement>(
+    "input, button",
+  );
+  for (const control of controls) {
+    control.disabled = control === parts.choose ? busy || !options.canChoose : busy;
   }
   parts.dialog.setAttribute("aria-busy", String(busy));
   parts.busy.textContent = busy ? options.labels.logsExportBusy : "";
@@ -481,20 +552,22 @@ async function download(
   open: OpenDialog,
 ): Promise<void> {
   if (state.busy) return;
-  const choice = readChoice(parts.dialog, state);
+  const choice = readChoice(parts.dialog, state, options.zone);
   const invalid = problem(options, state, choice);
   parts.failed.textContent = invalid ?? "";
   if (invalid !== undefined) return;
+  // Taken before the request, so a later edit cannot rename or retarget this download.
+  const savedName = state.name.trim();
+  const target = state.target;
   setBusy(options, state, parts, true);
   try {
     const text = await options.run(exportQuery(choice, options.filter, options.now));
     const file = FORMAT_FILE[choice.format];
     const blob = new Blob([text], { type: `${file.mime};charset=utf-8` });
-    const name = state.name.trim();
-    if (state.target) await writeToPickedFile(state.target, blob);
-    else options.save(blob, name);
+    if (target) await writeToPickedFile(target, blob);
+    else options.save(blob, savedName);
     open.close();
-    options.onDone?.(name);
+    options.onDone?.(savedName);
   } catch (error) {
     console.warn(
       "FileSquid could not make the log download",

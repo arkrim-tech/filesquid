@@ -325,11 +325,12 @@ export class FsLogs extends HTMLElement {
       ]);
       if (generation !== this.generation) return;
       this.libraries = libraries;
-      this.entries = page.entries;
-      this.cursor = page.next_cursor;
-      this.pages = 1;
+      const pending = this.live;
       this.live = [];
       this.liveCount = 0;
+      this.entries = mergeNewest(page.entries, pending);
+      this.cursor = page.next_cursor;
+      this.pages = 1;
       this.draw();
       void this.readOldest(generation);
     } catch (error) {
@@ -342,9 +343,9 @@ export class FsLogs extends HTMLElement {
    * it, it is tried as a file ID (the journal cannot say which it is). Network I/O.
    */
   private async firstPage(options: LogsViewOptions) {
-    const page = await options.source.page(journalQuery(this.filter, this.now()));
     const uuid = this.typedUuid;
     this.typedUuid = undefined;
+    const page = await options.source.page(journalQuery(this.filter, this.now()));
     if (page.entries.length > 0 || uuid === undefined) return page;
     this.filter = stripUndefined({ ...this.filter, operation_id: undefined, file: uuid });
     return options.source.page(journalQuery(this.filter, this.now()));
@@ -440,6 +441,8 @@ export class FsLogs extends HTMLElement {
     parts.more.root.hidden = false;
     parts.more.text.textContent = showingText(labels, this.entries.length, more, this.filter.range);
     parts.more.older.hidden = !more || this.pages >= MAX_PAGES;
+    parts.more.older.disabled = false;
+    parts.more.older.textContent = labels.logsLoadOlder;
   }
 
   /** Tell the shell what the footer says. */
@@ -501,6 +504,7 @@ export class FsLogs extends HTMLElement {
     this.entries = [];
     this.cursor = null;
     if (isDenied(error)) {
+      this.stopLive();
       const reason =
         error instanceof ApiError && error.reason ? reasonLabel(error.reason, labels) : undefined;
       const words: StateWords = {
@@ -706,6 +710,7 @@ export class FsLogs extends HTMLElement {
     const word: Record<string, LabelKey> = {
       object: "logsSearchKindObject",
       uuid: "logsSearchKindOperationId",
+      operation_id: "logsSearchKindOperationId",
       operation: "logsSearchKindOperation",
     };
     const key = word[kind.kind] ?? "logsSearchKindObject";

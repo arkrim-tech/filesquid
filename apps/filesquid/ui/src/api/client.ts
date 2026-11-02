@@ -672,16 +672,18 @@ export class FileSquidClient {
    * Network I/O.
    *
    * @param id The entry ID.
-   * @param options `names` adds the display name of the file the entry names.
+   * @param options `names` adds the display name of the file the entry names. `signal` cancels the read.
    * @returns The entry with its PROV-O link.
    * @throws ApiError on a non-2xx answer: 404 for an unknown entry.
    */
   async adminJournalEntry(
     id: number,
-    options: { names?: boolean } = {},
+    options: { names?: boolean; signal?: AbortSignal } = {},
   ): Promise<JournalEntryView> {
     const query = options.names ? "?names=true" : "";
-    return this.request<JournalEntryView>(`/api/v1/admin/journal/entries/${id}${query}`);
+    return this.request<JournalEntryView>(`/api/v1/admin/journal/entries/${id}${query}`, {
+      ...(options.signal ? { signal: options.signal } : {}),
+    });
   }
 
   /**

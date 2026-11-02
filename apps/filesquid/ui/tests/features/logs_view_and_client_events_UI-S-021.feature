@@ -125,6 +125,7 @@ Feature: Logs view and client events
     When the UI sends 3 warnings
     Then it should retry the same events, waiting at least <wait>
     And each of the 3 events should become its own journal entry
+    And each original client event ID should be journaled exactly once
 
     Examples:
       | answer                  | wait          |
@@ -151,6 +152,7 @@ Feature: Logs view and client events
     When the page closes and the app opens again
     Then the 3 events should be delivered, oldest first, before new events
     And each should keep its original client event ID
+    And each original client event ID should be journaled exactly once
 
   Scenario: An event queued while storage accepts writes survives a page that ended without pagehide
     Given an event was queued and its IndexedDB write committed
@@ -162,8 +164,17 @@ Feature: Logs view and client events
     When the app opens
     Then those events should stay in the store and be sent only under that principal's credential
 
+  Scenario: Stored events raised against another host stay until that host and principal are active
+    Given stored events were raised against another host and principal
+    When the app opens under a different host
+    Then those events should stay in the store
+    And they should be sent only when that same host and principal are active
+
   Scenario: Without IndexedDB the UI counts what it could not keep
     Given IndexedDB is unavailable in the page
     When 4 warnings are raised and the page closes
     Then the UI should send one "ui.console.overflow" event with a count of 4 as a keep-alive request
     And the event should carry its own client event ID and no error code
+    And the event should use the fixed component "client-events"
+    And the event should carry no opaque ids
+    And the count should be from 1 to 1,000,000

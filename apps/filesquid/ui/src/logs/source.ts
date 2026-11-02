@@ -31,8 +31,8 @@ export type LogsEventListener = (event: ApiEvent) => void;
 export interface LogsSource {
   /** One page of entries with their PROV-O links and display names. Reads. */
   page(filters: JournalFilters): Promise<JournalViewPage>;
-  /** One entry by its ID, with its display name. Reads. */
-  entry(id: number): Promise<JournalEntryView>;
+  /** One entry by its ID, with its display name. `signal` cancels the read. Reads. */
+  entry(id: number, options?: { signal?: AbortSignal }): Promise<JournalEntryView>;
   /** The export text of the entries the filters select. Reads. */
   export(filters: Omit<JournalFilters, "after" | "limit" | "names">): Promise<string>;
   /** The oldest entry, or undefined for an empty journal. Reads. */
@@ -69,11 +69,15 @@ export class ClientLogsSource implements LogsSource {
    * One entry, with the display name of its file. Network I/O.
    *
    * @param id The entry ID.
+   * @param options `signal` cancels the read when the detail is left.
    * @returns The entry.
    * @throws ApiError on a non-2xx answer: 404 for an unknown entry.
    */
-  async entry(id: number): Promise<JournalEntryView> {
-    return this.client.adminJournalEntry(id, { names: true });
+  async entry(id: number, options: { signal?: AbortSignal } = {}): Promise<JournalEntryView> {
+    return this.client.adminJournalEntry(id, {
+      names: true,
+      ...(options.signal ? { signal: options.signal } : {}),
+    });
   }
 
   /**

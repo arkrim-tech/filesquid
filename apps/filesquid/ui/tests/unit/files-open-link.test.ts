@@ -2,7 +2,8 @@
  * Unit tests for the deep link of the files route (UI-F2.16; UI-S-021, UI-S-020): the Logs view's
  * View provenance and Show file open one file's panel on a tab through
  * `#/files/<library>/urn:uuid:<file>/original?open=<file>&tab=<tab>`. The query is not part of
- * the location, and a link that names no known tab or a file that is not a UUID opens nothing.
+ * the location. A file that is not a UUID opens nothing. An unknown tab still opens the file,
+ * on the panel's first tab.
  */
 import { describe, expect, it } from "vitest";
 import { openFileHash, parseLocationHash, parseOpenRequest } from "../../src/files/model";
@@ -39,7 +40,7 @@ describe("the open-file link", () => {
     expect(parseOpenRequest(openFileHash("lib-1", FILE))).toEqual({ file: FILE });
   });
 
-  it("reads nothing from an address with no query, an unknown tab or a file that is no UUID", () => {
+  it("reads nothing when there is no query or the file is no UUID, and drops an unknown tab", () => {
     expect(parseOpenRequest(`#/files/lib-1/urn%3Auuid%3A${FILE}/original`)).toBeUndefined();
     expect(parseOpenRequest("#/files/lib-1/o/original?open=not-a-uuid")).toBeUndefined();
     expect(parseOpenRequest(`#/files/lib-1/o/original?open=${FILE}&tab=secrets`)).toEqual({

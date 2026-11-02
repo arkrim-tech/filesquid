@@ -78,6 +78,7 @@ describe("the thresholds of UI-S-023", () => {
     expect(overflowCount(-3)).toBeUndefined();
     expect(overflowCount(1)).toBe(1);
     expect(overflowCount(1_000_000)).toBe(1_000_000);
+    expect(overflowCount(1_000_001)).toBe(1_000_000);
     expect(overflowCount(5_000_000)).toBe(1_000_000);
     expect(overflowCount(2.9)).toBe(2);
   });
@@ -438,6 +439,27 @@ describe("page close", () => {
     await settle();
     expect(transport.requests.some((r) => r.keepalive)).toBe(false);
   });
+
+  it("counts an event the page-close write refuses, in the keep-alive overflow", async () => {
+    const transport = new ScriptedTransport();
+    transport.script = [{ kind: "network" }];
+    const { queue, store } = rig({}, { transport });
+    store.delayMs = 500;
+    warn(queue, 1);
+    await vi.advanceTimersByTimeAsync(0);
+    store.failNext = true;
+    const closing = queue.pagehide();
+    await vi.advanceTimersByTimeAsync(500);
+    await closing;
+    const overflow = transport.requests.filter((sent) => sent.keepalive);
+    expect(overflow).toHaveLength(1);
+    expect(overflow[0]?.request.events).toHaveLength(1);
+    expect(overflow[0]?.request.events[0]).toMatchObject({
+      kind: "overflow",
+      component: "client-events",
+      count: 1,
+    });
+  });
 });
 
 describe("the next open", () => {
@@ -549,7 +571,76 @@ describe("the next open", () => {
         .filter((e) => left.includes(e.id))
         .map((e) => e.id),
     ).toEqual(left);
+    expect(
+      again.transport.requests
+        .flatMap((sent) => sent.request.events)
+        .filter((event) => left.includes(event.id)),
+    ).toEqual(left.map((id) => expect.objectContaining({ id, principal: "urn:uuid:ana" })));
     expect(store.all()).toEqual([]);
+  });
+
+  it("stores the acknowledgement principal on an event that is still queued", async () => {
+    const transport = new ScriptedTransport();
+    transport.principal = "urn:uuid:ana";
+    transport.script = [{ kind: "ack" }, { kind: "network" }];
+    const { queue, store } = rig({ batchEvents: 1 }, { transport });
+    const first = warn(queue, 1);
+    const second = warn(queue, 2);
+    await settle(2_000);
+    expect(transport.journaled).toEqual([first]);
+    expect(store.all().map((event) => event.id)).toEqual([second]);
+    expect(store.all()[0]?.principal).toBe("urn:uuid:ana");
+  });
+
+  it("does not let a stale acknowledgement remove a parked event or name the new principal", async () => {
+    const transport = new ScriptedTransport();
+    transport.hold = true;
+    const { queue, store } = rig({}, { transport });
+    const id = warn(queue, 1);
+    await settle();
+    expect(transport.requests).toHaveLength(1);
+    const changed = queue.credentialChanged();
+    transport.script = [{ kind: "ack" }, { kind: "network" }];
+    transport.release();
+    await changed;
+    await settle();
+    expect(store.all().map((event) => event.id)).toContain(id);
+    expect(queue.stats().principal).toBeUndefined();
+  });
+
+  it("counts an event it could not park when the credential changes", async () => {
+    const transport = new ScriptedTransport();
+    transport.script = [{ kind: "network" }];
+    const { queue, store } = rig({}, { transport });
+    store.available = false;
+    warn(queue, 1);
+    await settle();
+    await queue.credentialChanged();
+    expect(queue.stats().lost).toBe(1);
+  });
+
+  it("delivers events stored in the same millisecond, oldest first", async () => {
+    const store = new MemoryEventStore();
+    const openedAt = Date.now();
+    const first = new ScriptedTransport();
+    first.script = [{ kind: "network" }];
+    const page1 = rig({}, { store, transport: first });
+    const ids = [warn(page1.queue, 1), warn(page1.queue, 2), warn(page1.queue, 3)];
+    page1.queue.stop();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(Date.now()).toBe(openedAt);
+    expect(store.all().map((event) => event.id)).toEqual(ids);
+
+    const second = new ScriptedTransport();
+    const page2 = rig({}, { store, transport: second });
+    await page2.queue.start();
+    await settle(5_000);
+    expect(
+      second
+        .journaledEvents()
+        .filter((event) => ids.includes(event.id))
+        .map((event) => event.id),
+    ).toEqual(ids);
   });
 
   it("parks the events of a session when its credential changes, and holds them for their principal", async () => {

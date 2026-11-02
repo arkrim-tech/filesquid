@@ -63,7 +63,7 @@ async function open(
   const api = await serveLogs(page, entries);
   setup?.(api);
   await page.goto(`/${hash}`);
-  await expect(page.locator("fs-logs")).toHaveAttribute("data-state", /ready|empty|denied|error/);
+  await expect(page.locator("fs-logs")).toHaveAttribute("data-state", /ready|empty|denied/);
   return api;
 }
 
@@ -645,7 +645,14 @@ test.describe("behaviour", () => {
     await input.press("Enter");
     await expect(page.locator("fs-logs tbody tr[data-key]")).toHaveCount(1);
     expect(pages(api).at(-1)?.operation_id).toBe(PLAN_OPERATION);
+    const opaque = page.waitForResponse(
+      (res) => res.url().includes("operation_id=") && res.url().includes("harbour-masterplan"),
+    );
     await input.fill("harbour-masterplan-v7.pdf");
+    await input.press("Enter");
+    await opaque;
+    expect(pages(api).at(-1)?.operation_id).toBe("harbour-masterplan-v7.pdf");
+    await input.fill("not an id");
     const reads = pages(api).length;
     await input.press("Enter");
     await expect(page.locator("fs-logs .hint.invalid")).toHaveText(label(labels, "logsSearchHint"));
@@ -661,7 +668,11 @@ test.describe("behaviour", () => {
     await expect(page.locator("fs-logs .search input")).toHaveValue(PLAN_FILE);
     await expect(page.locator("fs-logs tbody tr[data-key]")).toHaveCount(2);
     await expect(page.locator("fs-logs button.file")).toContainText(PLAN_FILE);
+    const filtered = page.waitForResponse(
+      (res) => res.url().includes("/api/v1/admin/journal") && res.url().includes("operation_id="),
+    );
     await page.evaluate((id) => (location.hash = `#/logs?operation_id=${id}`), IMG_OPERATION);
+    await filtered;
     await expect(page.locator("fs-logs .search input")).toHaveValue(IMG_OPERATION);
     expect(pages(api).at(-1)?.operation_id).toBe(IMG_OPERATION);
     expect(pages(api).at(-1)?.file).toBeUndefined();
@@ -714,6 +725,7 @@ test.describe("behaviour", () => {
   test("a live entry is counted and added when the chip is chosen", async ({ page }) => {
     const errors = trackErrors(page);
     const api = await open(page);
+    await api.connected;
     await expect(page.locator("fs-logs .chip.live")).toHaveText(label(labels, "logsLive"));
     api.emit({
       ...mockupEntries()[0],
@@ -785,7 +797,7 @@ test.describe("behaviour", () => {
     const text = await readFile(await saved.path(), "utf8");
     const lines = text.trim().split("\r\n");
     expect(lines[0]).toBe(
-      "id,time,host,actor,operation,outcome,level,target_ids,operation_id,object_ref",
+      "id,time,host,process_id,actor,operation,outcome,level,target_ids,duration_ms,error_code,operation_id,object_ref,client_event_id",
     );
     expect(lines.filter((l) => l.startsWith("id,time"))).toHaveLength(1);
     expect(lines).toHaveLength(17);

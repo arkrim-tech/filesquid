@@ -6,6 +6,7 @@
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ClientEventsAck, ClientEventsRequest } from "../../src/api/client";
+import { ClientEventQueue } from "../../src/clientevents/queue";
 import { startClientEvents } from "../../src/clientevents/start";
 
 afterEach(() => vi.restoreAllMocks());
@@ -104,5 +105,58 @@ describe("startClientEvents", () => {
     window.dispatchEvent(new Event("pagehide"));
     await settle();
     expect(client.postClientEvents).not.toHaveBeenCalled();
+  });
+
+  it("queues a warning raised while the store is scanned", async () => {
+    const { client, requests } = fakeClient();
+    const page = fakeConsole();
+    const original = ClientEventQueue.prototype.start;
+    ClientEventQueue.prototype.start = async function (this: ClientEventQueue) {
+      page.warn("during the store scan");
+      return original.call(this);
+    };
+    let running: Awaited<ReturnType<typeof startClientEvents>> | undefined;
+    try {
+      running = await startClientEvents({
+        win: window,
+        client,
+        host: "http://x",
+        console: page,
+      });
+      await settle();
+      const event = requests
+        .flatMap((sent) => sent.request.events)
+        .find((entry) => entry.kind === "console");
+      expect(event).toMatchObject({ kind: "console", level: "warn", component: "console" });
+    } finally {
+      ClientEventQueue.prototype.start = original;
+      running?.stop();
+    }
+  });
+
+  it("does not send an overflow when the page is only cached, and still delivers a later warning", async () => {
+    const { client, requests } = fakeClient();
+    const page = fakeConsole();
+    const running = await startClientEvents({
+      win: window,
+      client,
+      host: "http://x",
+      console: page,
+    });
+    const cached =
+      typeof PageTransitionEvent === "function"
+        ? new PageTransitionEvent("pagehide", { persisted: true })
+        : Object.assign(new Event("pagehide"), { persisted: true });
+    window.dispatchEvent(cached);
+    await settle();
+    expect(
+      requests.some((sent) => sent.request.events.some((event) => event.kind === "overflow")),
+    ).toBe(false);
+    page.warn("still open");
+    await settle();
+    expect(
+      requests.flatMap((sent) => sent.request.events).some((event) => event.kind === "console"),
+    ).toBe(true);
+    running.stop();
   });
 });

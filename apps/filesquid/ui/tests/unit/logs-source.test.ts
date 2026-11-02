@@ -40,8 +40,10 @@ describe("ClientLogsSource", () => {
     const adminJournalEntry = vi.fn(async () => ENTRY);
     const source = new ClientLogsSource(fakeClient({ adminJournalPage, adminJournalEntry }));
     expect((await source.page({ order: "desc" })).entries).toHaveLength(1);
+    expect(adminJournalPage).toHaveBeenCalledTimes(1);
     expect(adminJournalPage).toHaveBeenCalledWith({ order: "desc" });
     expect(await source.entry(1)).toBe(ENTRY);
+    expect(adminJournalEntry).toHaveBeenCalledTimes(1);
     expect(adminJournalEntry).toHaveBeenCalledWith(1, { names: true });
   });
 
@@ -49,6 +51,7 @@ describe("ClientLogsSource", () => {
     const adminJournalExport = vi.fn(async () => "id\r\n1\r\n");
     const source = new ClientLogsSource(fakeClient({ adminJournalExport }));
     expect(await source.export({ format: "csv", level: "warn" })).toBe("id\r\n1\r\n");
+    expect(adminJournalExport).toHaveBeenCalledTimes(1);
     expect(adminJournalExport).toHaveBeenCalledWith({ format: "csv", level: "warn" });
   });
 
@@ -56,6 +59,7 @@ describe("ClientLogsSource", () => {
     const adminJournalPage = vi.fn(async () => ({ entries: [ENTRY], next_cursor: 1 }));
     const source = new ClientLogsSource(fakeClient({ adminJournalPage }));
     expect(await source.oldest()).toBe(ENTRY);
+    expect(adminJournalPage).toHaveBeenCalledTimes(1);
     expect(adminJournalPage).toHaveBeenCalledWith({ order: "asc", limit: 1 });
   });
 
@@ -77,6 +81,7 @@ describe("ClientLogsSource", () => {
       { library_id: "lib-1", name: "Family archive" },
       { library_id: "lib-2", name: "Work" },
     ]);
+    expect(request).toHaveBeenCalledTimes(1);
     expect(request).toHaveBeenCalledWith("/api/v1/libraries/recent");
   });
 

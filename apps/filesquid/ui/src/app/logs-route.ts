@@ -92,8 +92,10 @@ function applyLogsRoute(shell: HTMLElement, options: LogsRouteOptions, hash: str
     if (existing) showFooter(shell, "", "");
     return;
   }
-  if (existing) existing.routeFilter = Object.keys(filter).length === 0 ? undefined : filter;
-  else createView(shell, options, filter);
+  if (existing) {
+    existing.select(undefined);
+    existing.routeFilter = Object.keys(filter).length === 0 ? undefined : filter;
+  } else createView(shell, options, filter);
 }
 
 /** What the view tells the shell: the selected entry and the footer sentences. */

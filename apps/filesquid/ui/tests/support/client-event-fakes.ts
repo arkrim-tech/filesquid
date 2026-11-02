@@ -21,6 +21,10 @@ export class MemoryEventStore implements EventStore {
   available = true;
   /** True makes every write fail as a refused write (quota). */
   refusing = false;
+  /** True makes the next write fail once, before it changes anything stored. */
+  failNext = false;
+  /** Milliseconds `put` waits before it writes, so a test can pause a write-through. */
+  delayMs = 0;
   /** Bytes the store holds at most; a write over it is refused. */
   budget = 50 * 1024 * 1024;
   /** Everything written that is not removed, by id. */
@@ -45,15 +49,35 @@ export class MemoryEventStore implements EventStore {
   async put(events: readonly StoredEvent[]): Promise<void> {
     if (!this.available) throw new StoreRefusedError("unavailable");
     if (this.refusing) throw new StoreRefusedError("quota");
-    const incoming = events
-      .filter((event) => !this.records.has(event.id))
-      .reduce((sum, event) => sum + eventBytes(event), 0);
-    if (this.held + incoming > this.budget) throw new StoreRefusedError("budget");
-    this.puts += 1;
-    for (const event of events) {
-      if (!this.records.has(event.id)) this.held += eventBytes(event);
-      this.records.set(event.id, { ...event });
+    // Decided before the delay: a put already waiting must not consume a refusal aimed at the next one.
+    if (this.failNext) {
+      this.failNext = false;
+      throw new StoreRefusedError("failed");
     }
+    if (this.delayMs > 0) {
+      await new Promise<void>((resolve) => setTimeout(resolve, this.delayMs));
+    }
+    const held = this.heldAfter(events);
+    if (held > this.budget) throw new StoreRefusedError("budget");
+    this.puts += 1;
+    this.held = held;
+    for (const event of events) this.records.set(event.id, { ...event });
+  }
+
+  /** The byte total after `events` replace whatever is already stored under their ids. */
+  private heldAfter(events: readonly StoredEvent[]): number {
+    let held = this.held;
+    const replaced = new Map<string, number>();
+    for (const event of events) {
+      const size = eventBytes(event);
+      const known = replaced.get(event.id);
+      const stored = this.records.get(event.id);
+      const previous = known ?? (stored === undefined ? undefined : eventBytes(stored));
+      if (previous !== undefined) held -= previous;
+      held += size;
+      replaced.set(event.id, size);
+    }
+    return held;
   }
 
   async remove(ids: readonly string[]): Promise<void> {
@@ -80,7 +104,13 @@ export class MemoryEventStore implements EventStore {
   }
 
   async count(host: string): Promise<number> {
+    if (!this.available) return 0;
     return this.all(host).length;
+  }
+
+  async maxSeq(host: string): Promise<number> {
+    if (!this.available) return 0;
+    return this.all(host).reduce((max, event) => (event.seq > max ? event.seq : max), 0);
   }
 }
 

@@ -90,10 +90,11 @@ function node<K extends keyof HTMLElementTagNameMap>(
   return element;
 }
 
-/** The entry as the journal stores it: the display name is a lookup, never stored. */
+/** The entry as the journal stores it: the display name and the PROV-O link are lookups, never stored. */
 function storedJson(entry: JournalEntryView): string {
-  const { display_name: _name, ...stored } = entry;
+  const { display_name: _name, provenance: _provenance, ...stored } = entry;
   void _name;
+  void _provenance;
   return JSON.stringify(stored, null, 2);
 }
 
@@ -290,17 +291,19 @@ export class FsLogEntry extends HTMLElement {
   private async refresh(): Promise<void> {
     const { options, shown } = this;
     this.abort?.abort();
+    this.abort = new AbortController();
+    const signal = this.abort.signal;
     const generation = ++this.generation;
     const failed = this.shadowRoot?.querySelector<HTMLElement>(".read-failed");
     if (failed) failed.hidden = true;
     if (!options || shown === null || shown.id === undefined) return;
     try {
-      const fresh = await options.source.entry(shown.id);
+      const fresh = await options.source.entry(shown.id, { signal });
       if (generation !== this.generation) return;
       this.shown = fresh;
       this.show();
     } catch (error) {
-      if (generation !== this.generation) return;
+      if (generation !== this.generation || signal.aborted) return;
       console.warn(
         "FileSquid could not read a log entry",
         error instanceof Error ? error.name : error,

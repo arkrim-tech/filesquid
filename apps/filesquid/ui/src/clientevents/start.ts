@@ -1,8 +1,9 @@
 /**
  * Start the delivery of the UI's console warnings and errors (UI-F2.16; UI-S-023): open the
  * page's IndexedDB store, build the {@link ClientEventQueue} over `FileSquidClient.postClientEvents`,
- * look for events an earlier page left (they are delivered first), capture the console and
- * persist what is undelivered when the page closes (`pagehide`).
+ * capture the console, look for events an earlier page left (they are delivered first) and
+ * persist what is undelivered when the page closes (`pagehide`). A `pagehide` that only parks the
+ * document in the back-forward cache (`persisted`) does not close the queue.
  */
 import type { FileSquidClient } from "../api/client";
 import { installConsoleCapture, queueLog } from "./console";
@@ -29,7 +30,7 @@ export interface ClientEvents {
   /** The queue, for diagnostics and for {@link ClientEvents.credentialChanged}. */
   readonly queue: ClientEventQueue;
   /** The page's credential changed (a token was typed in): see `ClientEventQueue.credentialChanged`. */
-  credentialChanged(): void;
+  credentialChanged(): Promise<void>;
   /** Stop capturing and delivering and release the listeners. */
   stop(): void;
 }
@@ -46,7 +47,8 @@ function pageIndexedDb(win: Window, log: (message: string, error?: unknown) => v
 
 /**
  * Start delivering client events. Side effect: opens IndexedDB, wraps the console, adds a
- * `pagehide` listener and may send requests.
+ * `pagehide` listener and may send requests. The console is wrapped before the store is scanned,
+ * so a warning raised during that scan is queued.
  *
  * @param options The window, the client and the host.
  * @returns The running delivery. The store may be unavailable (a private window): the queue then
@@ -62,9 +64,12 @@ export async function startClientEvents(options: ClientEventsOptions): Promise<C
     host,
     log,
   });
-  await queue.start();
   const restore = installConsoleCapture((input) => queue.record(input), options.console ?? console);
-  const onPageHide = () => queue.pagehide();
+  await queue.start();
+  const onPageHide = (event: Event) => {
+    if ("persisted" in event && (event as PageTransitionEvent).persisted === true) return;
+    void queue.pagehide();
+  };
   win.addEventListener("pagehide", onPageHide);
   // A plain marker for tests and diagnostics: the console is captured from here on.
   win.document.documentElement.dataset["clientEvents"] = "started";

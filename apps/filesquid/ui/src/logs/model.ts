@@ -104,8 +104,9 @@ function sharedMembers(filter: LogsFilterState, now: Date): JournalFilters {
   if (from !== undefined) query.from = from;
   if (filter.library !== undefined) query.library = filter.library;
   if (filter.level !== undefined) query.level = filter.level;
-  if (filter.file !== undefined) query.file = filter.file;
+  // `file` and `object` name the same object filter. The route rejects a query that sends both.
   if (filter.object !== undefined) query.object = filter.object;
+  else if (filter.file !== undefined) query.file = filter.file;
   if (filter.operation_id !== undefined) query.operation_id = filter.operation_id;
   return query;
 }
@@ -149,6 +150,7 @@ export type SearchKind =
   | { readonly kind: "none" }
   | { readonly kind: "object"; readonly value: string }
   | { readonly kind: "uuid"; readonly value: string }
+  | { readonly kind: "operation_id"; readonly value: string }
   | { readonly kind: "operation"; readonly value: string };
 
 const UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
@@ -156,11 +158,13 @@ const OBJECT_TEXT = new RegExp(`^(urn:uuid:${UUID})(?:@v\\d+)?$`, "i");
 const UUID_TEXT = new RegExp(`^${UUID}$`, "i");
 /** An operation name: lower-case dotted words such as `ocfl.commit` or `cli.library.open`. */
 const OPERATION_TEXT = /^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_-]*)+$/;
+/** An opaque operation ID: 1 to 128 letters, digits, `.`, `_`, `-` or `:` (API-S-002). */
+const OPAQUE_ID = /^[A-Za-z0-9._:-]{1,128}$/;
 
 /**
  * Tell what the search text names: an object (`urn:uuid:` with or without a version), a bare
- * UUID (an operation ID or a file ID, told apart by the view), an operation name, or nothing the
- * journal can be searched by. Pure.
+ * UUID (an operation ID or a file ID, told apart by the view), a dotted operation name, any other
+ * opaque operation ID, or nothing the journal can be searched by. Pure.
  *
  * @param text The text typed in the search field.
  * @returns The kind and the value to filter by.
@@ -172,6 +176,7 @@ export function classifySearch(text: string): SearchKind {
   if (object?.[1]) return { kind: "object", value: object[1] };
   if (UUID_TEXT.test(trimmed)) return { kind: "uuid", value: trimmed };
   if (OPERATION_TEXT.test(trimmed)) return { kind: "operation", value: trimmed };
+  if (OPAQUE_ID.test(trimmed)) return { kind: "operation_id", value: trimmed };
   return { kind: "none" };
 }
 
@@ -197,11 +202,17 @@ export function searchedFilter(
   delete base.operation_id;
   // The search field names one of the file, object, operation ID and operation: a new search
   // replaces whichever it held.
-  if (search.kind === "operation" || search.kind === "object" || search.kind === "uuid") {
+  if (
+    search.kind === "operation" ||
+    search.kind === "object" ||
+    search.kind === "uuid" ||
+    search.kind === "operation_id"
+  ) {
     delete base.operation;
   }
   if (search.kind === "object") return { ...base, object: search.value };
   if (search.kind === "operation") return { ...base, operation: search.value };
+  if (search.kind === "operation_id") return { ...base, operation_id: search.value };
   if (search.kind === "uuid") return { ...base, [uuidAs]: search.value };
   return base;
 }
@@ -639,7 +650,9 @@ export function matchesFilter(
 ): boolean {
   const from = rangeFrom(filter.range, now);
   if (from !== undefined && entry.time < from) return false;
-  if (filter.operation !== undefined && entry.operation !== filter.operation) return false;
+  // A refused filter is the operation of every refusal, the same override the page query uses.
+  const operation = filter.outcome === "refused" ? DENIED_OPERATION : filter.operation;
+  if (operation !== undefined && entry.operation !== operation) return false;
   if (filter.level !== undefined && entry.level !== filter.level) return false;
   return matchesOutcome(entry, filter.outcome) && matchesTargets(entry, filter);
 }
@@ -953,22 +966,31 @@ export function isLiveEntry(data: unknown): data is JournalEntry {
 
 /**
  * The entry the list shows for a live event. The event has no PROV-O link, so one is built from
- * what the entry carries: a failed or refused entry and a single-file download have no activity
- * (journal-only by definition, UI-S-021), any other entry names its operation and object. The
- * entry detail reads the entry again for its display name. Pure.
+ * what the entry carries: a failed or refused entry, a single-file download, an entry that lacks
+ * either identifier, and an entry that already says `journal_only` have no activity (UI-S-021).
+ * Any other entry names its operation and object. The entry detail reads the entry again for its
+ * display name. Pure.
  *
  * @param entry The data of a `journal.entry` event.
  */
 export function liveEntryView(entry: JournalEntry): JournalEntryView {
-  const view = { ...entry, provenance: { journal_only: false } } as JournalEntryView;
-  const kind = outcomeKind(view);
-  const none = kind === "failed" || kind === "refused" || entry.operation === "file.download";
+  const carried = entry as JournalEntry & { provenance?: { journal_only?: boolean } };
+  const both = entry.operation_id !== undefined && entry.object_ref !== undefined;
+  const kind = outcomeKind({ ...entry, provenance: { journal_only: false } });
+  const journalOnly =
+    carried.provenance?.journal_only === true ||
+    !both ||
+    kind === "failed" ||
+    kind === "refused" ||
+    entry.operation === "file.download";
   return {
-    ...view,
+    ...entry,
     provenance: {
-      journal_only: none,
-      ...(none || entry.operation_id === undefined ? {} : { operation_id: entry.operation_id }),
-      ...(none || entry.object_ref === undefined ? {} : { object_ref: entry.object_ref }),
+      journal_only: journalOnly,
+      ...(journalOnly || entry.operation_id === undefined
+        ? {}
+        : { operation_id: entry.operation_id }),
+      ...(journalOnly || entry.object_ref === undefined ? {} : { object_ref: entry.object_ref }),
     },
   };
 }
@@ -985,6 +1007,12 @@ export function mergeNewest(
   newer: readonly JournalEntryView[],
 ): JournalEntryView[] {
   const known = new Set(list.map((entry) => entry.id));
-  const fresh = newer.filter((entry) => entry.id === undefined || !known.has(entry.id));
-  return [...fresh.sort((a, b) => (b.id ?? 0) - (a.id ?? 0)), ...list];
+  const fresh: JournalEntryView[] = [];
+  const incoming = [...newer].sort((a, b) => (b.id ?? 0) - (a.id ?? 0));
+  for (const entry of incoming) {
+    if (entry.id !== undefined && known.has(entry.id)) continue;
+    if (entry.id !== undefined) known.add(entry.id);
+    fresh.push(entry);
+  }
+  return [...fresh, ...list];
 }

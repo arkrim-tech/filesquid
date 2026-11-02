@@ -14,8 +14,9 @@
  * - **Storage.** While storage accepts writes every queued event is also written to it as it is
  *   queued and removed when acknowledged; past the memory cap events spill into the store, in
  *   order, and return to the queue oldest first as it drains; at page close what is not stored
- *   is. The next open delivers the stored events of this host oldest first, each under the
- *   credential of the principal that raised it.
+ *   is, and that write settles before the overflow count is sent. Writes to the store run one
+ *   after another. The next open delivers the stored events of this host oldest first, each under
+ *   the credential of the principal that raised it.
  * - **Principals.** The route names the credential's principal in each acknowledgement. Events
  *   of earlier pages carry the principal their page was acknowledged under, and are sent only
  *   once this page's principal is known and the same: the open raises one `persisted_events_found`
@@ -23,7 +24,9 @@
  *   the store untouched until that principal sends again. Events of a page that never learned a
  *   principal (`null`) go to the first principal that does. Events raised in this page carry no
  *   principal claim; when the page's credential changes ({@link ClientEventQueue.credentialChanged})
- *   the events still queued are parked in the store under their own principal.
+ *   the events still queued are parked in the store under their own principal. A response to a
+ *   request sent before that change is ignored, so it cannot delete the parked events or name
+ *   the new principal.
  * - **The one gap.** When storage is unavailable or refuses a write, events fall back to the
  *   in-memory queue, every event that could not be kept is counted, and at page close one
  *   `ui.console.overflow` event (own ID, count 1 to 1,000,000) goes out as a keep-alive request.
@@ -65,6 +68,8 @@ export const REFUSED_CODE = "client_event_refused";
 const MAX_OPAQUE = 128;
 /** Most opaque IDs on one event. */
 const MAX_IDS = 8;
+/** Stored events stamped with a principal in one write. */
+const STAMP_PAGE = 1_000;
 
 /** A console event as the page raises it. */
 export interface ClientEventInput {
@@ -181,6 +186,10 @@ export class ClientEventQueue {
   private stopped = false;
   private failures = 0;
   private requests: number[] = [];
+  /** Increments when the credential changes, so an older acknowledgement can be ignored. */
+  private epoch = 0;
+  /** Store writes, one after another; a rejection here does not stop the next write. */
+  private writes: Promise<void> = Promise.resolve();
   private readonly cap: number;
   private readonly batchEvents: number;
   private readonly batchBytes: number;
@@ -208,9 +217,11 @@ export class ClientEventQueue {
   /**
    * Look in the store for events of an earlier page of this host and, when there are any, raise
    * the one warning that lets the route name this page's principal, so they can be delivered
-   * under it. Reads the store (I/O).
+   * under it. The floor is raised above every stored sequence first, so a page opened in the
+   * same millisecond still lists them. Reads the store (I/O).
    */
   async start(): Promise<void> {
+    await this.raiseFloor();
     let found = 0;
     try {
       found = await this.options.store.count(this.options.host);
@@ -240,38 +251,32 @@ export class ClientEventQueue {
 
   /**
    * The page is closing: persist what the store does not hold yet and send one overflow event,
-   * as a keep-alive request, with the count of events that could not be kept. Writes the store
-   * and sends a request (I/O).
+   * as a keep-alive request, with the count of events that could not be kept. The overflow goes
+   * out only after that write settles. Writes the store and sends a request (I/O).
    */
-  pagehide(): void {
+  async pagehide(): Promise<void> {
     this.clearTimer();
-    let lost = this.lost;
-    const unsaved = this.memory
-      .filter((event) => this.unpersisted.has(event.id) || this.needsPrincipal(event))
-      .map((event) => this.withPrincipal(event));
-    const refused = !this.options.store.available || this.storeRefusing;
-    if (unsaved.length > 0 && refused) {
-      lost += this.memory.filter((event) => this.unpersisted.has(event.id)).length;
-    } else if (unsaved.length > 0) {
-      this.options.store
-        .put(unsaved)
-        .catch((error: unknown) => this.report("could not persist", error));
-    }
+    const lost = await this.lostAtClose();
     this.sendOverflow(lost);
   }
 
   /**
    * The page's credential changed (a token was typed in): park every event still queued in the
    * store under its own principal, forget this page's principal and look for events to deliver
-   * under the new one. Writes the store (I/O).
+   * under the new one. An acknowledgement of a request sent before this returns is ignored.
+   * Writes the store (I/O).
    */
-  credentialChanged(): void {
+  async credentialChanged(): Promise<void> {
+    this.epoch += 1;
     this.clearTimer();
     const parked = this.memory.map((event) => this.withPrincipal(event));
     if (parked.length > 0) {
-      this.options.store
-        .put(parked)
-        .catch((error: unknown) => this.report("could not park", error));
+      try {
+        await this.write(parked);
+      } catch (error) {
+        this.loseUnpersisted(parked);
+        this.report("could not park", error);
+      }
     }
     this.memory = [];
     this.spilled = 0;
@@ -280,7 +285,7 @@ export class ClientEventQueue {
     this.principal = undefined;
     this.failures = 0;
     this.floor = this.nextSeq();
-    void this.start();
+    await this.start();
   }
 
   /** Stop delivering; nothing more is sent and no timer stays. */
@@ -293,6 +298,46 @@ export class ClientEventQueue {
   private nextSeq(): number {
     this.lastSeq = Math.max(this.lastSeq + 1, Date.now() * 1000);
     return this.lastSeq;
+  }
+
+  /** Raise the floor above every event this host already has stored. */
+  private async raiseFloor(): Promise<void> {
+    try {
+      const max = await this.options.store.maxSeq(this.options.host);
+      if (max < this.floor) return;
+      this.lastSeq = Math.max(this.lastSeq, max);
+      this.floor = this.nextSeq();
+    } catch (error) {
+      this.report("could not read the stored sequence", error);
+    }
+  }
+
+  /** True while `epoch` is still the session a delivery step started in. */
+  private sameEpoch(epoch: number): boolean {
+    return epoch === this.epoch;
+  }
+
+  /**
+   * Queue a store write behind the ones already started. The returned promise rejects when this
+   * write fails; the chain itself does not, so a later write still runs.
+   */
+  private write(events: readonly StoredEvent[]): Promise<void> {
+    const run = this.writes.then(() =>
+      events.length === 0 ? undefined : this.options.store.put(events),
+    );
+    this.writes = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
+
+  /** Count events the store does not hold, and forget them. */
+  private loseUnpersisted(events: readonly StoredEvent[]): void {
+    for (const event of events) {
+      if (!this.unpersisted.delete(event.id)) continue;
+      this.lost += 1;
+    }
   }
 
   /** Build the stored event for an input. */
@@ -316,7 +361,7 @@ export class ClientEventQueue {
   private keepInMemory(event: StoredEvent): void {
     this.memory.push(event);
     this.unpersisted.add(event.id);
-    this.options.store.put([event]).then(
+    this.write([event]).then(
       () => {
         this.unpersisted.delete(event.id);
         this.storeRefusing = false;
@@ -335,7 +380,7 @@ export class ClientEventQueue {
       return;
     }
     this.spilled += 1;
-    this.options.store.put([event]).then(
+    this.write([event]).then(
       () => {
         this.storeRefusing = false;
       },
@@ -357,6 +402,24 @@ export class ClientEventQueue {
   /** True when the event was stored before the page's principal was known. */
   private needsPrincipal(event: StoredEvent): boolean {
     return event.principal === null && this.principal !== undefined;
+  }
+
+  /** How many events could not be kept, once the page-close write has settled. */
+  private async lostAtClose(): Promise<number> {
+    let lost = this.lost;
+    const unsaved = this.memory
+      .filter((event) => this.unpersisted.has(event.id) || this.needsPrincipal(event))
+      .map((event) => this.withPrincipal(event));
+    if (unsaved.length === 0) return lost;
+    const pending = this.memory.filter((event) => this.unpersisted.has(event.id)).length;
+    if (!this.options.store.available || this.storeRefusing) return lost + pending;
+    try {
+      await this.write(unsaved);
+    } catch (error) {
+      this.report("could not persist", error);
+      lost += pending;
+    }
+    return lost;
   }
 
   /** Schedule the next delivery step unless one is already scheduled. */
@@ -388,37 +451,43 @@ export class ClientEventQueue {
     const wait = this.rateWait();
     if (wait > 0) return this.schedule(wait);
     this.inFlight = true;
+    const epoch = this.epoch;
     let batch: StoredEvent[] = [];
     try {
       batch = await this.nextBatch();
-      if (batch.length === 0) return;
+      if (!this.sameEpoch(epoch) || batch.length === 0) return;
       this.requests.push(Date.now());
       const ack = await this.options.transport(this.requestOf(batch));
-      await this.accept(batch, ack);
+      if (!this.sameEpoch(epoch)) return;
+      await this.accept(batch, ack, epoch);
     } catch (error) {
-      await this.failed(batch, error);
+      if (this.sameEpoch(epoch)) await this.failed(batch, error, epoch);
     } finally {
       this.inFlight = false;
+      if (!this.stopped && !this.sameEpoch(epoch)) this.schedule(0);
     }
-    if (!this.stopped && (this.memory.length > 0 || this.backlogPending)) this.schedule(0);
+    if (this.sameEpoch(epoch) && !this.stopped && (this.memory.length > 0 || this.backlogPending)) {
+      this.schedule(0);
+    }
   }
 
   /** The events of the next request, oldest first, within the bounds. */
   private async nextBatch(): Promise<StoredEvent[]> {
+    const epoch = this.epoch;
     const alone = this.memory.find((event) => this.singles.has(event.id));
     if (alone) return [alone];
     if (this.backlogPending && this.principal === undefined) return this.memory.slice(0, 1);
-    if (this.backlogPending) {
-      const earlier = await this.options.store.list(this.options.host, {
-        beforeSeq: this.floor,
-        limit: this.batchEvents,
-        principals: [this.principal ?? null, null],
-      });
-      const alone = earlier.find((event) => this.singles.has(event.id));
-      if (alone) return [this.withPrincipal(alone)];
-      if (earlier.length > 0) return this.fit(earlier.map((event) => this.withPrincipal(event)));
-      this.backlogPending = false;
-    }
+    if (!this.backlogPending) return this.fit(this.memory);
+    const earlier = await this.options.store.list(this.options.host, {
+      beforeSeq: this.floor,
+      limit: this.batchEvents,
+      principals: [this.principal ?? null, null],
+    });
+    if (!this.sameEpoch(epoch)) return [];
+    const named = earlier.find((event) => this.singles.has(event.id));
+    if (named) return [this.withPrincipal(named)];
+    if (earlier.length > 0) return this.fit(earlier.map((event) => this.withPrincipal(event)));
+    this.backlogPending = false;
     return this.fit(this.memory);
   }
 
@@ -469,7 +538,12 @@ export class ClientEventQueue {
   }
 
   /** The route acknowledged a batch: forget its events, learn the principal, refill. */
-  private async accept(batch: readonly StoredEvent[], ack: ClientEventsAck): Promise<void> {
+  private async accept(
+    batch: readonly StoredEvent[],
+    ack: ClientEventsAck,
+    epoch: number,
+  ): Promise<void> {
+    if (!this.sameEpoch(epoch)) return;
     this.failures = 0;
     const acknowledged = new Set(ack.acknowledged);
     const ids = batch.filter((event) => acknowledged.has(event.id)).map((event) => event.id);
@@ -478,28 +552,82 @@ export class ClientEventQueue {
       this.unpersisted.delete(id);
       this.singles.delete(id);
     }
-    this.learnPrincipal(ack.principal);
+    await this.learnPrincipal(ack.principal, epoch);
+    if (!this.sameEpoch(epoch)) return;
     await this.options.store
       .remove(ids)
       .catch((error: unknown) => this.report("could not remove", error));
+    if (!this.sameEpoch(epoch)) return;
     await this.refill();
   }
 
-  /** Take the principal an acknowledgement named; park the events of another one. */
-  private learnPrincipal(principal: string): void {
-    if (this.principal === principal) return;
+  /** Take the principal an acknowledgement named, and store it on every event still queued. */
+  private async learnPrincipal(principal: string, epoch: number): Promise<void> {
+    if (!this.sameEpoch(epoch) || this.principal === principal) return;
     this.principal = principal;
     const mine: StoredEvent[] = [];
     const held: StoredEvent[] = [];
     for (const event of this.memory) {
       (event.principal === null || event.principal === principal ? mine : held).push(event);
     }
+    await this.parkHeld(held, epoch);
+    if (!this.sameEpoch(epoch)) return;
     this.memory = mine.map((event) => this.withPrincipal(event));
-    for (const event of held) this.unpersisted.delete(event.id);
+    await this.persistPrincipal(epoch);
+    if (!this.sameEpoch(epoch)) return;
+    await this.stampStored(principal, epoch);
+  }
+
+  /** Keep events of another principal in the store; count the ones that could not be written. */
+  private async parkHeld(held: readonly StoredEvent[], epoch: number): Promise<void> {
+    if (held.length === 0 || !this.sameEpoch(epoch)) return;
+    try {
+      await this.write(held);
+      if (!this.sameEpoch(epoch)) return;
+      for (const event of held) this.unpersisted.delete(event.id);
+    } catch (error) {
+      this.loseUnpersisted(held);
+      this.report("could not park", error);
+    }
+  }
+
+  /** Write this page's principal onto the events still in memory. */
+  private async persistPrincipal(epoch: number): Promise<void> {
+    try {
+      await this.write(this.memory);
+      if (!this.sameEpoch(epoch)) return;
+      for (const event of this.memory) this.unpersisted.delete(event.id);
+    } catch (error) {
+      for (const event of this.memory) this.unpersisted.add(event.id);
+      this.report("could not store the principal", error);
+    }
+  }
+
+  /** Write this page's principal onto stored events that have none yet. */
+  private async stampStored(principal: string, epoch: number): Promise<void> {
+    let afterSeq = 0;
+    for (;;) {
+      if (!this.sameEpoch(epoch)) return;
+      const page = await this.options.store.list(this.options.host, {
+        afterSeq,
+        limit: STAMP_PAGE,
+        principals: [null],
+      });
+      if (!this.sameEpoch(epoch) || page.length === 0) return;
+      const last = page[page.length - 1]?.seq ?? afterSeq;
+      try {
+        await this.write(page.map((event) => ({ ...event, principal })));
+      } catch (error) {
+        this.report("could not store the principal", error);
+      }
+      if (!this.sameEpoch(epoch) || last <= afterSeq) return;
+      afterSeq = last;
+    }
   }
 
   /** Move events that spilled into the store back into memory, oldest first, while there is room. */
   private async refill(): Promise<void> {
+    const epoch = this.epoch;
     const room = this.cap - this.memory.length;
     if (this.spilled === 0 || room <= 0) return;
     const tail = this.memory[this.memory.length - 1]?.seq ?? this.floor - 1;
@@ -508,26 +636,35 @@ export class ClientEventQueue {
       limit: room,
       principals: [this.principal ?? null, null],
     });
-    if (read.length === 0) this.spilled = 0;
+    if (!this.sameEpoch(epoch) || read.length === 0) {
+      if (this.sameEpoch(epoch) && read.length === 0) this.spilled = 0;
+      return;
+    }
     this.spilled = Math.max(0, this.spilled - read.length);
     this.memory.push(...read.map((event) => this.withPrincipal(event)));
   }
 
   /** A request failed: split a refused batch, otherwise wait and send the same events again. */
-  private async failed(batch: readonly StoredEvent[], error: unknown): Promise<void> {
+  private async failed(
+    batch: readonly StoredEvent[],
+    error: unknown,
+    epoch: number,
+  ): Promise<void> {
+    if (!this.sameEpoch(epoch)) return;
     if (batch.length === 0) {
       this.report("could not read the stored client events", error);
       this.failures += 1;
       return this.schedule(backoffDelay(this.failures));
     }
-    if (isBatchRefusal(error)) return this.refused(batch);
+    if (isBatchRefusal(error)) return this.refused(batch, epoch);
     this.failures += 1;
     const retryAfter = error instanceof ApiError ? (error.retryAfterMs ?? 0) : 0;
     this.schedule(Math.max(backoffDelay(this.failures), retryAfter));
   }
 
   /** A batch was refused: resend its events alone; a single one the route refuses is replaced. */
-  private async refused(batch: readonly StoredEvent[]): Promise<void> {
+  private async refused(batch: readonly StoredEvent[], epoch: number): Promise<void> {
+    if (!this.sameEpoch(epoch)) return;
     if (batch.length > 1) {
       for (const event of batch) this.singles.add(event.id);
       return this.schedule(0);
@@ -536,9 +673,11 @@ export class ClientEventQueue {
     this.singles.delete(event.id);
     this.memory = this.memory.filter((held) => held.id !== event.id);
     this.unpersisted.delete(event.id);
+    if (!this.sameEpoch(epoch)) return;
     await this.options.store
       .remove([event.id])
       .catch((error: unknown) => this.report("could not remove", error));
+    if (!this.sameEpoch(epoch)) return;
     if (this.replacements.has(event.id)) {
       this.report(`the route refused a ${REFUSED_CODE} event of ${event.component}; it is dropped`);
       return this.schedule(0);

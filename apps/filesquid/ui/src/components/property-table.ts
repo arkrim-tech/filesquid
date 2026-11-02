@@ -131,7 +131,7 @@ const STYLE = `
   .row dt .label, .row dt .key { flex: 1 1 auto; min-width: 0; }
   .row dd .value { display: block; padding-inline-end: var(--fs-row-actions); }
   .row dd .note { display: block; padding-inline-end: var(--fs-row-actions); color: var(--fs-on-surface-variant); }
-  .row.inline-note dd .value, .row dd .note.inline { display: inline; padding-inline-end: 0; }
+  .row.inline-note dd .value, .row dd .note.inline { display: inline; }
   .row dd .note.inline { margin-inline-start: var(--fs-space-1); color: var(--fs-on-surface-muted); }
   .row:hover dt, .row:focus-within dt { color: var(--fs-on-surface-variant); }
   .row dd { color: var(--fs-on-surface); }

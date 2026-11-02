@@ -37,10 +37,19 @@ describe("the entry a live event becomes", () => {
     });
   });
 
-  it("marks failed and refused entries and downloads journal-only", () => {
-    expect(liveEntryView(live({ outcome: "failed" })).provenance.journal_only).toBe(true);
+  it("marks failed, refused, download and incomplete entries journal-only", () => {
+    expect(liveEntryView(live({ outcome: "failed" })).provenance).toEqual({ journal_only: true });
     expect(liveEntryView(live({ operation: DENIED_OPERATION })).provenance.journal_only).toBe(true);
     expect(liveEntryView(live({ operation: "file.download" })).provenance.journal_only).toBe(true);
+    expect(liveEntryView(live({ operation_id: undefined })).provenance).toEqual({
+      journal_only: true,
+    });
+    expect(liveEntryView(live({ object_ref: undefined })).provenance).toEqual({
+      journal_only: true,
+    });
+    const carried = live() as JournalEntry & { provenance?: { journal_only?: boolean } };
+    carried.provenance = { journal_only: true };
+    expect(liveEntryView(carried).provenance).toEqual({ journal_only: true });
   });
 
   it("keeps every field of the entry and adds no name", () => {
@@ -63,6 +72,8 @@ describe("merging live entries into the list", () => {
   it("puts the newest first and keeps each ID once", () => {
     const merged = mergeNewest([row(5), row(4)], [row(6), row(5)]);
     expect(merged.map((e) => e.id)).toEqual([6, 5, 4]);
+    const again = mergeNewest([row(4)], [row(6), row(5), row(6)]);
+    expect(again.map((e) => e.id)).toEqual([6, 5, 4]);
   });
 
   it("keeps the list as it is when there is nothing new", () => {

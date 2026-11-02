@@ -12,7 +12,7 @@
 import type { Page, WebSocketRoute } from "@playwright/test";
 import type { JournalEntryView, JournalFilters } from "../../../src/api/client";
 import { serveNavigation } from "./navigation-api";
-import { LIBRARY, journalPage, mockupEntries, matchesRoute } from "../../support/logs-fakes";
+import { LIBRARY, csvOf, journalPage, mockupEntries, matchesRoute } from "../../support/logs-fakes";
 
 export { LIBRARY };
 
@@ -51,6 +51,8 @@ export interface LogsApi {
   emit(entry: JournalEntryView): void;
   /** Push any event. */
   emitTopic(topic: string, data?: unknown): void;
+  /** Resolves when the page's event channel is connected. */
+  readonly connected: Promise<void>;
 }
 
 /** The numeric filters and text filters of a request URL, as the contract names them. */
@@ -82,27 +84,6 @@ function filtersOf(url: URL): JournalFilters {
   return filters as JournalFilters;
 }
 
-/** The CSV of entries, flattened: one header row, then one row per entry. */
-export function csvOf(entries: readonly JournalEntryView[], header: boolean): string {
-  const columns = [
-    "id",
-    "time",
-    "host",
-    "actor",
-    "operation",
-    "outcome",
-    "level",
-    "target_ids",
-    "operation_id",
-    "object_ref",
-  ] as const;
-  const cell = (value: unknown) => `"${String(value ?? "").replace(/"/g, '""')}"`;
-  const lines = entries.map((e) =>
-    columns.map((c) => cell(c === "target_ids" ? e.target_ids.join(";") : e[c])).join(","),
-  );
-  return [...(header ? [columns.join(",")] : []), ...lines].join("\r\n") + "\r\n";
-}
-
 /** A JSON error body of the contract. */
 function refusal(status: number, code: string) {
   return { status, json: { code, message: "refused", retryable: status >= 500 } };
@@ -121,6 +102,10 @@ export async function serveLogs(
 ): Promise<LogsApi> {
   const sockets: WebSocketRoute[] = [];
   let denied: { status: number; code: string } | undefined;
+  let markConnected = (): void => undefined;
+  const connected = new Promise<void>((resolve) => {
+    markConnected = resolve;
+  });
   const api: LogsApi = {
     entries,
     pageQueries: [],
@@ -138,12 +123,16 @@ export async function serveLogs(
     },
     emitTopic: (topic, data = {}) =>
       sockets.forEach((socket) => socket.send(JSON.stringify({ topic, data }))),
+    connected,
   };
   await page.route("**/api/v1/health", (route) =>
     route.fulfill({ json: { schema_version: 1, status: "ok", product: "filesquid" } }),
   );
   await page.route(/\/api\/v1\/host$/, (route) => route.fulfill({ json: DESKTOP }));
-  await page.routeWebSocket(/\/api\/v1\/events$/, (socket) => void sockets.push(socket));
+  await page.routeWebSocket(/\/api\/v1\/events$/, (socket) => {
+    sockets.push(socket);
+    markConnected();
+  });
   await page.route(/\/api\/v1\/libraries\/recent$/, (route) =>
     route.fulfill({
       json: {
@@ -220,9 +209,10 @@ function exportAnswer(api: LogsApi, filters: JournalFilters) {
     .filter((entry) => filters.after === undefined || (entry.id ?? 0) > filters.after);
   const chunk = api.exportChunk > 0 ? api.exportChunk : 50_000;
   const part = ordered.slice(0, chunk).map((entry) => {
-    const copy = { ...entry };
-    delete copy.display_name;
-    return copy;
+    const { display_name: _displayName, provenance: _provenance, ...rest } = entry;
+    void _displayName;
+    void _provenance;
+    return rest;
   });
   const next = ordered.length > chunk ? part[part.length - 1]?.id : undefined;
   const csv = filters.format === "csv";

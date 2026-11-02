@@ -277,6 +277,8 @@ export function matchesRoute(entry: JournalEntryView, f: JournalFilters): boolea
   if (f.operation !== undefined && entry.operation !== f.operation) return false;
   if (f.outcome !== undefined && entry.outcome !== f.outcome) return false;
   if (f.level !== undefined && entry.level !== f.level) return false;
+  if (f.actor !== undefined && entry.actor !== f.actor) return false;
+  if (f.process !== undefined && entry.process_id !== f.process) return false;
   if (f.library !== undefined && !entry.target_ids.includes(f.library)) return false;
   if (f.file !== undefined && !namesFile(entry, f.file)) return false;
   if (f.object !== undefined && !namesFile(entry, f.object)) return false;
@@ -311,13 +313,64 @@ function withoutName(entry: JournalEntryView): JournalEntryView {
   return copy;
 }
 
+/** An export entry: the journal row without the display name or the PROV-O link. */
+function exportEntry(entry: JournalEntryView): JournalEntryView {
+  const { display_name: _displayName, provenance: _provenance, ...rest } = entry;
+  void _displayName;
+  void _provenance;
+  return rest as JournalEntryView;
+}
+
+/** Quote a CSV field when it contains a comma, a quote or a line break (RFC 4180). */
+function csvCell(value: unknown): string {
+  const text = value === undefined || value === null ? "" : String(value);
+  return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+/** The CSV columns of `GET /api/v1/admin/journal/export`, in the route's order. */
+const CSV_COLUMNS = [
+  "id",
+  "time",
+  "host",
+  "process_id",
+  "actor",
+  "operation",
+  "outcome",
+  "level",
+  "target_ids",
+  "duration_ms",
+  "error_code",
+  "operation_id",
+  "object_ref",
+  "client_event_id",
+] as const;
+
+/**
+ * The CSV of entries, one header row then one row per entry. `target_ids` are space-separated.
+ * Absent fields are empty. Lines end with CRLF.
+ */
+type CsvRow = Pick<JournalEntryView, (typeof CSV_COLUMNS)[number]>;
+
+export function csvOf(entries: readonly CsvRow[], header: boolean): string {
+  const line = (entry: CsvRow) =>
+    CSV_COLUMNS.map((column) =>
+      csvCell(column === "target_ids" ? entry.target_ids.join(" ") : entry[column]),
+    ).join(",");
+  const rows = header ? [CSV_COLUMNS.join(","), ...entries.map(line)] : entries.map(line);
+  return rows.join("\r\n") + "\r\n";
+}
+
 /** The JSON Lines of the entries the filters select, oldest first, opaque IDs only. */
 export function exportJsonl(all: readonly JournalEntryView[], f: JournalFilters): string {
   const page = journalPage(all, { ...f, order: "asc", limit: 50_000, names: false });
-  return (
-    page.entries.map((entry) => JSON.stringify(entry)).join("\n") +
-    (page.entries.length ? "\n" : "")
-  );
+  const lines = page.entries.map((entry) => JSON.stringify(exportEntry(entry)));
+  return lines.join("\n") + (lines.length ? "\n" : "");
+}
+
+/** The CSV of the entries the filters select, oldest first, one header row. */
+export function exportCsv(all: readonly JournalEntryView[], f: JournalFilters): string {
+  const page = journalPage(all, { ...f, order: "asc", limit: 50_000, names: false });
+  return csvOf(page.entries.map(exportEntry), true);
 }
 
 /** A {@link LogsSource} over entries held in memory, recording every call. */
@@ -354,7 +407,8 @@ export class MemoryLogsSource implements LogsSource {
     return journalPage(this.entries, filters);
   }
 
-  async entry(id: number): Promise<JournalEntryView> {
+  async entry(id: number, options?: { signal?: AbortSignal }): Promise<JournalEntryView> {
+    void options;
     this.entryReads.push(id);
     if (this.entryError) throw this.entryError;
     const found = this.entries.find((e) => e.id === id);
@@ -365,7 +419,9 @@ export class MemoryLogsSource implements LogsSource {
   async export(filters: Omit<JournalFilters, "after" | "limit" | "names">): Promise<string> {
     this.exports.push(filters);
     if (this.exportError) throw this.exportError;
-    return exportJsonl(this.entries, filters);
+    return filters.format === "csv"
+      ? exportCsv(this.entries, filters)
+      : exportJsonl(this.entries, filters);
   }
 
   async oldest(): Promise<JournalEntryView | undefined> {

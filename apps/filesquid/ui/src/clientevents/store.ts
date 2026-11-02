@@ -77,16 +77,18 @@ export interface EventStore {
   list(host: string, options?: ListOptions): Promise<StoredEvent[]>;
   /** The number of events held for `host`. */
   count(host: string): Promise<number>;
+  /** The greatest stored `seq` for `host`, or 0 when that host has none. */
+  maxSeq(host: string): Promise<number>;
 }
 
 /**
- * The bytes an event counts against the budget. Pure.
+ * The bytes an event counts against the budget: the UTF-8 length of its JSON text. Pure.
  *
  * @param event The event.
- * @returns The length of its JSON text.
+ * @returns The UTF-8 byte length of `JSON.stringify(event)`.
  */
 export function eventBytes(event: StoredEvent): number {
-  return JSON.stringify(event).length;
+  return new TextEncoder().encode(JSON.stringify(event)).length;
 }
 
 /** A store that has no storage: every write is refused, and nothing is ever held. */
@@ -112,6 +114,11 @@ export class UnavailableEventStore implements EventStore {
   async count(): Promise<number> {
     return 0;
   }
+
+  /** Nothing is held, so the greatest sequence is 0. */
+  async maxSeq(): Promise<number> {
+    return 0;
+  }
 }
 
 /** Name of the IndexedDB database. */
@@ -124,8 +131,6 @@ const META = "meta";
 const BYTES_KEY = "bytes";
 /** Index over the host and the sequence number. */
 const BY_HOST_SEQ = "byHostSeq";
-/** Most records one list call looks at, so a store full of other principals' events is still bounded. */
-const MAX_SCAN = 200_000;
 
 /** A record as stored: the event and the bytes it counts. */
 type Record = StoredEvent & { readonly bytes: number };
@@ -277,10 +282,8 @@ export class IndexedDbEventStore implements EventStore {
     const range = IDBKeyRange.bound([host, afterSeq], [host, beforeSeq], true, true);
     const index = this.db.transaction(EVENTS, "readonly").objectStore(EVENTS).index(BY_HOST_SEQ);
     const found: StoredEvent[] = [];
-    let scanned = 0;
     let cursor = await result(index.openCursor(range));
-    while (cursor && found.length < limit && scanned < MAX_SCAN) {
-      scanned += 1;
+    while (cursor && found.length < limit) {
       const event = eventOf(cursor.value as Record);
       if (principals === undefined || principals.includes(event.principal)) found.push(event);
       cursor = await advance(cursor);
@@ -299,6 +302,21 @@ export class IndexedDbEventStore implements EventStore {
     const range = IDBKeyRange.bound([host, 0], [host, Number.MAX_SAFE_INTEGER]);
     const index = this.db.transaction(EVENTS, "readonly").objectStore(EVENTS).index(BY_HOST_SEQ);
     return result(index.count(range));
+  }
+
+  /**
+   * The greatest stored `seq` of `host`, or 0 when none is stored. Reads IndexedDB (I/O).
+   *
+   * @param host The host.
+   * @returns The greatest `seq`, or 0.
+   * @throws Error when the read fails.
+   */
+  async maxSeq(host: string): Promise<number> {
+    const range = IDBKeyRange.bound([host, 0], [host, Number.MAX_SAFE_INTEGER]);
+    const index = this.db.transaction(EVENTS, "readonly").objectStore(EVENTS).index(BY_HOST_SEQ);
+    const cursor = await result(index.openCursor(range, "prev"));
+    if (!cursor) return 0;
+    return eventOf(cursor.value as Record).seq;
   }
 }
 

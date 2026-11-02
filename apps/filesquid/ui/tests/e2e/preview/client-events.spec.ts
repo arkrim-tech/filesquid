@@ -142,7 +142,7 @@ test.describe("delivery", () => {
     await ready(page);
     await warn(page, 3);
     await expect.poll(() => journaled.size, { timeout: 20_000 }).toBe(3);
-    expect(seen.length).toBeGreaterThanOrEqual(2);
+    expect(seen.length).toBe(2);
     expect((seen[1]?.at ?? 0) - (seen[0]?.at ?? 0)).toBeGreaterThanOrEqual(1900);
     expect(seen[1]?.events.map((e) => e.id)).toEqual(seen[0]?.events.map((e) => e.id));
     expect(new Set(probeIds(seen)).size).toBe(3);
@@ -161,6 +161,7 @@ test.describe("delivery", () => {
       await ready(page);
       await warn(page, 3);
       await expect.poll(() => journaled.size, { timeout: 20_000 }).toBe(3);
+      expect(seen.length).toBe(2);
       expect((seen[1]?.at ?? 0) - (seen[0]?.at ?? 0)).toBeGreaterThanOrEqual(900);
       expect(seen[1]?.events.map((e) => e.id)).toEqual(seen[0]?.events.map((e) => e.id));
       expect(errors).toEqual([]);
@@ -286,6 +287,28 @@ test.describe("storage", () => {
   });
 });
 
+/** Record `keepalive` on each client-events fetch (`window.__fsKeepalive`) before the page loads. */
+async function recordKeepalive(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    const win = window as unknown as { __fsKeepalive: boolean[] };
+    win.__fsKeepalive = [];
+    const original = window.fetch.bind(window);
+    window.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      if (url.includes("/api/v1/client-events")) win.__fsKeepalive.push(init?.keepalive === true);
+      return original(input, init);
+    };
+  });
+}
+
+/** The keep-alive flags recorded for client-events fetches in this page. */
+function keepaliveFlags(page: Page): Promise<boolean[]> {
+  return page.evaluate(() => {
+    const win = window as unknown as { __fsKeepalive?: boolean[] };
+    return win.__fsKeepalive ?? [];
+  });
+}
+
 test.describe("the one gap", () => {
   test("counts the events it could not keep when IndexedDB is unavailable, and sends it at page close", async ({
     page,
@@ -294,6 +317,7 @@ test.describe("the one gap", () => {
     await page.addInitScript(() => {
       Object.defineProperty(window, "indexedDB", { value: undefined, configurable: true });
     });
+    await recordKeepalive(page);
     const { all } = await serve(page, () => ({ status: 503 }));
     await ready(page);
     await warn(page, 4);
@@ -307,6 +331,7 @@ test.describe("the one gap", () => {
     expect(overflow).toMatchObject({ kind: "overflow", component: "client-events" });
     expect(overflow?.id).toMatch(/^[0-9a-f-]{36}$/);
     expect(overflow).not.toHaveProperty("error_code");
+    expect(await keepaliveFlags(page)).toContain(true);
     expect(errors).toEqual([]);
   });
 
@@ -317,6 +342,7 @@ test.describe("the one gap", () => {
         throw new DOMException("The quota has been exceeded", "QuotaExceededError");
       };
     });
+    await recordKeepalive(page);
     const { all } = await serve(page, () => ({ status: 503 }));
     await ready(page);
     await warn(page, 4);
@@ -326,6 +352,10 @@ test.describe("the one gap", () => {
       .toBe(true);
     const overflow = all.flatMap((s) => s.events).find((e) => e.kind === "overflow");
     expect(overflow?.count).toBeGreaterThanOrEqual(4);
+    expect(overflow).toMatchObject({ kind: "overflow", component: "client-events" });
+    expect(overflow?.id).toMatch(/^[0-9a-f-]{36}$/);
+    expect(overflow).not.toHaveProperty("error_code");
+    expect(await keepaliveFlags(page)).toContain(true);
     expect(errors).toEqual([]);
   });
 });

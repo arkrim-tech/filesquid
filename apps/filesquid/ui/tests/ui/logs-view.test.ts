@@ -311,11 +311,13 @@ describe("<fs-logs> search", () => {
     expect(rows(view)).toHaveLength(2);
   });
 
-  it("does not search for text it cannot match, and says what it can be", async () => {
+  it("searches an opaque operation id, and says what text it cannot match", async () => {
     const source = new MemoryLogsSource();
     const view = await mount(source);
-    const before = source.pages.length;
     await search(view, "harbour-masterplan-v7.pdf");
+    expect(source.pages.at(-1)?.operation_id).toBe("harbour-masterplan-v7.pdf");
+    const before = source.pages.length;
+    await search(view, "not an id");
     expect(source.pages).toHaveLength(before);
     const hint = root(view).querySelector(".hint") as HTMLElement;
     expect(hint.hidden).toBe(false);

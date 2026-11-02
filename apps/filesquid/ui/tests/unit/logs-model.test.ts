@@ -101,11 +101,11 @@ describe("the journal query of a filter", () => {
       operation: "ocfl.commit",
       outcome: "failed",
       level: "error",
-      file: FILE,
       object: `urn:uuid:${FILE}`,
       operation_id: OP,
       after: 99,
     });
+    expect(query.file).toBeUndefined();
   });
 
   it("asks a refused outcome as the operation of every refusal", () => {
@@ -143,9 +143,16 @@ describe("the search text", () => {
     });
   });
 
-  it("does not search the journal for text it cannot match to an ID or an operation", () => {
-    expect(classifySearch("harbour-masterplan-v7.pdf")).toEqual({ kind: "none" });
-    expect(classifySearch("hello")).toEqual({ kind: "none" });
+  it("takes any other opaque id as an operation ID", () => {
+    expect(classifySearch("harbour-masterplan-v7.pdf")).toEqual({
+      kind: "operation_id",
+      value: "harbour-masterplan-v7.pdf",
+    });
+    expect(classifySearch("hello")).toEqual({ kind: "operation_id", value: "hello" });
+  });
+
+  it("does not search the journal for text that is not an opaque id", () => {
+    expect(classifySearch("not an id")).toEqual({ kind: "none" });
   });
 
   it("puts the searched value in the member the journal route filters on", () => {
@@ -157,6 +164,12 @@ describe("the search text", () => {
     expect(op.operation_id).toBe(OP);
     const file = searchedFilter(EMPTY_FILTER, { kind: "uuid", value: FILE }, "file");
     expect(file.file).toBe(FILE);
+    const opaque = searchedFilter(
+      { ...EMPTY_FILTER, operation: "ocfl.commit" },
+      { kind: "operation_id", value: "hello" },
+    );
+    expect(opaque.operation).toBeUndefined();
+    expect(opaque.operation_id).toBe("hello");
   });
 
   it("replaces the earlier search: one search member at a time, other filters kept", () => {
@@ -272,7 +285,7 @@ describe("the words under the table and in the footer", () => {
 
   it("counts entries in the singular and the plural", () => {
     expect(entryCountText(labels, 1)).toBe("1 entry");
-    expect(entryCountText(labels, 12408)).toMatch(/^12.408 entries$/);
+    expect(entryCountText(labels, 12408)).toBe("12,408 entries");
   });
 
   it("names the time zone as an offset from UTC", () => {
@@ -365,6 +378,13 @@ describe("live entries", () => {
     const refusal = entry({ operation: DENIED_OPERATION, outcome: "failed" });
     expect(matchesFilter(refusal, { ...EMPTY_FILTER, outcome: "refused" }, since)).toBe(true);
     expect(matchesFilter(entry(), { ...EMPTY_FILTER, outcome: "refused" }, since)).toBe(false);
+    expect(
+      matchesFilter(
+        refusal,
+        { ...EMPTY_FILTER, outcome: "refused", operation: "ocfl.commit" },
+        since,
+      ),
+    ).toBe(true);
   });
 });
 

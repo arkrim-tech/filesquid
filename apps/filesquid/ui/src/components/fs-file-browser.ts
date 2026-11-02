@@ -174,8 +174,9 @@ export class FsFileBrowser extends HTMLElement {
    * Ask the browser to open the file whose own original is `request.file` once its folder is
    * listed (the deep link of the Logs view, UI-S-021), with `request.tab` as the panel's tab
    * (`fs-file-open` carries it). Set it before the location: a folder already shown opens the
-   * file at once, otherwise it opens when the listing loads. An answered or unanswerable request
-   * is forgotten, so a later listing never opens a file by itself.
+   * file at once, otherwise it opens when the listing loads, reading further pages until the
+   * file is found or the listing ends. An answered request, or one this object's listing cannot
+   * answer, is forgotten, so a later listing never opens a file by itself.
    */
   set openRequest(request: OpenRequest | undefined) {
     this.requested = request;
@@ -416,6 +417,7 @@ export class FsFileBrowser extends HTMLElement {
     if (!options || this.cursor === null || this.loadingMore || this.pages >= limit) return;
     this.loadingMore = true;
     const generation = this.generation;
+    const pagesBefore = this.pages;
     try {
       const page = await options.source.list(
         this.where,
@@ -435,6 +437,7 @@ export class FsFileBrowser extends HTMLElement {
     } finally {
       this.loadingMore = false;
     }
+    if (generation === this.generation && this.pages !== pagesBefore) this.openRequested();
   }
 
   /** Show the loaded entries; return focus to the first row if it was in the old list. */
@@ -552,13 +555,28 @@ export class FsFileBrowser extends HTMLElement {
     else this.openFile(row);
   }
 
-  /** Answer the pending open request from the rows shown now, then forget it. */
+  /**
+   * Answer the pending open request from the rows shown now. A same-named original of another
+   * object is left alone. The request stays until the file is opened or this object's listing
+   * has no further page.
+   */
   private openRequested(): void {
     const request = this.requested;
-    this.requested = undefined;
     if (!request) return;
+    const wanted = `urn:uuid:${request.file}`.toLowerCase();
+    if (this.where.object_id.toLowerCase() !== wanted) return;
     const row = this.rows.find((r) => r.kind === "file" && isOriginalPath(r.path, request.file));
-    if (row) this.openFile(row, request.tab);
+    if (row) {
+      this.requested = undefined;
+      this.openFile(row, request.tab);
+      return;
+    }
+    const limit = this.options?.maxPages ?? MAX_LISTING_PAGES;
+    if (this.cursor === null || this.pages >= limit) {
+      this.requested = undefined;
+      return;
+    }
+    if (!this.loadingMore) void this.loadMore();
   }
 
   /** Open a file in the viewer. */

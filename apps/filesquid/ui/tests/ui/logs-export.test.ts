@@ -10,7 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "../../src/api/client";
 import { defineElements, type FsLogs } from "../../src/index";
 import labels from "../../src/theme/labels.en.json";
-import { LIBRARY, MemoryLogsSource, NOW } from "../support/logs-fakes";
+import { LIBRARY, MemoryLogsSource, NOW, journalPage, mockupEntries } from "../support/logs-fakes";
 
 beforeEach(() => defineElements());
 afterEach(() => {
@@ -80,9 +80,7 @@ describe("the Download logs dialog", () => {
     ]);
     const lines = [...dialog.querySelectorAll(".scope-option .line")].map((n) => n.textContent);
     expect(lines[0]).toBe("Last 24 hours · all libraries · all operations · 16 entries");
-    expect(lines[1]).toMatch(
-      /^2026-10-12 \d\d:\d\d to 2026-10-19 \d\d:\d\d, your time \(UTC\+2\)$/,
-    );
+    expect(lines[1]).toBe("2026-10-12 13:10 to 2026-10-19 13:10, your time (UTC+2)");
     expect(lines[2]).toBe("Every entry since Oct 19, 2026");
     const cards = [...dialog.querySelectorAll(".card")].map((c) => c.textContent);
     expect(cards).toEqual([
@@ -127,6 +125,7 @@ describe("Download", () => {
     expect(text.trim().split("\n")).toHaveLength(16);
     expect(JSON.parse(text.split("\n")[0] ?? "{}").operation).toBe("ocfl.commit");
     expect(text).not.toContain("display_name");
+    expect(text).not.toContain("provenance");
     expect(root.querySelector('[role="dialog"]')).toBeNull();
     expect(root.activeElement).toBe(opener);
     expect(root.querySelector(".announce")?.textContent).toBe(
@@ -142,6 +141,13 @@ describe("Download", () => {
     expect(source.exports[0]?.format).toBe("csv");
     expect(saved[0]?.name).toBe("filesquid-logs-2026-10-19.csv");
     expect(saved[0]?.blob.type).toContain("text/csv");
+    const csv = await textOf(saved[0]?.blob as Blob);
+    expect(
+      csv.startsWith(
+        "id,time,host,process_id,actor,operation,outcome,level,target_ids,duration_ms,error_code,operation_id,object_ref,client_event_id\r\n",
+      ),
+    ).toBe(true);
+    expect(csv).not.toContain("provenance");
   });
 
   it("exports all entries with nothing but the format", async () => {
@@ -172,8 +178,8 @@ describe("Download", () => {
     await settle();
     const query = source.exports[0];
     expect(query?.format).toBe("jsonl");
-    expect(query?.from).toBe(new Date("2026-10-01T00:00").toISOString());
-    expect(query?.to).toBe(new Date("2026-10-02T12:30").toISOString());
+    expect(query?.from).toBe("2026-09-30T22:00:00.000Z");
+    expect(query?.to).toBe("2026-10-02T10:30:00.000Z");
   });
 
   it("refuses a range that does not start before it ends, and a name with a slash, without sending", async () => {
@@ -208,6 +214,8 @@ describe("Download", () => {
     (dialog.querySelector("button.submit") as HTMLButtonElement).click();
     expect(dialog.getAttribute("aria-busy")).toBe("true");
     expect((dialog.querySelector("button.submit") as HTMLButtonElement).disabled).toBe(true);
+    expect((dialog.querySelector('input[name="scope"]') as HTMLInputElement).disabled).toBe(true);
+    expect((dialog.querySelector("button.choose") as HTMLButtonElement).disabled).toBe(true);
     expect(dialog.querySelector(".busy")?.textContent).toBe(labels.logsExportBusy);
     await settle();
     const alert = dialog.querySelector('[role="alert"]') as HTMLElement;
@@ -215,6 +223,8 @@ describe("Download", () => {
     expect(saved).toHaveLength(0);
     expect(root.querySelector('[role="dialog"]')).toBe(dialog);
     expect((dialog.querySelector("button.submit") as HTMLButtonElement).disabled).toBe(false);
+    expect((dialog.querySelector('input[name="scope"]') as HTMLInputElement).disabled).toBe(false);
+    expect((dialog.querySelector("button.choose") as HTMLButtonElement).disabled).toBe(true);
     // Another try, once the route answers, saves.
     source.exportError = undefined;
     (dialog.querySelector("button.submit") as HTMLButtonElement).click();
@@ -252,6 +262,59 @@ describe("Choose…", () => {
     await settle();
     expect(written).toHaveLength(1);
     expect(saved).toHaveLength(0);
+  });
+
+  it("downloads normally after the format changes, and drops the file that was chosen", async () => {
+    const written: Blob[] = [];
+    const target = {
+      name: "from-the-dialog.jsonl",
+      createWritable: async () => ({
+        write: async (blob: Blob) => void written.push(blob),
+        close: async () => undefined,
+        abort: async () => undefined,
+      }),
+    };
+    (window as unknown as Record<string, unknown>)["showSaveFilePicker"] = vi.fn(
+      async () => target,
+    );
+    const { dialog, saved } = await open();
+    (dialog.querySelector("button.choose") as HTMLButtonElement).click();
+    await settle();
+    pick(dialog, "format", "csv");
+    expect((dialog.querySelector("#logs-export-name") as HTMLInputElement).value).toBe(
+      "filesquid-logs-2026-10-19.csv",
+    );
+    (dialog.querySelector("button.submit") as HTMLButtonElement).click();
+    await settle();
+    expect(written).toHaveLength(0);
+    expect(saved[0]?.name).toBe("filesquid-logs-2026-10-19.csv");
+  });
+
+  it("keeps an edited name when the format changes and does not write the chosen file", async () => {
+    const written: Blob[] = [];
+    const target = {
+      name: "from-the-dialog.jsonl",
+      createWritable: async () => ({
+        write: async (blob: Blob) => void written.push(blob),
+        close: async () => undefined,
+        abort: async () => undefined,
+      }),
+    };
+    (window as unknown as Record<string, unknown>)["showSaveFilePicker"] = vi.fn(
+      async () => target,
+    );
+    const { dialog, saved } = await open();
+    (dialog.querySelector("button.choose") as HTMLButtonElement).click();
+    await settle();
+    const name = dialog.querySelector("#logs-export-name") as HTMLInputElement;
+    name.value = "support.jsonl";
+    name.dispatchEvent(new Event("input", { bubbles: true }));
+    pick(dialog, "format", "csv");
+    expect(name.value).toBe("support.jsonl");
+    (dialog.querySelector("button.submit") as HTMLButtonElement).click();
+    await settle();
+    expect(written).toHaveLength(0);
+    expect(saved[0]?.name).toBe("support.jsonl");
   });
 
   it("keeps the name when the person cancels the save dialog", async () => {
@@ -306,5 +369,21 @@ describe("focus", () => {
     expect(root.querySelector(".scope-option .line")?.textContent).toBe(
       "Last 24 hours · Family archive · all operations · 14 entries",
     );
+    (root.querySelector("button.submit") as HTMLButtonElement).click();
+    await settle();
+    expect(source.exports[0]?.library).toBe(LIBRARY);
+  });
+});
+
+describe("the journal route the export reads", () => {
+  it("keeps an entry whose actor and process match, and drops the others", () => {
+    const one = mockupEntries()[0];
+    if (one === undefined) throw new Error("fixture");
+    const other = { ...one, id: 1, actor: "urn:uuid:other", process_id: "proc-9" };
+    expect(journalPage([one, other], { process: "proc-9" }).entries.map((e) => e.id)).toEqual([1]);
+    expect(journalPage([one, other], { actor: "urn:uuid:other" }).entries.map((e) => e.id)).toEqual(
+      [1],
+    );
+    expect(journalPage([one, other], { actor: one.actor, process: "proc-9" }).entries).toEqual([]);
   });
 });
