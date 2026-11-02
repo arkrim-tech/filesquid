@@ -1,0 +1,32 @@
+.agents/rules/pr-review-loop.md
+  h_10c93bba641ef0 3,8,10,31-33,45-46,55,59
+.agents/rules/task-workflow.md
+  h_10c93bba641ef0 17-18
+.claude/agents/filesquid-modules-engineer.md
+  h_10c93bba641ef0 58
+.claude/agents/filesquid-orchestrator.md
+  h_10c93bba641ef0 3,84,86-87,121,126,129-131,135-136,139-141,150,156
+.claude/agents/filesquid-platform-engineer.md
+  h_10c93bba641ef0 58
+.claude/agents/filesquid-ui-engineer.md
+  h_10c93bba641ef0 56
+AGENTS.md
+  h_10c93bba641ef0 22,46
+apps/filesquid/ui/resources/tasks/Task-UI-F2.16-Plan.md
+  h_10c93bba641ef0 22
+apps/filesquid/ui/resources/tasks/Task-UI-F2.16-ToDos.md
+  h_10c93bba641ef0 74
+resources/implementation-plan.md
+  h_10c93bba641ef0 146,151
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ac1df9112dc1a2264d11cb2319a6e036920779a1",
+  "prompts": {},
+  "humans": {
+    "h_10c93bba641ef0": {
+      "author": "Peter Van Garderen <vangarderen.peter@gmail.com>"
+    }
+  }
+}
