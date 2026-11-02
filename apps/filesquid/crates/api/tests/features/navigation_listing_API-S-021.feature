@@ -12,17 +12,19 @@ Feature: Navigation listing
   Background:
     Given a navigation fixture with library "Family" holding collection "Photos" and virtual collection "Best of 2025"
     And collection "Photos" holds files at logical paths "2025/summer/beach.jpg" and "2025/winter/snow.jpg"
-    And library "Family" holds an unfiled file at logical path "inbox/note.txt"
 
   # Happy path
   Scenario: The root level is the host's repository
     When the owner lists the navigation tree without a node
     Then the answer should hold exactly one node of kind "repository"
 
-  Scenario: A library lists its collections, virtual collections and unfiled folders in kind order
+  Scenario: A library lists its collections, then its virtual collections, and no folder of its own
     When the owner lists the children of library "Family"
-    Then the kinds should be "collection", "virtual_collection" and "folder" in that order
-    And the folder should be named "inbox"
+    Then the kinds should be "collection" and "virtual_collection" in that order
+
+  Scenario: The repository lists one Recently deleted node after its libraries
+    When the owner lists the children of the repository
+    Then the last node should be the one "recently_deleted" node, with no name and no children
 
   Scenario: A collection lists the folders its files imply
     When the owner lists the children of folder "2025" in collection "Photos"
@@ -86,12 +88,12 @@ Feature: Navigation listing
       | a limit of 1001         |
 
   Scenario: Unknown and unreadable nodes get the same answer
-    Given a second user who may read library "Family" and virtual collection "Best of 2025" but not collection "Photos" or the unfiled files
+    Given a second user who may read library "Family" and virtual collection "Best of 2025" but not collection "Photos"
     When that user lists the children of collection "Photos" and of a node that does not exist
     Then both answers should be the same "not_found" error
 
   Scenario: Only readable children are listed and counted
-    Given a second user who may read library "Family" and virtual collection "Best of 2025" but not collection "Photos" or the unfiled files
+    Given a second user who may read library "Family" and virtual collection "Best of 2025" but not collection "Photos"
     When that user lists the children of the repository
     Then library "Family" should report has_children true
     When that user lists the children of library "Family"

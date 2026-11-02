@@ -94,6 +94,7 @@ fn raw(library_id: &str, revision: &str, op: &str, changes: Vec<CatalogChange>) 
         journal: JournalEntry::new("library.test", Outcome::Succeeded).target(library_id),
         created_id: None,
         deletion: None,
+        restored_into: Vec::new(),
     }
 }
 
@@ -134,7 +135,7 @@ fn catalog_files(root: &std::path::Path) -> Vec<String> {
 fn the_catalog_directory_name_is_stable() {
     assert_eq!(CATALOG_DIR, "libraries");
     assert_eq!(CATALOG_FILE_EXTENSION, "sqlite");
-    assert_eq!(CATALOG_SCHEMA_VERSION, 4);
+    assert_eq!(CATALOG_SCHEMA_VERSION, 5);
 }
 
 #[test]
@@ -333,14 +334,14 @@ fn deleting_a_collection_deletes_its_files_in_place() {
             collection_id: home.clone(),
         },
     );
-    let unfiled = list(
+    let ordinary = list(
         &fx.catalog,
         &lib,
-        FileScope::Unfiled,
+        FileScope::Library,
         VisibilityFilter::Ordinary,
         10,
     );
-    assert!(unfiled.is_empty(), "no file is ever unfiled (ADR 041)");
+    assert!(ordinary.is_empty(), "no file is ever unfiled (ADR 041)");
     let deleted = list(
         &fx.catalog,
         &lib,
@@ -866,6 +867,7 @@ fn scripted(
     let deletion = filesquid_api::library::Deletion {
         deleted_at_ms: 1_000,
         purge_after_ms: 2_000,
+        cause: Default::default(),
     };
     let delete_collection = || CatalogCommit {
         deletion: Some(deletion),
@@ -877,6 +879,7 @@ fn scripted(
                 CatalogChange::DeleteCollectionFiles {
                     collection_id: home.clone(),
                     deletion,
+                    title: "Summer".into(),
                 },
                 CatalogChange::RemoveCollection(home.clone()),
             ],
@@ -893,7 +896,6 @@ fn scripted(
     let mut out = vec![catalog.library(&lib).unwrap().unwrap().revision];
     for scope in [
         FileScope::Library,
-        FileScope::Unfiled,
         FileScope::VirtualCollection {
             virtual_collection_id: vc.clone(),
         },
@@ -1079,7 +1081,12 @@ fn a_version_1_catalog_is_migrated_and_brought_to_its_snapshot() {
          ALTER TABLE files DROP COLUMN dir_key; ALTER TABLE files DROP COLUMN name;
          ALTER TABLE library DROP COLUMN retention_days;
          ALTER TABLE library DROP COLUMN folder_identity;
-         ALTER TABLE library DROP COLUMN snapshot_version; PRAGMA user_version = 1;",
+         ALTER TABLE library DROP COLUMN snapshot_version;
+         ALTER TABLE files DROP COLUMN deletion_cause;
+         ALTER TABLE files DROP COLUMN removed_home_title;
+         ALTER TABLE receipts DROP COLUMN deletion_cause;
+         ALTER TABLE receipts DROP COLUMN restored_into; DROP TABLE pending_purges;
+         PRAGMA user_version = 1;",
     )
     .expect("downgrade");
     drop(conn);

@@ -249,7 +249,7 @@ for (const scheme of SCHEMES) {
       expect(titleLook).toMatchObject({ size: "56px", weight: "700", colour: rgbOf(c.heading) });
       expect(titleLook.family).toMatch(/^Georgia/);
       expect(await look(start.locator(".intro"))).toMatchObject({ size: "17px" });
-      await expect(start.locator(".eyebrow")).toHaveText(label(labels, "libraries"));
+      await expect(start.locator(".page > .eyebrow")).toHaveText(label(labels, "libraries"));
       const cards = start.locator(".cards section");
       await expect(cards).toHaveCount(3);
       for (const [index, x] of [202, 554, 906].entries()) {
@@ -334,7 +334,8 @@ for (const scheme of SCHEMES) {
       await openLibraryPage(page);
       const detail = page.locator("fs-library-detail");
       const title = detail.locator(".page > h2");
-      await expect(title).toHaveText(label(labels, "library"));
+      // The page is titled with the library's name from its facts (the fake's default name).
+      await expect(title).toHaveText("Untitled library");
       expect(await look(title)).toMatchObject({ size: "30px", weight: "700" });
       await expect(detail.locator("[data-section='facts'] h3")).toHaveText(
         label(labels, "libraryFactsTitle"),

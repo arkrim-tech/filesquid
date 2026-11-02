@@ -22,6 +22,7 @@ pub mod message;
 pub mod original;
 pub mod outgoing;
 pub mod store;
+pub mod tombstone;
 mod transform;
 mod unregistered;
 pub mod upload;

@@ -47,6 +47,22 @@ pub fn open_e2e_library(
         .map(|_| ())
 }
 
+/// Environment variable naming the data directory the test-instrumented app uses instead of
+/// the platform's app data directory, so a packaged-window run never touches the owner's own
+/// FileSquid data on any platform, and its tests can remove the operational store between two
+/// launches (Task DE-0.11).
+pub const E2E_DATA_DIR_VARIABLE: &str = "FILESQUID_E2E_DATA_DIR";
+
+/// The data directory named by [`E2E_DATA_DIR_VARIABLE`], when it is set. Reads the
+/// environment.
+///
+/// # Errors
+///
+/// A message when it is set but blank (it never falls back to the working directory).
+pub fn e2e_data_dir() -> Result<Option<std::path::PathBuf>, String> {
+    set_variable(E2E_DATA_DIR_VARIABLE).map(|found| found.map(std::path::PathBuf::from))
+}
+
 /// Environment variable naming a folder whose subfolders `create` and `copy` the
 /// packaged-window tests use as owner-chosen library folders (Task DE-1.1): a native folder
 /// dialog cannot be driven by WebDriver, so the test-instrumented build registers them at

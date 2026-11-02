@@ -6,7 +6,9 @@
  * breadcrumb; the header's search bar (`<fs-search-bar>`, UI-F2.9) opens `#/search/<query>`,
  * the results in the Drive list; `#/settings` shows the Settings page (Appearance with the theme control, Privacy,
  * About with the API status); `#/monitor` shows the Monitor dashboard, whose W010 note links to the library's repair offer;
- * `#/library` creates, opens or recovers a library and `#/library/<id>` shows it; `#/files/<library>/<object>` shows the
+ * `#/library` creates, opens or recovers a library and `#/library/<id>` shows it (a launch with
+ * no address of its own goes there when the host knows no library, UI-S-034; the rebuild of a
+ * library's catalog is followed on `#/library/<id>/rebuild/<job>` and `.../recover/<job>`); `#/files/<library>/<object>` shows the
  * file browser until the API lists files by navigation node, with the file panel (File info and Versions) for the open file. On the desktop host the client
  * uses the per-launch token; on the server host the Monitor asks for the administrator token,
  * which is kept in memory only, and entering it reconnects the event channel and reads the
@@ -27,6 +29,7 @@ import {
   ClientHistorySource,
   ClientProvenanceSource,
   ClientMetadataSource,
+  ClientRebuildJobSource,
   ClientLibrarySource,
   ClientNavigationSource,
   LibraryRegistry,
@@ -45,11 +48,15 @@ import {
   defineElements,
   detectHost,
   libraryRepairHref,
+  mountImports,
+  clientDestinationLookup,
   memoryTokenStore,
+  redirectToFirstUse,
   resolveLocale,
   sharedNavigationStore,
   type Distribution,
   type FsAppShell,
+  type MountedImports,
   type FsNavTree,
   type FsNewMenu,
   type FsSearchBar,
@@ -71,8 +78,10 @@ theme.start();
 defineElements();
 const shell = document.querySelector<FsAppShell>("fs-app-shell");
 const tree = document.createElement("fs-nav-tree") as FsNavTree;
+let imports: MountedImports | undefined;
 const tokens = memoryTokenStore(() => {
   void shell?.refreshHealth();
+  void imports?.panel.reconnect(); // the Jobs panel's first read may have been refused
   navigation.reconnect();
   void tree.reload();
   void preferences.start(); // reads again when the first read was refused before the token
@@ -113,6 +122,13 @@ shell?.append(tree);
 if (shell) bindNavigationRoute(shell, { labels, source: navigation, tree, drive });
 if (shell) bindDriveRoute(shell, { labels, navigation, drive, newMenu, searchBar });
 if (shell) bindStorage(shell, client);
+// The upload dialog, the Jobs panel and the footer status (UI-1.2). The API gives no collection ID
+// for a navigation node yet; the lookup asks the route the platform engineer is to add, and the
+// dialog says it cannot name the collection, sending nothing, until a host answers it.
+if (shell) {
+  const lookup = clientDestinationLookup(client);
+  imports = mountImports(shell, { labels, client, navigation, newMenu, lookup });
+}
 if (shell) {
   const settings = { labels, client, theme, distribution: filesquid };
   bindSettingsRoute(shell, { ...settings, contractVersion: CONTRACT_VERSION, preferences });
@@ -121,10 +137,13 @@ const libraries = {
   labels,
   source: new ClientLibrarySource(client),
   registry: new LibraryRegistry(),
+  jobs: new ClientRebuildJobSource(client),
   host: client,
   version: pkg.version,
 };
 if (shell) bindLibraryRoute(shell, libraries);
+// First use (UI-S-034): with no library known to the host, the launch goes to the welcome screen.
+void redirectToFirstUse(window, libraries.source);
 if (shell) {
   const monitor = { labels, client, tokens: desktop ? undefined : tokens };
   bindMonitorRoute(shell, { ...monitor, repairHref: libraryRepairHref });

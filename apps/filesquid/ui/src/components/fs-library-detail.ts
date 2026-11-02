@@ -8,17 +8,29 @@
  * object from its files, writes nothing); and says, with a link to the repair offer
  * `#/library/<id>/repair`, when files in some objects can be read but not changed (W010).
  * Later pages (such as the import UI) take the open library's ID from this route.
+ *
+ * UI-1.3 (UI-S-027, API-S-038, mockup 41): the page is titled with the library's name from its
+ * facts and shows the Free space fact, the free bytes of the disk that holds the library ("Not
+ * known" when the volume cannot be read, never a guess); "Rebuild catalog from files" starts the
+ * durable job and goes to the page that follows it (`#/library/<id>/rebuild/<job>`).
  */
 import { RETRY_EVENT } from "./fs-states";
 import { formatSize } from "../files/model";
 import { libraryFailure, type LibraryAction } from "../libraries/errors";
-import { LIBRARY_ROUTE, libraryRepairHref, type SnapshotCopyReport } from "../libraries/model";
+import { freeSpaceText } from "../libraries/format";
+import {
+  libraryRebuildHref,
+  libraryRepairHref,
+  type LibraryFacts,
+  type SnapshotCopyReport,
+} from "../libraries/model";
 import { formatLabel, type LabelTable } from "../theme/labels";
 import {
   Feedback,
   StepFailure,
   actionButton,
   browserOnline,
+  goTo,
   link,
   node,
   pageStyle,
@@ -79,6 +91,9 @@ export class FsLibraryDetail extends HTMLElement {
   private note?: Feedback;
   private repairSlot?: HTMLElement;
   private results = new Map<string, HTMLElement>();
+  private crumbText?: HTMLElement;
+  private titleEl?: HTMLElement;
+  private freeValue?: HTMLElement;
 
   constructor() {
     super();
@@ -136,22 +151,46 @@ export class FsLibraryDetail extends HTMLElement {
     this.actions = new Feedback(labels, "actions");
     this.repairSlot = node("div", "repair-slot");
     this.repairSlot.append(this.note.root);
-    this.results = new Map([
-      ["copy", this.resultBox("copy")],
-      ["rebuild", this.resultBox("rebuild")],
-    ]);
+    this.results = new Map([["copy", this.resultBox("copy")]]);
     const side = node("div", "side");
     side.append(this.actionsSection(), this.repairSlot);
     const columns = node("div", "columns");
     columns.append(this.facts(id), side);
+    this.crumbText = node("p", "crumb current", labels.library);
+    this.titleEl = node("h2", undefined, labels.library);
     const page = node("div", "page");
-    page.append(
-      link("all crumb", labels.libraryStartBack, LIBRARY_ROUTE),
-      node("h2", undefined, labels.library),
-      columns,
-    );
+    page.append(this.crumbText, this.titleEl, columns);
     this.shadowRoot.replaceChildren(pageStyle(), page);
+    void this.loadFacts();
     void this.loadCandidates();
+  }
+
+  /**
+   * Read the library's facts (API-S-038) and show its name as the breadcrumb and the title and
+   * the free space of its disk. A library the host cannot give facts for keeps the generic
+   * title and an unknown free space; the failure is logged. Network I/O through the source.
+   */
+  private async loadFacts(): Promise<void> {
+    const options = this.options;
+    const id = this.library;
+    if (!options || id === undefined) return;
+    const generation = this.generation;
+    try {
+      const facts = await options.source.facts(id);
+      if (generation === this.generation) this.showFacts(facts);
+    } catch (error) {
+      if (generation !== this.generation) return;
+      console.warn("FileSquid could not read the library facts", error);
+      if (this.freeValue) this.freeValue.textContent = options.labels.libraryFactFreeUnknown;
+    }
+  }
+
+  /** Show the name and the free space the host gave. */
+  private showFacts(facts: LibraryFacts): void {
+    const { labels } = this.options as LibraryPageOptions;
+    if (this.crumbText) this.crumbText.textContent = facts.name;
+    if (this.titleEl) this.titleEl.textContent = facts.name;
+    if (this.freeValue) this.freeValue.textContent = freeSpaceText(facts.free_bytes, labels);
   }
 
   /** A persistent polite region for one action's report. */
@@ -184,6 +223,8 @@ export class FsLibraryDetail extends HTMLElement {
     for (const [term, value] of rows)
       list.append(node("dt", undefined, term), node("dd", undefined, value));
     list.querySelector("dd")?.classList.add("mono");
+    this.freeValue = node("dd");
+    list.append(node("dt", undefined, labels.libraryFactFreeTerm), this.freeValue);
     const section = node("section");
     section.dataset.section = "facts";
     section.append(node("h3", undefined, labels.libraryFactsTitle), list);
@@ -315,20 +356,19 @@ export class FsLibraryDetail extends HTMLElement {
   }
 
   /**
-   * Start the rebuild of the catalog from files as a durable job (API-F2.19, API-S-025) and
-   * read the repair candidates again. The job is pending when the command answers, so the
-   * "Working." note stays until UI-1.3 follows the job's progress and shows its report.
+   * Start the rebuild of the catalog from files as a durable job (API-F2.19, API-S-025) and go
+   * to the page that follows it: its progress, Pause, Resume and Cancel and its report are the
+   * job's (UI-1.3, mockup 04). Network I/O through the source, then a navigation.
    */
   private async rebuild(feedback: Feedback, generation: number): Promise<void> {
-    const { labels, source } = this.options as LibraryPageOptions;
+    const { labels, source, navigate } = this.options as LibraryPageOptions;
     const id = this.library as string;
-    this.showResult("rebuild", []);
     feedback.note(labels.libraryWorking);
     const revision = await step("rebuild", () => this.expectedRevision(id));
     if (generation !== this.generation) return;
-    await step("rebuild", () => source.rebuild(id, revision));
+    const started = await step("rebuild", () => source.rebuild(id, revision));
     if (generation !== this.generation) return;
-    await this.loadCandidates();
+    (navigate ?? goTo)(libraryRebuildHref(id, started.job_id));
   }
 
   /**

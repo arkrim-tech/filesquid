@@ -32,7 +32,6 @@ const MAX_PAGES: usize = 100;
 fn scope_key(scope: &FolderScope) -> String {
     match scope {
         FolderScope::Collection(id) => format!("c:{}", id.as_str()),
-        FolderScope::Unfiled(id) => format!("u:{}", id.as_str()),
     }
 }
 
@@ -190,8 +189,6 @@ pub struct NavRig {
     pub best_of: VirtualCollectionId,
     /// The OCFL root of the files of "Photos"; its API state serves the router.
     pub photos_rig: Arc<FilesRig>,
-    /// The OCFL root of the library's unfiled files.
-    pub unfiled_rig: Arc<FilesRig>,
     /// The folder index over both roots.
     pub folders: Arc<OcflFolders>,
     /// The service the router calls (the owner reads everything).
@@ -200,7 +197,7 @@ pub struct NavRig {
 
 impl NavRig {
     /// Build the standard fixture of the feature: "Photos" holds `2025/summer/beach.jpg` and
-    /// `2025/winter/snow.jpg`; the library holds the unfiled file `inbox/note.txt`. Call it
+    /// `2025/winter/snow.jpg`. Call it
     /// from a multi-thread Tokio test.
     pub async fn new() -> Self {
         let lib = Fixture::with_library();
@@ -214,10 +211,8 @@ impl NavRig {
             ])
             .await,
         );
-        let unfiled_rig = Arc::new(FilesRig::with_files(&[("inbox/note.txt", b"note")]).await);
         let folders = Arc::new(OcflFolders::new(tokio::runtime::Handle::current()));
         folders.serve(&FolderScope::Collection(photos.clone()), photos_rig.clone());
-        folders.serve(&FolderScope::Unfiled(library.clone()), unfiled_rig.clone());
         let service = Arc::new(NavigationService::new(
             lib.catalog.clone() as Arc<dyn LibraryCatalog>,
             folders.clone(),
@@ -231,7 +226,6 @@ impl NavRig {
             photos,
             best_of,
             photos_rig,
-            unfiled_rig,
             folders,
             service,
         }

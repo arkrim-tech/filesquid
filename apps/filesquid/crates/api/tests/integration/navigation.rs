@@ -74,15 +74,38 @@ async fn the_repository_lists_its_libraries_with_the_repository_as_ancestor() {
     let page = rig.get(&format!("node={repository}")).await.json();
     assert_eq!(
         kinds(&page),
-        vec![("library".to_string(), Some("Family archive".to_string()))]
+        vec![
+            ("library".to_string(), Some("Family archive".to_string())),
+            ("recently_deleted".to_string(), None),
+        ],
+        "one Recently deleted node, the last node of the repository's level"
     );
     assert_eq!(page["nodes"][0]["has_children"], true);
+    assert_eq!(page["nodes"][1]["has_children"], false);
     assert_eq!(page["ancestors"].as_array().expect("ancestors").len(), 1);
     assert_eq!(page["ancestors"][0]["kind"], "repository");
+    let trash = page["nodes"][1]["node"].as_str().expect("handle");
+    let inside = rig.get(&format!("node={trash}")).await.json();
+    assert_eq!(inside["nodes"], json!([]), "it has no children here");
+    let crumbs: Vec<&str> = inside["ancestors"]
+        .as_array()
+        .expect("ancestors")
+        .iter()
+        .map(|n| n["kind"].as_str().expect("kind"))
+        .collect();
+    assert_eq!(crumbs, ["repository", "recently_deleted"]);
+    let paged = rig.get(&format!("node={repository}&limit=1")).await.json();
+    let cursor = paged["next_cursor"].as_str().expect("cursor").to_string();
+    let rest = rig
+        .get(&format!("node={repository}&limit=1&cursor={cursor}"))
+        .await
+        .json();
+    assert_eq!(kinds(&rest), vec![("recently_deleted".to_string(), None)]);
+    assert_eq!(rest["next_cursor"], Value::Null);
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_library_lists_collections_then_virtual_collections_then_unfiled_folders() {
+async fn a_library_lists_collections_then_virtual_collections_and_no_recently_deleted_node() {
     let rig = NavRig::new().await;
     let library = rig.handle(&NodeRef::Library(rig.library.clone()));
     let page = rig.get(&format!("node={library}")).await.json();
@@ -94,7 +117,6 @@ async fn a_library_lists_collections_then_virtual_collections_then_unfiled_folde
                 "virtual_collection".to_string(),
                 Some("Best of 2025".to_string())
             ),
-            ("folder".to_string(), Some("inbox".to_string())),
         ]
     );
     let flags: Vec<bool> = page["nodes"]
@@ -103,7 +125,7 @@ async fn a_library_lists_collections_then_virtual_collections_then_unfiled_folde
         .iter()
         .map(|n| n["has_children"].as_bool().expect("flag"))
         .collect();
-    assert_eq!(flags, vec![true, false, false], "{page}");
+    assert_eq!(flags, vec![true, false], "{page}");
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -264,16 +286,19 @@ async fn the_default_page_holds_200_and_the_largest_1000() {
 async fn a_page_through_the_router_carries_an_opaque_cursor_that_continues_the_listing() {
     let rig = NavRig::new().await;
     let library = rig.handle(&NodeRef::Library(rig.library.clone()));
-    let first = rig.get(&format!("node={library}&limit=2")).await.json();
-    assert_eq!(first["nodes"].as_array().expect("nodes").len(), 2);
+    let first = rig.get(&format!("node={library}&limit=1")).await.json();
+    assert_eq!(first["nodes"].as_array().expect("nodes").len(), 1);
     let cursor = first["next_cursor"].as_str().expect("cursor").to_string();
     let second = rig
-        .get(&format!("node={library}&limit=2&cursor={cursor}"))
+        .get(&format!("node={library}&limit=1&cursor={cursor}"))
         .await
         .json();
     assert_eq!(
         kinds(&second),
-        vec![("folder".to_string(), Some("inbox".to_string()))]
+        vec![(
+            "virtual_collection".to_string(),
+            Some("Best of 2025".to_string())
+        )]
     );
     assert_eq!(second["next_cursor"], Value::Null);
 }

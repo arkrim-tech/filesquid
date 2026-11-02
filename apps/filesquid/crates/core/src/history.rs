@@ -84,13 +84,16 @@ pub enum OperationKind {
     Publish,
     /// A reconstruction of missing history records.
     Backfill,
+    /// The creation of a tombstone: an expired file's object recreated with only its version
+    /// history, PROV-O records and purge record (Task API-F2.15; ADR 041 Decision 11).
+    Tombstone,
     /// An operation whose kind was not recorded.
     Unknown,
 }
 
 impl OperationKind {
     /// Every kind, in declaration order.
-    pub const ALL: [Self; 22] = [
+    pub const ALL: [Self; 23] = [
         Self::Import,
         Self::Upload,
         Self::Copy,
@@ -112,6 +115,7 @@ impl OperationKind {
         Self::Scrub,
         Self::Publish,
         Self::Backfill,
+        Self::Tombstone,
         Self::Unknown,
     ];
 
@@ -139,6 +143,7 @@ impl OperationKind {
             Self::Scrub => "scrub",
             Self::Publish => "publish",
             Self::Backfill => "backfill",
+            Self::Tombstone => "tombstone",
             Self::Unknown => "unknown",
         }
     }

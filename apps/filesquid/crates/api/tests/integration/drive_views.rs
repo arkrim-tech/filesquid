@@ -237,30 +237,20 @@ async fn paging_is_stable_and_a_cursor_of_another_or_a_changed_view_is_refused()
 }
 
 #[tokio::test]
-async fn a_library_view_shows_its_collections_as_folders_beside_its_unfiled_files() {
+async fn a_library_view_shows_only_its_collections_as_folders_and_no_unfiled_file() {
     let (rig, drive) = rig().await;
     three_in_collection(&rig, &drive).await;
     let loose = upload(&rig, "Zebra.txt", b"z").await;
-    drive.unfiled_file(&loose);
+    drive.outside_file(&loose);
     let node = drive.library_node();
     assert_eq!(
         every_name(&rig, &node, "").await,
-        ["Favourites", "Holidays", "Zebra.txt"],
-        "folders on top, then the unfiled file"
+        ["Favourites", "Holidays"],
+        "no file is ever listed as unfiled (ADR 041 Decision 3)"
     );
     assert_eq!(
         every_name(&rig, &node, "&direction=descending").await,
-        ["Holidays", "Favourites", "Zebra.txt"],
-        "folders stay on top in both directions"
-    );
-    assert_eq!(
-        every_name(&rig, &node, "&folders=mixed&sort=name").await,
-        ["Favourites", "Holidays", "Zebra.txt"]
-    );
-    assert_eq!(
-        every_name(&rig, &node, "&folders=mixed&sort=size&direction=descending").await,
-        ["Zebra.txt", "Favourites", "Holidays"],
-        "a folder has no size, so it sorts after every file"
+        ["Holidays", "Favourites"]
     );
     let page = view(&rig, &node, "").await.json();
     assert_eq!(page["rows"][1]["node_kind"], "collection");
@@ -484,7 +474,7 @@ async fn storage_use_per_collection_counts_its_files_history_once() {
     );
     drive.delete(&ids[2]);
     let loose = upload(&rig, "outside.bin", &[0u8; 1000]).await;
-    drive.unfiled_file(&loose);
+    drive.outside_file(&loose);
     let answer = rig
         .get(&format!(
             "/api/v1/files/collection-history-size?collection_id={COLLECTION}"

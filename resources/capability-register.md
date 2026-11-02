@@ -67,12 +67,12 @@ The Photos baseline is the photo-manager feature inventory the PRD carries as F-
 | Family summary | limited | limited | Both hosts from source | Folders (collections) are created, renamed, moved, removed and restored through the API and shown in the navigation tree; from-selection, duplicate, merge, manual order, covers and virtual collections do not exist | Task FS-1.2, Task FS-2.1; [Task 1.4](./implementation-plan.md#task-1.4) | below |
 | Create empty collections, rename, move, delete | supported | equivalent | Both hosts | Folder routes of the API | Task FS-1.2 | Task FS-1.2 row |
 | Create from selection, populate by drag, duplicate, merge | unsupported | unavailable | — | Pending | Task 1.4; Task FS-2.5 (UI-F2.8) | none |
-| Deleting a collection marks its files recoverably deleted | limited | limited | Both hosts | Remove and restore exist; retention, expiry and the Recently deleted filter are open | Task FS-1.2; Task FS-2.5 (API-F2.15) | Task FS-1.2 row |
+| Deleting a collection marks its files recoverably deleted | limited | limited | Desktop host through the API | The API and the desktop host delete a collection with its files in one version, keep each file in place and restore into an "untitled collection" when its home is gone; the default UI's controls wait for UI-F2.17 | Task FS-1.2; Task FS-2.5 (API-F2.15, UI-F2.17) | [API-F2.15 walkthrough](../apps/filesquid/crates/api/resources/tasks/Task-API-F2.15-Walkthrough.md) |
 | Numbered names on logical-path collisions | limited | limited | Desktop (home collections); both hosts within one file object | Applied in the home collections on upload, copy, collection move, rename and new collection folder (`photo-1.jpg`, `directoryY-1`, refused as `path_suffix_exhausted` after 9,999); `filesquid-server` installs no home collections yet, so it numbers only within the file routes | Task FS-1.2; Task FS-2.5 (API-F2.14, done) | [API-F2.14 walkthrough](../apps/filesquid/crates/api/resources/tasks/Task-API-F2.14-Walkthrough.md) |
 | Manual order, title and date sort, cover selection | unsupported | unavailable | — | Pending | Task 1.4; Task FS-2.5 (API-F2.2) | none |
 | Rule-based and hand-picked virtual collections | unsupported | unavailable | — | Pending | Task 1.4 | none |
 | Every organisation command through the API | limited | limited | Both hosts | Folder commands only | Task FS-1.2; Task 1.4 | Task FS-1.2 row |
-| Navigation tree by kind with internal names; Recently deleted as the final row | limited | limited | Chromium, WebKitGTK | The tree, its sections, pins and states are tested (UI-F2.1a); the Recently deleted row waits for API-F2.15 | Task FS-2.1; Task FS-2.5 | UI-0.6 walkthrough (navigation specs) |
+| Navigation tree by kind with internal names; Recently deleted as the final row | limited | limited | Chromium, WebKitGTK | The tree, its sections, pins and states are tested (UI-F2.1a); the API lists the one `recently_deleted` node last (API-F2.15) and the tree shows it with its label and icon; its view waits for UI-F2.17 | Task FS-2.1; Task FS-2.5 | UI-0.6 walkthrough (navigation specs) |
 | Folder-on-top placement and sort preferences persist | unsupported | unavailable | — | Pending | Task FS-2.5 (UI-F2.8) | none |
 
 ### F-005: Favorites, metadata and keywords
@@ -117,15 +117,15 @@ The Photos baseline is the photo-manager feature inventory the PRD carries as F-
 | Item | Status | F-040 state | Platform and prerequisite | Reason | Delivered by | Evidence |
 |---|---|---|---|---|---|---|
 | Family summary | limited | limited | Both hosts from source | Remove and restore exist; retention, expiry, hidden files and duplicate review do not | Task FS-1.2; Task FS-2.5 (API-F2.15); Task 1.4; Task 2.1 | below |
-| Recoverable deletion with the 30-day installation default and per-library override | limited | limited | Both hosts | Files enter the deleted state and are restored by the file routes; retention, expiry and the expiry setting are open | Task FS-1.2; Task FS-2.5 (API-F2.15) | Task FS-1.2 row |
+| Recoverable deletion with the 30-day installation default and per-library override | limited | limited | Desktop host through the API | The installation default, each library's own period (kept in its snapshot) and the expiry job are in the API and the desktop host; the settings page waits for UI-F2.17 | Task FS-1.2; Task FS-2.5 (API-F2.15, UI-F2.17) | [API-F2.15 walkthrough](../apps/filesquid/crates/api/resources/tasks/Task-API-F2.15-Walkthrough.md) |
 | Restore to the original OCFL object and logical path | supported | equivalent | Both hosts | Restore route | Task FS-1.2 | Task FS-1.2 row |
 | Hidden files with local authentication for the Hidden view | unsupported | unavailable | — | Pending | Task 1.4 | none |
 | Exact-byte and perceptual duplicate review with merge choices | unsupported | unavailable | — | Pending | Task 1.4, Task 2.1 | none |
 | Merging preserves relationships and keeps removed items recoverable | unsupported | unavailable | — | Pending | Task 2.1 | none |
 | Recovered and orphaned media review | unsupported | unavailable | — | Pending | Task 2.1 | none |
 | Views identify files by display name, never stored name | supported | equivalent | Both hosts | Display and download names (API-F1.13) | Task FS-1.3 | Task FS-1.3 row |
-| Recently deleted filter and the `is:deleted` query | unsupported | unavailable | — | Pending | Task FS-2.5 (API-F2.15, API-F2.3) | none |
-| Expiry setting: keep version history (default) or remove the object | unsupported | unavailable | — | Pending | Task FS-2.5 (API-F2.15) | none |
+| Recently deleted filter and the `is:deleted` query | limited | limited | Desktop host through the API | One Recently deleted over every open library the caller may read, through the view operation, and `is:deleted` in search; the default UI's view waits for UI-F2.17 | Task FS-2.5 (API-F2.15, API-F2.3, UI-F2.17) | [API-F2.15 walkthrough](../apps/filesquid/crates/api/resources/tasks/Task-API-F2.15-Walkthrough.md) |
+| Expiry setting: keep version history (default) or remove the object | limited | limited | Desktop host through the API | The setting, the hourly expiry job and the crash-safe tombstone are in the API and the desktop host; the settings page waits for UI-F2.17 | Task FS-2.5 (API-F2.15, UI-F2.17) | [API-F2.15 walkthrough](../apps/filesquid/crates/api/resources/tasks/Task-API-F2.15-Walkthrough.md) |
 
 ### F-009: Multiple libraries and filesystem administration
 

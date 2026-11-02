@@ -27,7 +27,7 @@ fn every_kind_of_node_round_trips_through_its_handle() {
         NodeRef::Collection(collection("col")),
         NodeRef::VirtualCollection(VirtualCollectionId::new("vc").expect("id")),
         folder("2025/summer"),
-        NodeRef::folder(FolderScope::Unfiled(library("lib")), "inbox"),
+        NodeRef::RecentlyDeleted(RepositoryId::new("repo").expect("id")),
     ];
     for node in nodes {
         let handle = node.to_handle().expect("handle");

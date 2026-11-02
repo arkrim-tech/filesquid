@@ -377,6 +377,7 @@ async fn library_virtual_collection_and_repository_nodes_do_not_list_as_folders(
         NodeRef::Library(nav.library.clone()),
         NodeRef::VirtualCollection(nav.best_of.clone()),
         NodeRef::Repository(nav.lib.repository.clone()),
+        NodeRef::RecentlyDeleted(nav.lib.repository.clone()),
     ];
     for node in nodes {
         let answer = list(&nav, &format!("node={}", encode(&nav.handle(&node)))).await;
@@ -389,11 +390,9 @@ async fn unknown_malformed_and_unmapped_nodes_are_not_found() {
     let nav = photos().await;
     let unknown = NodeRef::Collection(CollectionId::new("no-such").expect("id"));
     let missing = NodeRef::folder(FolderScope::Collection(nav.photos.clone()), "1999");
-    let unfiled = NodeRef::folder(FolderScope::Unfiled(nav.library.clone()), "inbox");
     let handles = [
         nav.handle(&unknown),
         nav.handle(&missing),
-        nav.handle(&unfiled),
         "n1.not-a-handle".to_string(),
     ];
     for node in handles {

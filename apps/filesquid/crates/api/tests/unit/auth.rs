@@ -378,7 +378,8 @@ fn every_routed_path_declares_its_action() {
             | "/api/v1/imports"
             | "/api/v1/imports/{plan_id}"
             | "/api/v1/imports/{plan_id}/items"
-            | "/api/v1/imports/{plan_id}/start" => Action::WriteFiles,
+            | "/api/v1/imports/{plan_id}/start"
+            | "/api/v1/recently-deleted/commands" => Action::WriteFiles,
             "/api/v1/content/{handle}" => Action::ReadContent,
             "/api/v1/history" => Action::ReadHistory,
             "/api/v1/libraries"
@@ -389,7 +390,8 @@ fn every_routed_path_declares_its_action() {
             | "/api/v1/libraries/renames" => Action::ManageLibraries,
             "/api/v1/libraries/repair-candidates"
             | "/api/v1/libraries/{library}/facts"
-            | "/api/v1/libraries/recent" => Action::ReadLibraries,
+            | "/api/v1/libraries/recent"
+            | "/api/v1/settings/recently-deleted" => Action::ReadLibraries,
             "/api/v1/libraries/repairs" => Action::RepairLibraries,
             "/api/v1/navigation" => Action::ReadNavigation,
             "/api/v1/preferences" => Action::ManagePreferences,
@@ -433,6 +435,7 @@ fn action_names_are_unique_dotted_identifiers() {
             "client_events.write",
             "jobs.read",
             "jobs.manage",
+            "settings.recently_deleted.configure",
             "public"
         ]
     );

@@ -6,6 +6,8 @@ import { FsAppShell } from "./components/fs-app-shell";
 import { FsBreadcrumb } from "./components/fs-breadcrumb";
 import { FsDestinationPicker } from "./components/fs-destination-picker";
 import { FsNewMenu } from "./components/fs-new-menu";
+import { FsImportDialog } from "./components/fs-import-dialog";
+import { FsJobsPanel } from "./components/fs-jobs-panel";
 import { FsDriveView } from "./components/fs-drive-view";
 import { FsSearchBar } from "./components/fs-search-bar";
 import { FsFileBrowser } from "./components/fs-file-browser";
@@ -17,6 +19,8 @@ import { FsFilePanel } from "./components/fs-file-panel";
 import { FsVersionsPanel } from "./components/fs-versions-panel";
 import { FsHostIndicator } from "./components/fs-host-indicator";
 import { FsLibraryDetail } from "./components/fs-library-detail";
+import { FsFirstUse } from "./components/fs-first-use";
+import { FsLibraryRebuild } from "./components/fs-library-rebuild";
 import { FsLibraryRepair } from "./components/fs-library-repair";
 import { FsLibraryStart } from "./components/fs-library-start";
 import { FsMonitor } from "./components/fs-monitor";
@@ -331,6 +335,63 @@ export {
   type NewAction,
   type NewMenuOptions,
 } from "./components/fs-new-menu";
+export {
+  FsImportDialog,
+  IMPORT_STARTED_EVENT,
+  type ImportDialogOptions,
+  type ImportRequest,
+} from "./components/fs-import-dialog";
+export { FsJobsPanel, type JobsPanelOptions } from "./components/fs-jobs-panel";
+export {
+  mountImports,
+  type ImportRouteOptions,
+  type MountedImports,
+  type UploadClient,
+} from "./app/import-route";
+export { ClientImportSource, type ImportClient } from "./imports/client-source";
+export { ClientJobSource, type JobClient } from "./imports/jobs-source";
+export { JobsStore, type JobEntry, type JobsStoreOptions } from "./imports/jobs-store";
+export { NamedDestinations, type DestinationLookup } from "./imports/directory";
+export {
+  DESTINATION_ROUTE,
+  clientDestinationLookup,
+  parseResolvedDestination,
+  type DestinationClient,
+} from "./imports/destination-source";
+export { MemoryImportSource, MemoryJobSource } from "./imports/memory-source";
+export {
+  DestinationRequiredError,
+  DestinationUnresolvedError,
+  fileRefusal,
+  importFailure,
+  type ImportStep,
+} from "./imports/failure";
+export {
+  allowedControls,
+  destinationFolder,
+  destinationText,
+  itemStatus,
+  jobPhase,
+  numberedName,
+  pathSuffixRange,
+  shownItems,
+  summariseItems,
+  type DestinationDirectory,
+  type ImportPlan,
+  type ImportSource,
+  type ImportSourceKind,
+  type ItemSummary,
+  type JobChange,
+  type JobControls,
+  type JobItem,
+  type JobPhase,
+  type JobSource,
+  type JobView,
+  type PlanAnswer,
+  type PlanItem,
+  type PlanRequest,
+  type ResolvedDestination,
+} from "./imports/model";
 export { FILTER_EVENT } from "./components/fs-app-shell";
 export { DriveList, type DriveItem, type DriveLayout } from "./components/drive-list";
 export { Selection, MAX_SELECTED, type SelectionState } from "./drive/selection";
@@ -375,8 +436,20 @@ export { FsSettings, type SettingsClient, type SettingsOptions } from "./compone
 export { FsLibraryStart } from "./components/fs-library-start";
 export { FsLibraryDetail } from "./components/fs-library-detail";
 export { FsLibraryRepair, type RepairPageOptions } from "./components/fs-library-repair";
-export type { LibraryPageOptions } from "./components/library-parts";
+export {
+  FsLibraryRebuild,
+  MAX_REFRESHES,
+  type RebuildPageOptions,
+} from "./components/fs-library-rebuild";
+export {
+  FIRST_USE_CANCEL_EVENT,
+  FIRST_USE_DONE_EVENT,
+  FsFirstUse,
+  type FirstUseDone,
+} from "./components/fs-first-use";
+export { REBUILD_REFRESH_MS, type LibraryPageOptions } from "./components/library-parts";
 export { bindLibraryRoute } from "./app/library-route";
+export { redirectToFirstUse } from "./app/first-use-route";
 export * from "./libraries/model";
 export {
   ClientLibrarySource,
@@ -384,10 +457,33 @@ export {
   type LibraryClient,
 } from "./libraries/client-source";
 export {
+  ClientRebuildJobSource,
+  type RebuildJobClient,
+  type RebuildJobSource,
+  type JobWatchEvent,
+} from "./libraries/job-source";
+export {
+  jobChip,
+  openedWhen,
+  progressFraction,
+  rebuildProgressText,
+  rebuildSummary,
+  recentMeta,
+  freeSpaceText,
+  type Chip,
+  type ChipTone,
+} from "./libraries/format";
+export {
+  parseCollection,
+  parseJobControl,
+  parseJobSummary,
+  parseJobView,
+  parseLibraryFacts,
   parseLibraryView,
   parseRebuildJob,
   parseLocationChoice,
   parseRebuildReport,
+  parseRecentLibraries,
   parseRepairAnswer,
   parseRepairCandidates,
   parseSnapshotCopyReport,
@@ -486,6 +582,10 @@ export function defineElements(): void {
   }
   if (!customElements.get("fs-drive-view")) customElements.define("fs-drive-view", FsDriveView);
   if (!customElements.get("fs-new-menu")) customElements.define("fs-new-menu", FsNewMenu);
+  if (!customElements.get("fs-import-dialog")) {
+    customElements.define("fs-import-dialog", FsImportDialog);
+  }
+  if (!customElements.get("fs-jobs-panel")) customElements.define("fs-jobs-panel", FsJobsPanel);
   if (!customElements.get("fs-search-bar")) customElements.define("fs-search-bar", FsSearchBar);
   if (!customElements.get("fs-details-panel")) {
     customElements.define("fs-details-panel", FsDetailsPanel);
@@ -513,6 +613,10 @@ export function defineElements(): void {
   if (!customElements.get("fs-library-repair")) {
     customElements.define("fs-library-repair", FsLibraryRepair);
   }
+  if (!customElements.get("fs-library-rebuild")) {
+    customElements.define("fs-library-rebuild", FsLibraryRebuild);
+  }
+  if (!customElements.get("fs-first-use")) customElements.define("fs-first-use", FsFirstUse);
   if (!customElements.get("fs-app-shell")) customElements.define("fs-app-shell", FsAppShell);
   if (!customElements.get("fs-ocfl-findings")) {
     customElements.define("fs-ocfl-findings", FsOcflFindings);

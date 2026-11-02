@@ -22,7 +22,7 @@ use std::sync::Arc;
 /// API-S-021): the folders below a collection or folder node, answered from the library's
 /// index of registered files, where a folder exists only when the collection logical path of
 /// an ordinary file (neither hidden nor deleted) implies it. A file has exactly one home
-/// collection, so a scope of removed collections (`Unfiled`) holds no folder.
+/// collection, so a collection is the only folder scope (Task API-F2.15).
 #[derive(Clone, Debug)]
 pub struct CatalogFolders(pub Arc<SqliteCatalog>);
 
@@ -34,23 +34,17 @@ impl FolderIndex for CatalogFolders {
         after: Option<&str>,
         limit: usize,
     ) -> Result<Vec<String>, NavigationError> {
-        match scope {
-            FolderScope::Collection(collection) => self
-                .0
-                .subfolders(collection, parent, after, limit)
-                .map_err(navigation_error),
-            FolderScope::Unfiled(_) => Ok(Vec::new()),
-        }
+        let FolderScope::Collection(collection) = scope;
+        self.0
+            .subfolders(collection, parent, after, limit)
+            .map_err(navigation_error)
     }
 
     fn folder_exists(&self, scope: &FolderScope, path: &str) -> Result<bool, NavigationError> {
-        match scope {
-            FolderScope::Collection(collection) => self
-                .0
-                .folder_exists(collection, path)
-                .map_err(navigation_error),
-            FolderScope::Unfiled(_) => Ok(false),
-        }
+        let FolderScope::Collection(collection) = scope;
+        self.0
+            .folder_exists(collection, path)
+            .map_err(navigation_error)
     }
 }
 
@@ -81,9 +75,7 @@ impl ScopeObjects for CatalogScopes {
         after: Option<&ScopeAfter>,
         limit: usize,
     ) -> Result<Option<ScopePage>, FileError> {
-        let FolderScope::Collection(collection) = scope else {
-            return Ok(None);
-        };
+        let FolderScope::Collection(collection) = scope;
         self.0
             .scope_entries(collection, folder, after, limit)
             .map_err(|err| match err {

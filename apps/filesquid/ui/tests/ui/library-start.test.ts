@@ -31,6 +31,8 @@ async function mount(source = new FakeLibrarySource(), online = () => true) {
   page.configure({ labels, source, registry, navigate: (hash) => navigated.push(hash), online });
   document.body.replaceChildren(page);
   await settle();
+  // The recent libraries are read on mount (library-recent.test.ts); these tests follow the flows.
+  source.calls.length = 0;
   return { page, source, registry, navigated };
 }
 
@@ -49,7 +51,7 @@ describe("<fs-library-start>", () => {
     const root = rootOf(page);
     expect(root.querySelector("h2")?.textContent).toBe(labels.libraryWelcomeTitle);
     expect(root.querySelector(".intro")?.textContent).toBe(labels.libraryIntro);
-    expect(root.querySelector(".eyebrow")?.textContent).toBe(labels.libraries);
+    expect(root.querySelector(".page > .eyebrow")?.textContent).toBe(labels.libraries);
     const flows = [...root.querySelectorAll("section[data-flow]")].map((section) => [
       (section as HTMLElement).dataset.flow,
       section.querySelector("h3")?.textContent,
@@ -130,13 +132,13 @@ describe("<fs-library-start>", () => {
     expect(navigated).toEqual(["#/library/lib-1"]);
   });
 
-  it("recover: opens the chosen copy, starts its rebuild job expecting the opened revision and goes to the library page", async () => {
+  it("recover: opens the chosen copy, starts its rebuild job expecting the opened revision and follows the job on the recover page", async () => {
     const { page, source, navigated } = await mount();
     button(page, "recover").click();
     await settle();
     expect(source.calls).toEqual(["choose:open", "open:loc-1", "rebuild:lib-1"]);
     expect(source.revisions).toEqual(["1"]);
-    expect(navigated).toEqual(["#/library/lib-1"]);
+    expect(navigated).toEqual(["#/library/lib-1/recover/job-1"]);
   });
 
   it("answers an already open library again without an error", async () => {
@@ -235,7 +237,7 @@ describe("<fs-library-start>", () => {
     states.dispatchEvent(new CustomEvent("fs-retry", { bubbles: true, composed: true }));
     await settle();
     expect(source.calls).toEqual(["choose:open", "open:loc-1", "rebuild:lib-1", "rebuild:lib-1"]);
-    expect(navigated).toEqual(["#/library/lib-1"]);
+    expect(navigated).toEqual(["#/library/lib-1/recover/job-1"]);
   });
 
   it("a choice clicked after a failure starts afresh with a new folder", async () => {
@@ -331,7 +333,8 @@ describe("<fs-library-start>", () => {
     await settle();
     button(page, "open").click();
     await settle();
-    expect(source.calls).toEqual(["choose:create", "choose:open"]);
+    // Attaching again renders the page again, which reads the recent libraries again.
+    expect(source.calls).toEqual(["choose:create", "recent", "choose:open"]);
   });
 
   it("never renders a filesystem path", async () => {

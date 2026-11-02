@@ -114,7 +114,6 @@ pub(super) fn listing_query(
 fn scope_key(scope: &FolderScope) -> String {
     match scope {
         FolderScope::Collection(id) => format!("collection:{}", id.as_str()),
-        FolderScope::Unfiled(id) => format!("unfiled:{}", id.as_str()),
     }
 }
 

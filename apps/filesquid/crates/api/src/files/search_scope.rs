@@ -3,7 +3,8 @@
 //! with its home collection's title and its delete state.
 //!
 //! Permission filtering comes first: a library, collection or virtual collection the caller
-//! may not read, and every file whose home collection (or, when unfiled, library) the caller
+//! may not read, and every file whose home collection (or, when that collection was deleted, library) the
+//! caller
 //! may not read, is left out here, before any file is read or ranked, so neither results nor
 //! scores reveal it. Every read is bounded: at most [`MAX_SEARCH_LIBRARIES`] libraries and
 //! [`MAX_SEARCH_FILES`] files in all; one more catalog entry is read, never examined, only to
@@ -31,7 +32,7 @@ pub const MAX_SEARCH_LIBRARIES: usize = 1_000;
 pub struct ScopedFile {
     /// The file.
     pub file_id: FileId,
-    /// Its home collection's title, or `None` when it is unfiled.
+    /// Its home collection's title, or `None` when that collection was deleted.
     pub collection: Option<String>,
     /// True when it is recoverably deleted.
     pub deleted: bool,
@@ -82,6 +83,8 @@ pub fn search_scope(
         .check_readable(principal, node.unwrap_or(&repository))
         .map_err(file_error)?;
     let catalog = navigation.catalog().as_ref();
+    // Recently deleted holds deleted files only, whatever the query asks (ADR 041 Decision 8).
+    let deleted = deleted || matches!(node, Some(NodeRef::RecentlyDeleted(_)));
     let (targets, mut complete) = targets(navigation, principal, node, deleted)?;
     let visibility = match deleted {
         true => VisibilityFilter::Deleted,
@@ -138,7 +141,7 @@ fn targets(
         folders: !deleted,
     };
     match node {
-        None | Some(NodeRef::Repository(_)) => {
+        None | Some(NodeRef::Repository(_)) | Some(NodeRef::RecentlyDeleted(_)) => {
             let repository = navigation.repository_id();
             let read = |after: Option<&_>, limit| catalog.libraries(repository, after, limit);
             let libraries = read_bounded(read, MAX_SEARCH_LIBRARIES + 1)?;
@@ -225,7 +228,7 @@ fn readable_files(
 }
 
 /// The title of collection `id` of `library_id`, or `None` when it no longer exists there
-/// (the file is unfiled).
+/// (the collection was deleted with the file, ADR 041 Decision 8).
 fn collection_title(
     catalog: &dyn LibraryCatalog,
     id: &CollectionId,

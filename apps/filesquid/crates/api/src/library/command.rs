@@ -7,7 +7,7 @@
 //! references must belong to that library. Commands carry opaque IDs and names only; never a
 //! filesystem path or SQL.
 
-use super::policy::{Deletion, PurgeConfirmation};
+use super::policy::{is_retention, Deletion, PurgeConfirmation};
 use super::LibraryError;
 use crate::operation::{CommandEnvelope, CommandOutcome, MAX_PAGE_SIZE};
 use filesquid_core::{
@@ -28,6 +28,14 @@ pub const MAX_FILES_PER_COMMAND: usize = MAX_PAGE_SIZE as usize;
 
 /// Longest rule expression of a rule-based virtual collection, in bytes.
 pub const MAX_EXPRESSION_BYTES: usize = 4096;
+
+/// Title of the collection a restore creates when a file's home collection is gone (owner
+/// decision 2026-10-22, ADR 041 Decision 9); later ones are numbered from 2.
+pub const UNTITLED_COLLECTION_TITLE: &str = "untitled collection";
+
+/// Most titles a restore tries for that collection: "untitled collection" to "untitled
+/// collection 9999" (owner decision 2026-10-22, "Caps: 9999 for both").
+pub const MAX_UNTITLED_TITLES: u32 = 9_999;
 
 /// One library command. Serialized with its kind in the `command` member, in `snake_case`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -64,7 +72,8 @@ pub enum LibraryCommand {
         /// New title.
         title: String,
     },
-    /// Delete a collection. Its files are retained and become unfiled.
+    /// Delete a collection. Its files that are not deleted yet are deleted with it, in place
+    /// (ADR 041 Decision 8).
     DeleteCollection {
         /// Owning library.
         library_id: LibraryId,
@@ -136,7 +145,9 @@ pub enum LibraryCommand {
         /// Files to delete.
         file_ids: Vec<FileId>,
     },
-    /// Restore recoverably deleted files; a hidden file stays hidden.
+    /// Restore recoverably deleted files into their original object and logical path; a
+    /// hidden file stays hidden. A file whose home collection is gone is restored into a new
+    /// "untitled collection" (ADR 041 Decision 9).
     RestoreFiles {
         /// Owning library.
         library_id: LibraryId,
@@ -151,6 +162,16 @@ pub enum LibraryCommand {
         file_ids: Vec<FileId>,
         /// The library and exact file count the owner confirmed.
         confirmation: PurgeConfirmation,
+    },
+    /// Set the library's own retention period of deleted files, or clear it so the
+    /// installation default applies (ADR 041 Decision 10). It never changes the
+    /// `purge_after` of a file already deleted.
+    SetLibraryRetention {
+        /// Owning library.
+        library_id: LibraryId,
+        /// Days from 1 to 3,650, or `None` for the installation default.
+        #[serde(default)]
+        retention_days: Option<u32>,
     },
 }
 
@@ -172,6 +193,7 @@ impl LibraryCommand {
             Self::DeleteFiles { .. } => "library.file.delete",
             Self::RestoreFiles { .. } => "library.file.restore",
             Self::PurgeFiles { .. } => "library.file.purge",
+            Self::SetLibraryRetention { .. } => "library.retention.set",
         }
     }
 
@@ -191,7 +213,8 @@ impl LibraryCommand {
             | Self::UnhideFiles { library_id, .. }
             | Self::DeleteFiles { library_id, .. }
             | Self::RestoreFiles { library_id, .. }
-            | Self::PurgeFiles { library_id, .. } => Some(library_id),
+            | Self::PurgeFiles { library_id, .. }
+            | Self::SetLibraryRetention { library_id, .. } => Some(library_id),
         }
     }
 
@@ -217,6 +240,7 @@ impl LibraryCommand {
             | Self::DeleteFiles { file_ids, .. }
             | Self::RestoreFiles { file_ids, .. }
             | Self::PurgeFiles { file_ids, .. } => check_files(file_ids),
+            Self::SetLibraryRetention { retention_days, .. } => check_retention(*retention_days),
         }
     }
 
@@ -236,7 +260,8 @@ impl LibraryCommand {
             | Self::DeleteCollection { .. }
             | Self::CreateVirtualCollection { .. }
             | Self::RenameVirtualCollection { .. }
-            | Self::DeleteVirtualCollection { .. } => &[],
+            | Self::DeleteVirtualCollection { .. }
+            | Self::SetLibraryRetention { .. } => &[],
         }
     }
 }
@@ -258,6 +283,17 @@ fn check_expression(expression: Option<&str>) -> Result<(), LibraryError> {
         Some(rule) if rule.trim().is_empty() || rule.len() > MAX_EXPRESSION_BYTES => Err(
             LibraryError::invalid("invalid_expression", "The rule is empty or too long."),
         ),
+        _ => Ok(()),
+    }
+}
+
+/// A retention period, when set, is 1 to 3,650 days.
+fn check_retention(days: Option<u32>) -> Result<(), LibraryError> {
+    match days {
+        Some(days) if !is_retention(days) => Err(LibraryError::invalid(
+            "invalid_retention",
+            "Choose a period between 1 and 3,650 days.",
+        )),
         _ => Ok(()),
     }
 }
@@ -309,4 +345,20 @@ pub struct CommandResult {
     /// deleted no file.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deletion: Option<Deletion>,
+    /// The collections a restore created because files' home collections were gone, one per
+    /// gone home collection (ADR 041 Decision 9); empty for every other command and absent
+    /// from the wire then. A replay of the operation ID answers it without this list.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub restored_into: Vec<RestoredInto>,
+}
+
+/// A collection a restore created for the files of one gone home collection.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RestoredInto {
+    /// The gone home collection the files came from.
+    pub from_collection_id: CollectionId,
+    /// The new collection.
+    pub collection_id: CollectionId,
+    /// Its title: "untitled collection" or "untitled collection N".
+    pub title: String,
 }

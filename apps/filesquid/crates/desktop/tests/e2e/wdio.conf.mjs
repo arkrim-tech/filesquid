@@ -15,6 +15,10 @@
  * - `FILESQUID_E2E_LIBRARY`: the media library the test-instrumented app opens for the
  *   content-handle tests. When unset, the launcher builds one in the run directory with
  *   `ffmpeg` (`support/media-library.mjs`); set it to reuse a library built earlier.
+ * - `FILESQUID_E2E_DATA_DIR`: the data directory the test-instrumented app uses instead of the
+ *   platform's app data directory. When unset, the launcher uses `app-data` in the run
+ *   directory, so a run never touches the developer's own FileSquid data on any platform, and
+ *   the journal-rebuild specs can remove its operational store between two launches.
  * - `FILESQUID_E2E_LOCATIONS`: a folder holding the empty folders `create` and `copy` that the
  *   test-instrumented app registers as the owner's library folders for the library-route
  *   tests. When unset, the launcher makes them in the run directory
@@ -29,6 +33,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildMediaLibrary } from "./support/media-library.mjs";
 import { buildLocationFolders } from "./support/library-folders.mjs";
+import { closeAppAndLoseStore } from "./support/app-restart.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const workspace = path.resolve(here, "../../../..");
@@ -59,6 +64,8 @@ try {
   // The library-route tests' owner-chosen folders (Task DE-1.1): empty folders `create` and
   // `copy`, registered by the test-instrumented app under fixed location IDs.
   process.env.FILESQUID_E2E_LOCATIONS ||= buildLocationFolders(run);
+  // The app's data directory (Task DE-0.11): inside the run directory on every platform.
+  process.env.FILESQUID_E2E_DATA_DIR ||= path.join(run, "app-data");
 } catch (error) {
   // onComplete never runs when setup fails, so the owned run directory is removed here.
   if (ownsRun) {
@@ -90,6 +97,20 @@ export const config = {
   waitforTimeout: 15000,
   connectionRetryTimeout: 120000,
   connectionRetryCount: 1,
+  /**
+   * After the first journal-rebuild spec (Task DE-0.11), quit the app through its last window
+   * and delete its operational store, so the next spec runs against the app the Tauri service
+   * starts again over the same data directory (`support/app-restart.mjs`).
+   *
+   * @param cid The worker ID.
+   * @param exitCode The worker's exit code.
+   * @param specs The spec files the worker ran.
+   */
+  async onWorkerEnd(cid, exitCode, specs) {
+    if (specs.some((spec) => spec.includes("journal-rebuild-1-close"))) {
+      await closeAppAndLoseStore();
+    }
+  },
   /**
    * Remove the run directory (binary copy and app data) once every worker has finished, but
    * only when this launcher created it (`ownsRun`); an inherited or caller-supplied path stays.

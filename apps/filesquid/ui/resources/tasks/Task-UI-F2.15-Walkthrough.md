@@ -23,7 +23,7 @@ PRD: [F-067](../../../../../resources/prd.md#f-067-prov-o-history-of-every-versi
 ## What changed
 
 - **Sources** (`src/files/facts-source.ts`, `src/files/provenance-source.ts`): `FactsSource` / `ClientFactsSource` and `ProvenanceSource` / `ClientProvenanceSource`, each method one call through `FileSquidClient`.
-- **Model** (`src/files/provenance.ts`, `src/files/details.ts`): the history entries newest first, agents classified by identifier, the `filesquid-prov/1` record parsed with a node bound, the `prov:` attribute rows, the kind words of all 22 operation kinds, bounded paging; `detailRows` takes the facts and the technical statements. Pure.
+- **Model** (`src/files/provenance.ts`, `src/files/details.ts`): the history entries newest first, agents classified by identifier, the `filesquid-prov/1` record parsed with a node bound, the `prov:` attribute rows, the kind words of every operation kind of the contract (22 at UI-F2.15; 23 since API-F2.15 added `tombstone`), bounded paging; `detailRows` takes the facts and the technical statements. Pure.
 - **`<fs-provenance-panel>`** (`src/components/fs-provenance-panel.ts`): the Provenance tab.
 - **`PropertyTable`** (`src/components/property-table.ts`): the generic extensions above, and a sticky footer so a long list keeps the footer in view.
 - **`<fs-details-panel>`**: optional `facts` and `statements` sources; each optional read fails soft and is logged.

@@ -18,6 +18,7 @@ use super::command::{CommandRequest, CommandResult};
 use super::plan::{Planned, Planner};
 use super::policy::{DeletionPolicy, VisibilityFilter};
 use super::query::{Cursor, LibraryQuery, Page, QueryAnswer, QueryRequest};
+use super::settings::{InstallationSettings, RetentionSettings, SETTINGS_OPERATION};
 use super::{LibraryError, LOG_TARGET};
 use crate::journal::{now_ms, JournalEntry, Level, Outcome};
 use crate::journal_writer::JournalSender;
@@ -35,6 +36,9 @@ pub struct LibraryService {
     policy: DeletionPolicy,
     failures: JournalSender,
     navigation: Option<NavigationPublisher>,
+    /// The installation's Recently deleted settings, when the host keeps them; the
+    /// built-in defaults apply otherwise.
+    settings: Option<Arc<dyn RetentionSettings>>,
 }
 
 impl std::fmt::Debug for LibraryService {
@@ -57,7 +61,68 @@ impl LibraryService {
             policy: DeletionPolicy::default(),
             failures,
             navigation: None,
+            settings: None,
         }
+    }
+
+    /// The same service reading the installation's Recently deleted settings (default
+    /// retention and expiry setting) from `settings` (ADR 041 Decisions 10 and 11).
+    pub fn with_settings(mut self, settings: Arc<dyn RetentionSettings>) -> Self {
+        self.settings = Some(settings);
+        self
+    }
+
+    /// The installation's Recently deleted settings: the stored ones, else the defaults.
+    ///
+    /// # Errors
+    /// `unavailable` or `internal` when the settings store fails.
+    pub fn installation_settings(&self) -> Result<InstallationSettings, LibraryError> {
+        match &self.settings {
+            Some(store) => Ok(store.read()?),
+            None => Ok(InstallationSettings {
+                default_retention_days: self.policy.recoverable_days,
+                ..InstallationSettings::default()
+            }),
+        }
+    }
+
+    /// Store new installation settings for `actor`, journaled with opaque IDs only (no value
+    /// is a name or path). Only the admin may call this; the route checks it. A change that
+    /// changes nothing stores nothing.
+    ///
+    /// # Errors
+    /// `invalid_retention` for a period outside 1 to 3,650 days; `unavailable` when no store
+    /// is installed or it fails. A refusal is journaled once as `failed`.
+    pub fn set_installation_settings(
+        &self,
+        actor: &str,
+        settings: InstallationSettings,
+    ) -> Result<InstallationSettings, LibraryError> {
+        self.store_settings(actor, settings)
+            .inspect_err(|err| self.journal_failure(actor, SETTINGS_OPERATION, None, err))
+    }
+
+    /// Check and store `settings`; see [`Self::set_installation_settings`].
+    fn store_settings(
+        &self,
+        actor: &str,
+        settings: InstallationSettings,
+    ) -> Result<InstallationSettings, LibraryError> {
+        if !settings.is_valid() {
+            return Err(LibraryError::invalid(
+                "invalid_retention",
+                "Choose a period between 1 and 3,650 days.",
+            ));
+        }
+        let store = self.settings.as_ref().ok_or(LibraryError::Unavailable)?;
+        if store.read()? == settings {
+            return Ok(settings);
+        }
+        let journal = JournalEntry::new(SETTINGS_OPERATION, Outcome::Succeeded)
+            .actor(actor)
+            .at_ms((self.clock)());
+        store.store(&settings, journal)?;
+        Ok(settings)
     }
 
     /// Publish a `navigation.change` event after each commit that adds, removes or renames
@@ -74,9 +139,15 @@ impl LibraryService {
         self
     }
 
-    /// The recoverable-deletion policy.
-    pub fn deletion_policy(&self) -> DeletionPolicy {
-        self.policy
+    /// The recoverable-deletion policy in force: the installation default retention, from
+    /// the settings store when the host installed one.
+    ///
+    /// # Errors
+    /// `unavailable` or `internal` when the settings store fails.
+    pub fn deletion_policy(&self) -> Result<DeletionPolicy, LibraryError> {
+        Ok(DeletionPolicy {
+            recoverable_days: self.installation_settings()?.default_retention_days,
+        })
     }
 
     /// Run one command for `actor` (an opaque reference such as `user:<id>`), committing
@@ -109,10 +180,13 @@ impl LibraryService {
         if let Some(receipt) = self.catalog.receipt(&operation_id)? {
             return Ok(committed(&operation_id, receipt));
         }
+        let policy = DeletionPolicy {
+            recoverable_days: self.installation_settings()?.default_retention_days,
+        };
         let planner = Planner {
             catalog: self.catalog.as_ref(),
             now_ms: (self.clock)(),
-            policy: self.policy,
+            policy,
         };
         let planned = planner.plan(&request.envelope, &request.command)?;
         self.commit_planned(actor, request, planned)
@@ -146,6 +220,7 @@ impl LibraryService {
             journal,
             created_id: planned.created_id,
             deletion: planned.deletion,
+            restored_into: planned.restored_into,
         })?;
         self.announce(parents);
         Ok(committed(&operation_id, receipt))
@@ -153,6 +228,26 @@ impl LibraryService {
 
     /// Publish the navigation change of a committed command, if a publisher is set and the
     /// command changed what navigation shows.
+    /// The injected catalog.
+    pub(super) fn catalog(&self) -> &dyn LibraryCatalog {
+        self.catalog.as_ref()
+    }
+
+    /// Now, from the service's clock, in Unix milliseconds.
+    pub(super) fn now_ms(&self) -> i64 {
+        (self.clock)()
+    }
+
+    /// Hand `entry` to the bounded failure journal queue.
+    pub(super) fn send_failure(&self, entry: JournalEntry) {
+        self.failures.send(entry);
+    }
+
+    /// Announce that files may have left any view, so clients reread their trees.
+    pub(super) fn announce_everything(&self) {
+        self.announce(Some(super::NavigationParents::Everything));
+    }
+
     fn announce(&self, change: Option<super::NavigationParents>) {
         let (Some(publisher), Some(change)) = (&self.navigation, change) else {
             return;
@@ -238,7 +333,9 @@ impl LibraryService {
                 scope,
                 visibility,
             } => self.list_files(library_id, scope, visibility, after, limit),
-            LibraryQuery::DeletionPolicy => Ok(QueryAnswer::DeletionPolicy(self.policy)),
+            LibraryQuery::DeletionPolicy => Ok(QueryAnswer::DeletionPolicy(DeletionPolicy {
+                recoverable_days: self.installation_settings()?.default_retention_days,
+            })),
         }
     }
 
@@ -285,7 +382,7 @@ impl LibraryService {
     /// A collection or virtual-collection scope must belong to `library_id`.
     fn check_scope(&self, library_id: &LibraryId, scope: &FileScope) -> Result<(), LibraryError> {
         let (belongs, entity) = match scope {
-            FileScope::Library | FileScope::Unfiled => (true, "library"),
+            FileScope::Library => (true, "library"),
             FileScope::Collection { collection_id } => (
                 self.catalog
                     .collection(collection_id)?
@@ -325,6 +422,7 @@ fn committed(operation_id: &OperationId, receipt: CommitReceipt) -> CommandResul
         revision: Some(receipt.revision),
         created_id: receipt.created_id,
         deletion: receipt.deletion,
+        restored_into: receipt.restored_into,
     }
 }
 

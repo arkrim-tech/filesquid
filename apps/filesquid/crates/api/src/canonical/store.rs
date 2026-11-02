@@ -635,6 +635,20 @@ async fn read_entity<B: StorageBackend>(
     Ok(stored)
 }
 
+/// The stored bytes of `file` of `object`, refused when larger than `limit` and verified
+/// against its digest: the reader a tombstone copies former PROV-O files with. Storage I/O.
+///
+/// # Errors
+/// A storage failure, a file over `limit` or bytes that do not match the digest.
+pub(crate) async fn read_small<B: StorageBackend>(
+    object: &Object<'_, B>,
+    backend: &B,
+    file: &LogicalFile,
+    limit: u64,
+) -> Result<Vec<u8>, CanonicalError> {
+    read_entity(object, backend, file, limit).await
+}
+
 /// The snapshot made of `entities`. Pure.
 fn assemble(
     version: VersionNum,

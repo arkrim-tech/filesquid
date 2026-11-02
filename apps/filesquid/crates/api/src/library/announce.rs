@@ -33,10 +33,14 @@ pub(crate) fn navigation_parents(
             | CatalogChange::RemoveVirtualCollection(_) => NodeRef::Library(library_id.clone()),
             CatalogChange::SetFileState { .. }
             | CatalogChange::PurgeFile(_)
-            | CatalogChange::DeleteCollectionFiles { .. } => {
+            | CatalogChange::DeleteCollectionFiles { .. }
+            | CatalogChange::RehomeFile { .. }
+            | CatalogChange::ExpireFile { .. } => {
                 return Some(NavigationParents::Everything);
             }
-            CatalogChange::AddVirtualMember(_) | CatalogChange::RemoveVirtualMember { .. } => {
+            CatalogChange::AddVirtualMember(_)
+            | CatalogChange::RemoveVirtualMember { .. }
+            | CatalogChange::SetRetention(_) => {
                 continue;
             }
         };

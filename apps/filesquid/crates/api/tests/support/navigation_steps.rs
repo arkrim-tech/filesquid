@@ -202,13 +202,6 @@ fn collection_files(w: &mut MonitorWorld, collection: String, first: String, sec
     }
 }
 
-#[given(expr = "library {string} holds an unfiled file at logical path {string}")]
-fn unfiled_file(w: &mut MonitorWorld, _library: String, path: String) {
-    let nav = &w.navigation;
-    nav.index()
-        .add_file(&FolderScope::Unfiled(nav.library()), &path);
-}
-
 #[when(expr = "the owner lists the navigation tree without a node")]
 fn list_root(w: &mut MonitorWorld) {
     let nav = &mut w.navigation;
@@ -296,6 +289,22 @@ fn list_with(w: &mut MonitorWorld, name: String, request: String) {
 fn one_node_of_kind(w: &mut MonitorWorld, kind: String) {
     let page = w.navigation.answer();
     assert_eq!(kinds(&page.nodes), vec![kind]);
+}
+
+#[then(expr = "the kinds should be {string} and {string} in that order")]
+fn two_kinds_in_order(w: &mut MonitorWorld, a: String, b: String) {
+    assert_eq!(kinds(&w.navigation.answer().nodes), vec![a, b]);
+}
+
+#[then(expr = "the last node should be the one {string} node, with no name and no children")]
+fn last_is_recently_deleted(w: &mut MonitorWorld, kind: String) {
+    let page = w.navigation.answer();
+    let found = kinds(&page.nodes);
+    assert_eq!(found.iter().filter(|k| **k == kind).count(), 1, "{found:?}");
+    let last = page.nodes.last().expect("a node");
+    assert_eq!(found.last(), Some(&kind));
+    assert_eq!(last.name, None);
+    assert!(!last.has_children);
 }
 
 #[then(expr = "the kinds should be {string}, {string} and {string} in that order")]
@@ -591,7 +600,7 @@ fn refused_as(w: &mut MonitorWorld, code: String) {
 }
 
 #[given(
-    expr = "a second user who may read library {string} and virtual collection {string} but not collection {string} or the unfiled files"
+    expr = "a second user who may read library {string} and virtual collection {string} but not collection {string}"
 )]
 fn second_user(w: &mut MonitorWorld, _library: String, virtual_name: String, _collection: String) {
     let nav = &mut w.navigation;

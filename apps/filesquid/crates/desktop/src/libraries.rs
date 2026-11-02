@@ -63,6 +63,9 @@ pub struct LibraryServing {
     /// The API state whose rebuild runner takes an opened library's unfinished rebuild (Task
     /// DE-1.8); `None` when this launch did not reconcile its jobs, which then schedules none.
     pub rebuilds: Option<filesquid_api::ApiState>,
+    /// The journal sealing each served library is opened for (Task DE-0.11); `None` seals no
+    /// library.
+    pub sealing: Option<crate::sealing::DesktopSealing>,
 }
 
 /// The desktop's library commands: [`LibraryCommands`] over [`HostLocations`], serving each
@@ -105,7 +108,7 @@ impl DesktopLibraries {
     /// leases, its catalog index (named as [`Self::align_name`] says, with `requested` the
     /// name the bind request gave, only when the bind `changed` the library, so the names are
     /// aligned under the revision that bind answered and an open that changed nothing changes
-    /// no name), its validation and its history. A part that cannot be
+    /// no name), its validation, its journal sealing and its history. A part that cannot be
     /// served is logged as a warning with its error code only (the journal layer journals
     /// it); the library stays open in the commands. Creates directories in the data
     /// directory; the catalog attach (which may rebuild a whole index) and the name
@@ -119,6 +122,15 @@ impl DesktopLibraries {
             warn_unserved(&view.library_id, "location_not_found");
             return;
         };
+        // Opened for sealing first, so a seal running while this library is attached seals its
+        // entries into the library's own object rather than the installation's.
+        if let Some(sealing) = &self.serving.sealing {
+            crate::sealing::open_library(
+                sealing,
+                (&view.library_id, &root),
+                &self.serving.data_dir,
+            );
+        }
         let identity = location.and_then(|location| self.locations.identity_of(&location));
         if self.attach(&view.library_id, &root, identity).await && changed {
             self.align_name(actor, &view.library_id, requested).await;

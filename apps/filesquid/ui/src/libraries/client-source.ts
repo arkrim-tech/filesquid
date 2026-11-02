@@ -24,10 +24,12 @@
 import { ApiError, type RequestOptions } from "../api/client";
 import { commandEnvelope, type CommandAnswer, type CommandEnvelope } from "../api/commands";
 import {
-  parseLibraryRevision,
+  parseCollection,
+  parseLibraryFacts,
   parseLibraryView,
   parseLocationChoice,
   parseRebuildJob,
+  parseRecentLibraries,
   parseRepairAnswer,
   parseRepairCandidates,
   parseSnapshotCopyReport,
@@ -36,10 +38,13 @@ import {
   INITIAL_LIBRARY_REVISION,
   NEW_LIBRARY_REVISION,
   type ChoicePurpose,
+  type CollectionView,
+  type LibraryFacts,
   type LibrarySource,
   type LibraryView,
   type LocationChoice,
   type RebuildJobAnswer,
+  type RecentLibraries,
   type RepairAnswer,
   type RepairCandidates,
   type RepairRequest,
@@ -85,6 +90,8 @@ const ROUTES = {
   open: "/api/v1/libraries/openings",
   copy: "/api/v1/libraries/snapshot-copies",
   rebuild: "/api/v1/libraries/rebuilds",
+  recent: "/api/v1/libraries/recent",
+  collection: "/api/v1/libraries/collections",
   candidates: "/api/v1/libraries/repair-candidates",
   repair: "/api/v1/libraries/repairs",
 } as const;
@@ -117,13 +124,69 @@ export class ClientLibrarySource implements LibrarySource {
    * ID; none is sent. Network I/O that writes the storage root's declaration.
    *
    * @param locationId The folder's opaque location ID.
+   * @param name The library's name (API-S-038); the host names it "Untitled library" without one.
    * @returns The created library.
    * @throws ApiError as the API answers it (409 root_not_empty, location_in_use, and so on).
    * @throws TypeError when the answer breaks the contract (a body that is not JSON surfaces from
    *   the client as a SyntaxError; the pages show both as an error).
    */
-  async create(locationId: string): Promise<LibraryView> {
-    return parseLibraryView(await this.bind(ROUTES.create, locationId));
+  async create(locationId: string, name?: string): Promise<LibraryView> {
+    return parseLibraryView(await this.bind(ROUTES.create, locationId, name));
+  }
+
+  /**
+   * Create a collection in an open library as a command scoped to the library
+   * (`POST /api/v1/libraries/collections`, API-S-019). **This route is not in the API contract
+   * yet**: the library domain commands exist in `filesquid-api` but no route exposes them, so
+   * the path and the answer's shape (`{ collection_id, title }` as the committed result) are
+   * what the UI asks the platform engineer to deliver, in the style of the rename and rebuild
+   * routes. Until then a host answers 404 or 405, which the first-use dialog shows as a failed
+   * collection step with Try again; the library it just created is kept. Network I/O.
+   *
+   * @param libraryId The open library.
+   * @param title The collection's title.
+   * @param expectedRevision The library's revision as last read; a stale one is `conflict`.
+   * @returns The collection that was made.
+   * @throws ApiError as the host answers it (a `conflict` outcome as 409 `conflict`).
+   * @throws TypeError when the answer breaks the contract.
+   */
+  async createCollection(
+    libraryId: string,
+    title: string,
+    expectedRevision: string,
+  ): Promise<CollectionView> {
+    const input = { library_id: libraryId, title };
+    const scope = `library:${libraryId}`;
+    const answer = await this.send(ROUTES.collection, scope, expectedRevision, input);
+    return parseCollection(resultOf(answer, ROUTES.collection, "committed"));
+  }
+
+  /**
+   * List the libraries this host opened (`GET /api/v1/libraries/recent`, API-S-038): newest
+   * first, at most 20, each with its name, last opened time and free space. Writes nothing.
+   * Network I/O.
+   *
+   * @returns The libraries.
+   * @throws ApiError as the API answers it (503 `unavailable` on a host without a registry).
+   * @throws TypeError when the answer breaks the contract.
+   */
+  async recent(): Promise<RecentLibraries> {
+    return parseRecentLibraries(await this.client.request<unknown>(ROUTES.recent));
+  }
+
+  /**
+   * Read one library's facts (`GET /api/v1/libraries/{library}/facts`, API-S-038): its name,
+   * the free bytes of its volume and its revision. Writes nothing. Network I/O.
+   *
+   * @param libraryId The library.
+   * @returns The facts.
+   * @throws ApiError as the API answers it (404 `not_found` for a library the caller may not
+   *   read, 503 `unavailable` on a host without a registry).
+   * @throws TypeError when the answer breaks the contract.
+   */
+  async facts(libraryId: string): Promise<LibraryFacts> {
+    const path = `/api/v1/libraries/${encodeURIComponent(libraryId)}/facts`;
+    return parseLibraryFacts(await this.client.request<unknown>(path));
   }
 
   /**
@@ -193,8 +256,7 @@ export class ClientLibrarySource implements LibrarySource {
    * @throws TypeError when the answer breaks the contract.
    */
   async revision(libraryId: string): Promise<string> {
-    const path = `/api/v1/libraries/${encodeURIComponent(libraryId)}/facts`;
-    const revision = parseLibraryRevision(await this.client.request<unknown>(path));
+    const { revision } = await this.facts(libraryId);
     return revision ?? INITIAL_LIBRARY_REVISION;
   }
 
@@ -235,14 +297,17 @@ export class ClientLibrarySource implements LibrarySource {
   }
 
   /**
-   * Send the create or open command of the folder `locationId`: scope `location:<id>`,
-   * expecting revision `0` (the library is not open on this host). Network I/O.
+   * Send the create or open command of the folder `locationId`, with the library's `name` when
+   * given: scope `location:<id>`, expecting revision `0` (the library is not open on this host).
+   * Network I/O.
    *
    * @returns The committed result, still unchecked.
    */
-  private async bind(path: string, locationId: string): Promise<unknown> {
+  private async bind(path: string, locationId: string, name?: string): Promise<unknown> {
     const scope = `location:${locationId}`;
-    const answer = await this.send(path, scope, NEW_LIBRARY_REVISION, { location_id: locationId });
+    const input =
+      name === undefined ? { location_id: locationId } : { location_id: locationId, name };
+    const answer = await this.send(path, scope, NEW_LIBRARY_REVISION, input);
     return resultOf(answer, path, "committed");
   }
 

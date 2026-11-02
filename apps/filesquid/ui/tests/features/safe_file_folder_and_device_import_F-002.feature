@@ -114,6 +114,83 @@ Feature: Safe file, folder and device import
     Then the original should be stored under its FileId alone
     And the metadata record should hold the original file name "notes.tar~backup"
 
+  # Upload dialog, review and Jobs panel (Task UI-1.2; UI-S-002 Destination, UI-S-028, UI-S-029, API-S-036, API-S-037)
+  Scenario: The upload dialog needs a destination collection before anything is sent
+    Given the upload dialog is open and no collection or folder is chosen
+    Then the start control should be disabled and the dialog should say "Choose a destination first."
+    And no request should be sent to the host
+    When I choose a folder inside a collection in the destination tree
+    Then the start control should be enabled and read "Choose files…" or "Choose folder…" for the chosen source
+
+  Scenario: Only collections and folders inside them are offered as a destination
+    Given the destination tree lists libraries, collections, folders, a virtual collection and Recently deleted
+    Then each library row should say it is not a destination
+    And a virtual collection and Recently deleted should not be offered
+
+  Scenario: The plan request carries the library, the collection, the folder and the source
+    Given I have chosen the folder "Site photos" of the collection "Harbour project"
+    When I ask to choose files
+    Then the host should receive one import request with that library, collection ID, folder and the source "files"
+    And the request should carry no file path or file name
+
+  Scenario: Planning shows no percentage
+    Given the host is planning what I picked
+    Then the dialog should say it is waiting for my choice and checking it
+    And it should show no percentage
+
+  Scenario: The review is shown before the job starts and Cancel discards the plan
+    Given the host answered a plan of 214 files found, 196 new, 18 already in the library and 3.1 GB to copy
+    Then the review should show those counts, each planned file as New or "Already uploaded · skipped", the destination, the space after the upload and the integrity note
+    And no job should have been started
+    When I choose Cancel
+    Then the plan should be discarded and no job should exist
+
+  Scenario: Upload starts the job and the Jobs panel follows it
+    Given I am reviewing a plan
+    When I choose "Upload 196 files"
+    Then the job should be started from that plan only
+    And the Jobs panel should open on the job and the footer should read "Uploading · {done} of {total}"
+
+  Scenario: Each file shows its status and error code
+    Given a running upload job whose files are copied, copying at 62 percent, queued and failed with "source_changed"
+    Then the Jobs panel should list "Copied", "Copying · 62%", "Queued" and "Failed · source_changed" with each file's destination folder
+
+  Scenario: A failed file is retried on its own, then every failed file is retried
+    Given an upload job with failed files
+    When I choose Retry on one file
+    Then only that file should be put back to queued
+    When I choose "Retry failed"
+    Then every failed file should be put back to queued
+
+  Scenario: Only the controls the job accepts are offered
+    Given a paused job, a finished job and a running job
+    Then the paused job should offer Resume and Cancel and no Retry
+    And the finished job should offer no control
+    And the running job should offer Pause and Cancel
+
+  Scenario: A job that ended with a failed file waits for the owner
+    Given an upload job that is pending with every file ended and one failed
+    Then the Jobs panel should show it as needing attention with "Retry failed", Retry and Cancel
+    And it should show no progress bar and no motion
+
+  Scenario: Refusals are honest errors with a Dismiss control
+    Given the host refused the plan request because the chosen collection is gone
+    Then the dialog should show "The collection you chose is no longer in this library. Choose another and try again."
+    And a file that failed with "path_suffix_exhausted" should show the first and last numbered name and say nothing was changed
+    And each error card should offer Dismiss
+
+  Scenario: A host that cannot name the chosen collection refuses before sending
+    Given the host cannot say which collection the chosen node is
+    When I ask to choose files
+    Then the dialog should say it cannot name the collection and nothing should be sent
+
+  Scenario: The default UI says Upload, not Import
+    Given the default label table is active
+    Then the dialog, the New menu and the Jobs panel should say Upload
+    And the word Import should not appear in them
+
   # Source
   # - srs.md SRS-F-002
   # - prd.md F-002
+  # - apps/filesquid/ui/resources/srs.md UI-S-002, UI-S-028, UI-S-029
+  # - apps/filesquid/crates/api/resources/srs.md API-S-036, API-S-037

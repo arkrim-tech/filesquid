@@ -19,6 +19,15 @@ pub enum LibraryError {
         /// Message shown to people.
         message: &'static str,
     },
+    /// A `409 conflict` refusal with its own code, such as `restore_name_exhausted`; the
+    /// operation changed nothing. The code is journaled; the answer is `conflict` with a
+    /// message that names the cause.
+    Refused {
+        /// Stable code (journaled).
+        code: &'static str,
+        /// What people see.
+        message: &'static str,
+    },
     /// The named entity (`library`, `collection`, `virtual_collection` or `file`) does not
     /// exist in the named library, or is not visible to the caller.
     NotFound(&'static str),
@@ -39,7 +48,7 @@ impl LibraryError {
     /// Stable error code for journals, `PortError`s and UIs.
     pub fn error_code(&self) -> &'static str {
         match self {
-            Self::Invalid { code, .. } => code,
+            Self::Invalid { code, .. } | Self::Refused { code, .. } => code,
             Self::NotFound(_) => "not_found",
             Self::Conflict => "conflict",
             Self::Unavailable => "unavailable",
@@ -52,7 +61,7 @@ impl LibraryError {
         match self {
             Self::Invalid { .. } => ErrorCode::InvalidRequest,
             Self::NotFound(_) => ErrorCode::NotFound,
-            Self::Conflict => ErrorCode::Conflict,
+            Self::Conflict | Self::Refused { .. } => ErrorCode::Conflict,
             Self::Unavailable => ErrorCode::Unavailable,
             Self::Internal => ErrorCode::Internal,
         }
@@ -61,7 +70,7 @@ impl LibraryError {
     /// The message shown to people. It names no entity, title or path.
     pub fn message(&self) -> &'static str {
         match self {
-            Self::Invalid { message, .. } => message,
+            Self::Invalid { message, .. } | Self::Refused { message, .. } => message,
             Self::NotFound(_) => "FileSquid could not find that item in this library.",
             Self::Conflict => "The library changed since it was read. Reload and try again.",
             Self::Unavailable => "The library is not available right now. Try again shortly.",

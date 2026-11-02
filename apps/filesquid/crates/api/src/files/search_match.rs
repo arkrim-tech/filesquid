@@ -47,7 +47,7 @@ const DOCUMENT_PREFIXES: [&str; 5] = [
 pub struct SearchFile {
     /// What the file is at its head.
     pub facts: FileFacts,
-    /// The folded title of its home collection, or `None` when it is unfiled.
+    /// The folded title of its home collection, or `None` when that collection was deleted.
     pub collection: Option<String>,
     /// True when it is recoverably deleted.
     pub deleted: bool,
@@ -116,7 +116,6 @@ fn file_clause(clause: &Clause, file: &SearchFile, searcher: Searcher) -> bool {
         Clause::Creator(name) => dcterms(facts, "creator").any(|v| v == *name),
         Clause::Tag(tag) => dcterms(facts, "subject").any(|v| v.contains(tag.as_str())),
         Clause::Deleted => file.deleted,
-        Clause::Unfiled => file.collection.is_none(),
         Clause::Before(date) => instant_date(facts.modified_ms, searcher.zone) < Some(*date),
         Clause::After(date) => instant_date(facts.modified_ms, searcher.zone) >= Some(*date),
         Clause::CreatedBefore(date) => {
@@ -283,7 +282,6 @@ mod tests {
             "in:Holidays",
             "owner:me",
             "-is:deleted",
-            "-is:unfiled",
         ] {
             assert!(hit(query, &doc, UTC), "{query}");
         }

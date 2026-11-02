@@ -1,7 +1,8 @@
 /**
  * UI-F2.1b part 2: every navigation answer and `navigation.change` payload is checked against
  * the API-S-021 contract before the tree or breadcrumb shows it (opaque handles of at most 512
- * bytes, the five kinds, a `null` name only for a repository, `has_children`, `ancestors`,
+ * bytes, the six kinds, a `null` name only for a repository or Recently deleted (API-F2.15),
+ * `has_children`, `ancestors`,
  * `next_cursor`; exactly one of `parents` (1 to 64 handles) and `all`).
  */
 import { describe, expect, it } from "vitest";
@@ -39,6 +40,13 @@ describe("parseNavigationPage", () => {
       ancestors: [],
       next_cursor: null,
     });
+  });
+
+  it("accepts the repository's children: a library and the unnamed Recently deleted node", () => {
+    const trash = { node: "d1", kind: "recently_deleted", name: null, has_children: false };
+    expect(
+      parseNavigationPage({ nodes: [library, trash], ancestors: [repository], next_cursor: null }),
+    ).toEqual({ nodes: [library, trash], ancestors: [repository], next_cursor: null });
   });
 
   it("keeps only the contract fields of a node, so nothing else reaches the DOM", () => {

@@ -33,7 +33,7 @@ use std::sync::Arc;
 pub const WORK_DIR_SUFFIX: &str = ".work";
 
 /// The reservation holder this host writes under.
-const HOLDER: &str = "filesquid-desktop";
+pub(crate) const HOLDER: &str = "filesquid-desktop";
 
 /// `<root>/<library-id><suffix>` for a canonical UUID v4 identifier. Pure.
 fn sibling(root: &Path, library_id: &LibraryId, suffix: &str) -> Result<PathBuf, CatalogError> {
@@ -86,6 +86,22 @@ impl CanonicalRoot {
     /// The storage root's backend, shared with the file routes, for the history routes.
     pub(crate) fn backend(&self) -> Arc<FsBackend> {
         self.ocfl.clone()
+    }
+
+    /// The staging backend in the catalog's work directory, outside the storage root, where
+    /// a tombstone's payload waits while its object is rewritten (Task API-F2.15).
+    pub(crate) fn staging(&self) -> &FsBackend {
+        &self.staging
+    }
+
+    /// The version reservations of the storage root.
+    pub(crate) fn leases(&self) -> &crate::HostLeases {
+        self.leases.as_ref()
+    }
+
+    /// The snapshot object's identifier, `urn:uuid:<library-id>`.
+    pub(crate) fn snapshot_object_id(&self) -> &str {
+        &self.object_id
     }
 
     /// Commit `delta` as the snapshot version described by `meta` (its operation message,
@@ -217,7 +233,7 @@ fn journal_line(line: &str) -> Result<JournalEntry, CatalogError> {
 }
 
 /// Run a backend future that never waits (the filesystem backend's futures complete at once).
-fn drive<F: std::future::Future>(future: F) -> Result<F::Output, CatalogError> {
+pub(crate) fn drive<F: std::future::Future>(future: F) -> Result<F::Output, CatalogError> {
     complete_immediately(future).map_err(|_| failed("a storage future did not complete"))
 }
 

@@ -3,6 +3,7 @@
 # UI-S-016: Accessibility contracts (tree roles, aria-level, aria-setsize, aria-posinset, keyboard)
 # NFR-002 and RC-002 (PRD): warm browse result p95 <= 100 ms; F-004 (PRD): collections, folders and navigation
 # Owner decision 2026-10-30, verbatim: "Okay implement all these recommendations" (virtualise the tree; keep the cap for the MVP).
+# Owner decision 2026-10-31, verbatim: "accept recommendations": a capped level also shows a short limit line on screen (navigationLevelLimit).
 # Task UI-F3.4 writes the Playwright and unit tests behind these scenarios against "vite build" plus "vite preview".
 Feature: Virtualised navigation tree
   As a library owner with tens of thousands of collections
@@ -43,6 +44,7 @@ Feature: Virtualised navigation tree
     When the tree reads the level
     Then it should show the first 10,000 nodes
     And the console should say that only the first 50 pages of the level are shown
+    And a short line under the last node shown should say "Showing the first 10,000 only. Use search to find the rest." from the label key navigationLevelLimit
 
   Scenario: A pin beyond the cap still opens
     Given collection "Harbour 48000" is pinned and is not among the first 10,000 nodes of its level

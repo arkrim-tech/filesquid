@@ -9,8 +9,8 @@
  *   deleted row as the tree's final row (UI-S-017, owner answer 2; its count once a view sets
  *   `deletedCount`), the storage block, and the library, Settings and Logs rows (Logs on the
  *   desktop host only, UI-S-021);
- * - a 60 px header with the search slot, the host badge (`<fs-host-indicator>`, UI-S-018) and
- *   the Monitor button, and nothing else: no theme control (it lives in Settings, Appearance,
+ * - a 60 px header with the search slot, the host badge (`<fs-host-indicator>`, UI-S-018), the
+ *   `jobs` slot (the Jobs button of `<fs-jobs-panel>`, UI-1.2) and the Monitor button, and nothing else: no theme control (it lives in Settings, Appearance,
  *   owner answer 7), no API status (Settings, About only, owner answer 12) and no permanent
  *   privacy text (UI-S-004);
  * - `main` with the default slot; a 40 px footer with the `summary` and `commit-state` slots;
@@ -121,6 +121,8 @@ const STYLE = `
   .search-slot { flex: 0 1 auto; display: flex; min-width: 0; }
   .spacer { flex: 1 1 auto; }
   fs-host-indicator { flex: 0 0 auto; }
+  .upload-state { display: inline-flex; align-items: center; gap: var(--fs-space-2); }
+  .upload-state .icon { color: var(--fs-icon-muted); }
   .monitor { min-inline-size: 6rem; }
   main { flex: 1 1 auto; min-width: 0; min-height: 0; overflow: auto; padding: var(--fs-space-4); }
   footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--fs-space-2) var(--fs-space-3); box-sizing: border-box; min-block-size: 2.5rem; padding: var(--fs-space-1) var(--fs-space-3); border-block-start: 1px solid var(--fs-outline); color: var(--fs-on-surface-variant); font-size: var(--fs-font-size-small); }
@@ -168,6 +170,7 @@ export class FsAppShell extends HTMLElement {
   private theme?: ThemeStore;
   private summary?: StorageSummary;
   private deleted?: number;
+  private uploading?: string;
   private readonly onThemeChange = () => this.showLogo();
   private readonly onHashChange = () => this.syncCurrent();
   /** The document holding this shell's reference to the document-level rules, while connected. */
@@ -212,6 +215,20 @@ export class FsAppShell extends HTMLElement {
   set storage(summary: StorageSummary | undefined) {
     this.summary = summary;
     this.showStorage();
+  }
+
+  /** The footer's upload status ("Uploading · 82 of 196"), or undefined while nothing uploads. */
+  get uploadStatus(): string | undefined {
+    return this.uploading;
+  }
+
+  /**
+   * Show the upload status in the footer, in place of the commit state, or restore the commit
+   * state with undefined (UI-1.2, mockup 19).
+   */
+  set uploadStatus(text: string | undefined) {
+    this.uploading = text;
+    this.showUploadStatus();
   }
 
   /** The number of files in Recently deleted, or undefined while none is known. */
@@ -294,6 +311,7 @@ export class FsAppShell extends HTMLElement {
     this.showLogo();
     this.showStorage();
     this.showDeletedCount();
+    this.showUploadStatus();
     this.syncCurrent();
     recoverFocus(root, hadFocus, () => root.querySelector("main"));
   }
@@ -386,7 +404,7 @@ export class FsAppShell extends HTMLElement {
     monitor.className = "button secondary monitor";
     monitor.href = MONITOR_ROUTE;
     monitor.append(icon("monitor"), document.createTextNode(labels.monitor));
-    header.append(search, spacer, this.hostIndicator(labels), monitor);
+    header.append(search, spacer, this.hostIndicator(labels), namedSlot("jobs"), monitor);
     return header;
   }
 
@@ -449,6 +467,18 @@ export class FsAppShell extends HTMLElement {
     }
     const fill = root.querySelector<HTMLElement>(".storage-fill");
     if (fill) fill.style.inlineSize = `${usedFraction(summary).toFixed(1)}%`;
+  }
+
+  /** Show the upload status instead of the commit state, or the commit state again. */
+  private showUploadStatus(): void {
+    const root = this.shadowRoot;
+    const state = root?.querySelector<HTMLElement>(".upload-state");
+    const commit = root?.querySelector<HTMLElement>(".commit-state");
+    if (!state || !commit) return;
+    state.hidden = this.uploading === undefined;
+    commit.hidden = this.uploading !== undefined;
+    const text = state.querySelector("span");
+    if (text) text.textContent = this.uploading ?? "";
   }
 
   /** Fill or hide the Recently deleted count. */
@@ -613,6 +643,11 @@ function footerBar(): HTMLElement {
   const state = document.createElement("p");
   state.className = "commit-state";
   state.append(namedSlot("commit-state"));
-  footer.append(summary, state);
+  const uploading = document.createElement("p");
+  uploading.className = "upload-state";
+  uploading.hidden = true;
+  uploading.setAttribute("role", "status");
+  uploading.append(icon("refresh"), document.createElement("span"));
+  footer.append(summary, state, uploading);
   return footer;
 }

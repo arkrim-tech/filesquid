@@ -10,7 +10,7 @@
 //!
 //! - **Answered here:** `type:` (`image`, `video`, `audio`, `text`, `document`, `folder`),
 //!   `in:` (a collection's title), `title:`, `owner:me`, `creator:`, `tag:`, `is:deleted`,
-//!   `is:unfiled`, `before:`, `after:`, `createdbefore:`, `createdafter:` (`YYYY-MM-DD`),
+//!   `before:`, `after:`, `createdbefore:`, `createdafter:` (`YYYY-MM-DD`),
 //!   `source:`, `size>` and `size<` (an integer and an optional `B`, `KB`, `MB` or `GB`, in
 //!   powers of 1024).
 //! - **In the grammar, not answerable on this host:** `is:favorite`, `owner:` naming another
@@ -70,8 +70,6 @@ pub enum Clause {
     Tag(String),
     /// `is:deleted`.
     Deleted,
-    /// `is:unfiled`.
-    Unfiled,
     /// `before:`: the head version is older than this date.
     Before(Date),
     /// `after:`: the head version is from this date or later.
@@ -307,11 +305,10 @@ fn owner(value: &str) -> Result<Clause, FileError> {
 fn is_clause(value: &str) -> Result<Clause, FileError> {
     match value {
         "deleted" => Ok(Clause::Deleted),
-        "unfiled" => Ok(Clause::Unfiled),
         "favorite" => Err(unavailable("is:favorite")),
-        _ => Err(FileError::invalid(
-            "is: takes deleted, unfiled or favorite.",
-        )),
+        other => Err(FileError::invalid(format!(
+            "The search operator is:{other} is unknown; is: takes deleted or favorite."
+        ))),
     }
 }
 
@@ -403,7 +400,7 @@ mod tests {
         assert_eq!(
             clauses(
                 "type:IMAGE in:Campaign title:Budget owner:me creator:\"Ana Example\" tag:finance \
-                 is:deleted is:unfiled before:2026-01-01 after:2026-01-01 \
+                 is:deleted before:2026-01-01 after:2026-01-01 \
                  createdbefore:2026-01-01 createdafter:2026-01-01 source:example.org \
                  size>100MB SIZE<2kb -type:video"
             ),
@@ -415,7 +412,6 @@ mod tests {
                 (Clause::Creator("ana example".into()), false),
                 (Clause::Tag("finance".into()), false),
                 (Clause::Deleted, false),
-                (Clause::Unfiled, false),
                 (Clause::Before(date), false),
                 (Clause::After(date), false),
                 (Clause::CreatedBefore(date), false),

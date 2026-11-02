@@ -33,6 +33,11 @@ Feature: Search operation and operator grammar
     When the owner searches for "colour:blue"
     Then the search should be refused as "invalid_request"
 
+  Scenario: is:unfiled is retired, because no file is ever unfiled (ADR 041 Decision 8)
+    When the owner searches for "is:unfiled"
+    Then the search should be refused as "invalid_request"
+    And the refusal message should name "is:unfiled"
+
   Scenario: generator: is not part of the grammar without the c2pa module
     When the owner searches for "generator:\"Camera App\""
     Then the search should be refused as "invalid_request"

@@ -116,6 +116,7 @@ impl LibraryRig {
             catalog: catalog.clone(),
             repository: RepositoryId::new(INSTALLATION).expect("repository"),
             rebuilds: None,
+            sealing: None,
         };
         let locations =
             install_library_routes(&state, &host, &installation(), serving).expect("routes");
