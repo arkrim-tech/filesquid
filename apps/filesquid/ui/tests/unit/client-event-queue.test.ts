@@ -271,6 +271,7 @@ describe("a refused batch", () => {
   it("is not retried as it is: each event is resent alone, and the refused one is replaced", async () => {
     const transport = new ScriptedTransport();
     transport.refuse = (event) =>
+      "error_code" in event &&
       "component" in event &&
       event.component === "bad" &&
       event.error_code !== "client_event_refused";
@@ -295,7 +296,8 @@ describe("a refused batch", () => {
 
   it("does not loop on a replacement the route refuses too: it is dropped and logged", async () => {
     const transport = new ScriptedTransport();
-    transport.refuse = (event) => "component" in event && event.component === "bad";
+    transport.refuse = (event) =>
+      "error_code" in event && "component" in event && event.component === "bad";
     const { queue, log } = rig({}, { transport });
     warn(queue, 1, "bad");
     await settle(60_000);
