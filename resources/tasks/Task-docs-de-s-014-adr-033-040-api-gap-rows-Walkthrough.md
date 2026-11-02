@@ -110,4 +110,20 @@ None.
 
 ## Pre-commit
 
-See the section below, filled in from the hook run on the head commit.
+The PR's change scope is `rust:filesquid-api,filesquid-cli,filesquid-desktop,filesquid-native,filesquid-server npm:apps/filesquid/ui`: the API, desktop and UI SRS, the plans and the feature files live inside the crates and the UI package. So the commit ran the full suite. Excerpt of `FULL=1 bash scripts/pre-commit.sh` on `6029a5a0`, the commit with every change before this walkthrough section:
+
+```text
+✅ Clippy passed (127s).
+571 scenarios (371 passed, 200 skipped)
+✅ Workspace tests passed (338s).
+✅ Rustdoc passed (38s).
+64 scenarios (64 passed)
+✅ Desktop tests (test-instrumented) passed (97s).
+✅ ESLint passed (9s).
+✅ TypeScript passed (10s).
+✅ Vitest passed (64s).
+✅ Lint and test validation passed (test scope: full).
+✅ All Pre-Commit Hooks Passed! Test scope: full (1099s)
+```
+
+The 571 scenarios are the `filesquid-api` harness. The new scenarios of this PR are among the skipped ones until their rows add step definitions. The desktop harness (64 scenarios, all passed) is unchanged. The pull request records the hook runs on later commits.
