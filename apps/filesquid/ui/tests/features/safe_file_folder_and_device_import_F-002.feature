@@ -189,6 +189,18 @@ Feature: Safe file, folder and device import
     Then the dialog, the New menu and the Jobs panel should say Upload
     And the word Import should not appear in them
 
+  # Owner decision 2026-11-02, verbatim: "make sure each API row issues gets a fix in MVP".
+  # Task UI-F2.22 binds these two scenarios once API-F2.32 answers reserve_bytes and collection_title.
+  Scenario: The review says how much space the upload keeps free
+    Given the host answered a plan with a staging limit of 10 GiB and reserve_bytes of 50 GB
+    Then the review should read "Staging uses at most 10 GB and keeps 50 GB free."
+
+  Scenario: A job started in another session names its collection
+    Given an upload job into the collection "Harbour project" started before the app was reopened
+    When I open the Jobs panel
+    Then the job should be titled "Upload into Harbour project › Site photos" from the job's collection_title
+    And a job whose collection_title is null should use the vocabulary's word for a collection
+
   # Source
   # - srs.md SRS-F-002
   # - prd.md F-002

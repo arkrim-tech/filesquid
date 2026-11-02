@@ -2,6 +2,12 @@
 
 Raised while executing [Task UI-1.3](../plan.md) under [sync-logic.md](../../../../../.agents/rules/sync-logic.md). The task could not stop at the first of these: the other parts of the row (recent libraries, the library facts and the rebuild job) are unaffected and are done. Each conflict below is built behind one named seam, so the owner's resolution is a small edit; nothing here changes a requirement document.
 
+## Owner resolution (2026-11-02)
+
+- **Conflict 1:** option (a). Owner decision, verbatim: "RE: 5 - the desktop user can see folder name and volume so they can better manage their own private desktop". On the desktop the location-choices answer and the library facts carry `folder_name` and `volume_name` ([API-S-034](../../../crates/api/resources/srs.md) **Folder and volume names**, API-S-038, [DE-S-017](../../../crates/desktop/resources/srs.md)); every other host answers none, and no name reaches the journal. UI-S-034 keeps "{folder} · on {volume}". Built by [API-F2.31](../../../crates/api/resources/plan.md) and [UI-F2.22](../plan.md).
+- **Conflict 2:** owner decision, verbatim: "make sure each API row issues gets a fix in MVP". The route is specified exactly as recommended ([API-S-019](../../../crates/api/resources/srs.md) **Create-collection route**) and built by [API-F2.32](../../../crates/api/resources/plan.md); the UI needs no change.
+- **Conflict 3:** not changed by the decisions of 2026-11-02. Its API side is [API-F2.21](../../../crates/api/resources/plan.md) (history bytes, collection IDs on navigation nodes; owner decisions of 2026-10-31), and [UI-F2.20](../plan.md) shows the history caption.
+
 ## Conflict 1: the Location row of the first-use dialog against the location-choices answer
 
 1. **Conflict description.** Mockup 57 and [UI-S-034](../srs.md) draw the chosen folder "by name and volume" ("{folder} · on {volume}"). [API-S-034](../../../crates/api/resources/srs.md) answers the folder choice with an opaque location ID only and forbids a folder name in the request and the answer. The UI cannot show what the API will not tell it.

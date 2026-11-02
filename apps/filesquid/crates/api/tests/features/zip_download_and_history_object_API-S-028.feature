@@ -9,6 +9,11 @@
 # under their download names, never the import records; its PROV-O activity goes to the history
 # object and it is journaled once with opaque IDs only.
 # Owner decision 2026-10-31, verbatim: "accept recommendations" (decisions 9, 10 and 15 (a)).
+# Owner decisions 2026-11-02: the history object is urn:filesquid:history:<library-id> at history/ of
+# the library's storage root (ADR 040 Decision 5 as amended; verbatim: "ADR 033 and ADR 040 - draft
+# them for my approval to include in the same small docs PR"); on the desktop, whose answers are capped
+# at 16 MiB (DE-S-005), a ZIP is written through the host's save dialog straight to the chosen file
+# (option (a); verbatim: "I accept your recommenations on the remaining issues").
 # Scenarios only; Task API-F2.22 adds their step definitions (unmatched steps are reported as skipped).
 Feature: Library history object and streamed ZIP download
   As a library owner
@@ -19,6 +24,7 @@ Feature: Library history object and streamed ZIP download
   Scenario: A new library has its history object
     When zip-history caller creates the library "Archive"
     Then zip-history library "Archive" should hold exactly one history object at its fixed identifier and path
+    And zip-history history object should be urn:filesquid:history:<library-id> at history/ of its storage root
 
   Scenario: A ZIP download streams its members and records its activity
     Given zip-history library with 3 files in collection "Summer"
@@ -44,6 +50,28 @@ Feature: Library history object and streamed ZIP download
     Given zip-history library with one unreadable file among 3
     When zip-history caller downloads those 3 files as one ZIP
     Then zip-history manifest.txt should name the unreadable file as omitted
+
+  Scenario: A rebuild recognises the history object
+    Given zip-history library whose history object holds one download
+    When zip-history caller rebuilds the library's catalog from its files
+    Then zip-history rebuild report should list no unregistered object
+
+  Scenario: On the desktop a ZIP above the answer cap is saved to the chosen file
+    Given zip-history desktop host whose save dialog chooses a target file
+    When zip-history owner downloads files totalling 40 MiB as one ZIP
+    Then zip-history archive should be streamed straight to the chosen file with bounded memory
+    And zip-history answer should say saved with its member and omitted counts and no path or file name
+
+  Scenario: A dismissed save dialog writes nothing
+    Given zip-history desktop host whose save dialog is dismissed
+    When zip-history owner downloads 3 files as one ZIP
+    Then zip-history answer should say cancelled
+    And zip-history no file should be written, no PROV-O activity committed and no download journaled
+
+  Scenario: A desktop save that fails part-way leaves no partial file
+    Given zip-history desktop host whose target file fails after the first member
+    When zip-history owner downloads 3 files as one ZIP
+    Then zip-history partial file should be removed
 
   # Error cases
   Scenario Outline: A ZIP over its limits is refused before anything is written
