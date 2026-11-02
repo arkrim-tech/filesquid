@@ -155,6 +155,8 @@ export class FsLogs extends HTMLElement {
   private routeKey: string | undefined;
   /** A bare UUID just typed in the search, until the read it started has answered. */
   private typedUuid: string | undefined;
+  /** Whether the event channel has opened once since the view subscribed. */
+  private channelOpened = false;
 
   constructor() {
     super();
@@ -271,12 +273,18 @@ export class FsLogs extends HTMLElement {
   /** Subscribe to the event channel and read the journal. */
   private start(): void {
     this.stopLive();
+    this.channelOpened = false;
     const options = this.options;
     if (!options) return;
     try {
       this.unsubscribe = options.source.subscribe(
         (event) => this.onEvent(event),
-        () => void this.load(false),
+        () => {
+          // The first open is the channel starting; a later open means it was lost and may
+          // have dropped events, so the list is read again.
+          if (this.channelOpened) void this.load(false);
+          this.channelOpened = true;
+        },
       );
     } catch (error) {
       console.warn("FileSquid Logs could not follow the event channel", errorName(error));
@@ -412,9 +420,10 @@ export class FsLogs extends HTMLElement {
     this.dataset.state = "ready";
     parts.states.hidden = true;
     parts.table.scroll.hidden = false;
-    const zone = options.zone;
+    const { labels, zone } = options;
+    const own = new Map(this.libraries.map((library) => [library.library_id, library.name]));
     const rows = this.entries.map((entry) =>
-      rowElement(rowView(entry, options.labels, zone), options.labels, entry.id === this.selected),
+      rowElement(rowView(entry, labels, zone, own), labels, entry.id === this.selected),
     );
     parts.table.body.replaceChildren(...rows);
     this.rovingTab();
@@ -458,6 +467,7 @@ export class FsLogs extends HTMLElement {
     parts.more.root.hidden = true;
     parts.states.hidden = false;
     parts.states.replaceChildren(stateElement(words, role));
+    this.showLiveChip();
     this.announceFooter();
   }
 
@@ -645,7 +655,7 @@ export class FsLogs extends HTMLElement {
   private showSearchText(filter: LogsFilterState): void {
     const parts = this.parts;
     if (!parts) return;
-    const text = filter.file ?? filter.object ?? filter.operation_id ?? "";
+    const text = filter.file ?? filter.object ?? filter.operation_id ?? filter.operation ?? "";
     parts.filters.search.value = text;
     parts.filters.clear.hidden = text === "";
     parts.filters.hint.hidden = true;
@@ -662,9 +672,12 @@ export class FsLogs extends HTMLElement {
   private clearSearch(): void {
     const parts = this.parts;
     if (!parts) return;
+    const typed = parts.filters.search.value.trim();
     parts.filters.search.value = "";
     parts.filters.clear.hidden = true;
-    this.filter = searchedFilter(this.filter, { kind: "empty" });
+    const next = searchedFilter(this.filter, { kind: "empty" });
+    // The search field names the operation too when the filter's operation is what it holds.
+    this.filter = typed !== "" && typed === next.operation ? omitOperation(next) : next;
     this.applySearchHint(undefined);
     void this.load();
     parts.filters.search.focus();
@@ -801,7 +814,10 @@ export class FsLogs extends HTMLElement {
     this.liveCount = 0;
     if (this.state === "empty") this.state = "ready";
     this.draw();
-    this.parts?.table.scroll.scrollIntoView({ block: "nearest" });
+    const scroll = this.parts?.table.scroll;
+    if (scroll && typeof scroll.scrollIntoView === "function") {
+      scroll.scrollIntoView({ block: "nearest" });
+    }
   }
 
   /** Open the Download dialog (mockup 39). */
@@ -834,6 +850,13 @@ export class FsLogs extends HTMLElement {
       },
     });
   }
+}
+
+/** The filter without its operation. */
+function omitOperation(filter: LogsFilterState): LogsFilterState {
+  const next: { -readonly [K in keyof LogsFilterState]: LogsFilterState[K] } = { ...filter };
+  delete next.operation;
+  return next;
 }
 
 /** The filter without its undefined members. */

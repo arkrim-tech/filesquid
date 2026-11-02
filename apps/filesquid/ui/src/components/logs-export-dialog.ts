@@ -34,12 +34,13 @@ import { pickSaveFile, writeToPickedFile, type SaveTarget } from "./save-file";
 
 /** The stylesheet of the dialog, added after the shared control stylesheet and the Drive dialogs'. */
 export const EXPORT_STYLE = `
-  .dialog.logs-export { box-sizing: border-box; inline-size: min(35rem, 100%); min-block-size: 39.5rem; gap: 0; padding: 1.75rem 1.75rem 0; grid-template-rows: auto; align-content: start; }
+  .dialog.logs-export { box-sizing: border-box; inline-size: min(35rem, 100%); min-block-size: 39.5rem; gap: 0; padding: 1.5rem 1.75rem 0; grid-template-rows: auto; align-content: start; }
   .dialog.logs-export .dialog-title { margin: 0; line-height: 1.2; }
   .logs-export .sub { margin: var(--fs-space-1) 0 0; color: var(--fs-on-surface-variant); font-size: var(--fs-font-size-small); }
   .logs-export fieldset { margin: 0; padding: 0; border: 0; min-inline-size: 0; }
   .logs-export legend { padding: 0; font-size: var(--fs-font-size-small); font-weight: 600; color: var(--fs-on-surface); }
-  .logs-export .scope { margin-block-start: 1.375rem; }
+  .logs-export .scope { margin-block-start: 2.0625rem; }
+  .scrim:has(.dialog.logs-export) { align-items: start; padding-block-start: 5.125rem; }
   .logs-export .scope legend { margin-block-end: var(--fs-space-2); }
   .logs-export .scope-option { display: grid; grid-template-columns: 1rem minmax(0, 1fr); column-gap: var(--fs-space-2); align-items: start; min-block-size: 2.875rem; padding-block: 0.1875rem 0; cursor: pointer; }
   .logs-export .scope-option .words { display: grid; gap: 0; }
@@ -51,7 +52,7 @@ export const EXPORT_STYLE = `
   .logs-export input[type="radio"] { appearance: none; position: relative; inline-size: 1rem; block-size: 1rem; margin: 0; border: 1.5px solid var(--fs-outline-control); border-radius: var(--fs-radius-pill); background: var(--fs-surface-overlay); }
   .logs-export input[type="radio"]:checked { border: 2px solid var(--fs-primary); }
   .logs-export input[type="radio"]:checked::before { content: ""; position: absolute; inset: 3px; border-radius: var(--fs-radius-pill); background: var(--fs-primary); }
-  .logs-export .format { margin-block-start: 1.125rem; }
+  .logs-export .format { margin-block-start: 0.125rem; }
   .logs-export .format legend { margin-block-end: var(--fs-space-2); }
   .logs-export .cards { display: flex; gap: var(--fs-space-2); }
   .logs-export .card { display: grid; grid-template-columns: 1rem minmax(0, 1fr); grid-template-rows: auto auto; column-gap: 0.625rem; row-gap: 0.125rem; align-content: center; box-sizing: border-box; flex: 0 0 15.5rem; max-inline-size: 100%; min-block-size: 3.625rem; padding: 0 var(--fs-space-2) 0 0.625rem; border: 1.5px solid var(--fs-outline-strong); border-radius: var(--fs-radius); background: var(--fs-surface-overlay); cursor: pointer; }
@@ -59,18 +60,20 @@ export const EXPORT_STYLE = `
   .logs-export .card .name { grid-column: 2; font-size: var(--fs-font-size-small); font-weight: 600; color: var(--fs-on-surface); line-height: 1.2; }
   .logs-export .card .hint { grid-column: 2; font-size: var(--fs-font-size-small); color: var(--fs-on-surface-variant); line-height: 1.2; }
   .logs-export .card input { grid-row: 1; align-self: center; }
-  .logs-export .note-box.raised { display: flex; align-items: start; gap: var(--fs-space-2); margin-block-start: var(--fs-space-3); padding: 0.75rem var(--fs-space-3); border-radius: var(--fs-radius); font-size: var(--fs-font-size-small); color: var(--fs-on-surface-variant); }
+  .logs-export .note-box.raised { display: flex; align-items: start; gap: var(--fs-space-2); margin-block-start: 1.25rem; padding: 0.75rem var(--fs-space-3); border-radius: var(--fs-radius); font-size: var(--fs-font-size-small); color: var(--fs-on-surface-variant); }
   .logs-export .note-box p { margin: 0; }
   .logs-export .file { margin-block-start: 1.375rem; display: grid; gap: var(--fs-space-2); }
   .logs-export .file label { font-size: var(--fs-font-size-small); font-weight: 600; color: var(--fs-on-surface); }
   .logs-export .file-row { display: flex; align-items: center; gap: 0.75rem; }
   .logs-export .file-row .input { flex: 1 1 auto; font-family: var(--fs-font-mono); font-size: var(--fs-font-size-small); }
-  .logs-export .file-row .button { min-block-size: 1.75rem; padding: 0 0.75rem; }
+  .logs-export .file-row .button { min-block-size: 1.75rem; min-inline-size: 6.25rem; padding: 0 0.75rem; }
   .logs-export .where { margin: 0; color: var(--fs-on-surface-muted); font-size: var(--fs-font-size-small); }
   .logs-export .failed { margin: var(--fs-space-2) 0 0; color: var(--fs-error); font-size: var(--fs-font-size-small); }
   .logs-export .failed:empty, .logs-export .busy:empty { display: none; }
   .logs-export .busy { margin: var(--fs-space-2) 0 0; color: var(--fs-on-surface-variant); font-size: var(--fs-font-size-small); }
-  .logs-export .dialog-actions { margin: 1.25rem -1.75rem 0; padding: 1.125rem 1.75rem; }
+  .logs-export .dialog-actions { margin: 1.125rem -1.75rem 0; padding: 1.125rem 1.75rem 1rem; }
+  .logs-export .dialog-actions { gap: 0.75rem; }
+  .logs-export .dialog-actions .button { inline-size: 5.625rem; padding: 0; }
 `;
 
 /** What the dialog needs. */

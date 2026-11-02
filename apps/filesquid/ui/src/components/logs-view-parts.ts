@@ -21,14 +21,14 @@ import { stateButton } from "./property-table";
  */
 export const LOGS_STYLE = `
   :host { display: block; color: var(--fs-on-surface); font-family: var(--fs-font-sans); font-size: var(--fs-font-size-small); }
-  .head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--fs-space-1) var(--fs-space-3); margin-block: 0 var(--fs-space-3); min-block-size: 2.25rem; }
+  .head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--fs-space-1) var(--fs-space-3); margin-block: 0.4375rem var(--fs-space-3); min-block-size: 2.25rem; column-gap: 0.75rem; }
   .head h2 { margin: 0; font-family: var(--fs-font-heading); font-size: var(--fs-font-size-page); font-weight: 700; line-height: 1.2; color: var(--fs-on-surface-heading); }
   .head .intro { flex: 1 1 14rem; margin: 0; min-width: 0; color: var(--fs-on-surface-variant); }
-  .head .button { min-block-size: 2rem; }
+  .head .button { min-block-size: 2rem; gap: var(--fs-space-1); padding-inline: var(--fs-space-3) 0.75rem; }
   .chip.live { box-sizing: border-box; gap: var(--fs-space-2); min-block-size: 1.625rem; padding: 0 var(--fs-space-3) 0 10px; border: 0; border-radius: var(--fs-radius-chip); font-family: inherit; font-size: var(--fs-font-size-small); cursor: default; }
   .chip.live.fresh { cursor: pointer; }
   .chip.live .dot { inline-size: 7px; block-size: 7px; border-radius: var(--fs-radius-pill); background: var(--fs-primary); }
-  .filters { display: flex; flex-wrap: wrap; align-items: center; gap: var(--fs-space-2) 12px; margin-block-end: var(--fs-space-3); }
+  .filters { display: flex; flex-wrap: wrap; align-items: center; gap: var(--fs-space-2) 12px; margin-block-end: 0.8125rem; }
   .search { position: relative; flex: 0 0 12.875rem; }
   .search .icon { position: absolute; inset-inline-start: 10px; inset-block-start: 50%; translate: 0 -50%; color: var(--fs-icon-muted); pointer-events: none; }
   .search input { inline-size: 100%; min-block-size: 2rem; padding-inline: 32px var(--fs-space-4); font-size: var(--fs-font-size-small); }
@@ -43,7 +43,7 @@ export const LOGS_STYLE = `
   .hint.invalid { color: var(--fs-error); }
   .scroll { overflow-x: auto; margin-inline: -8px; }
   table { inline-size: 100%; min-inline-size: 50.5rem; table-layout: fixed; border-collapse: collapse; }
-  th { block-size: 2rem; padding: 0 var(--fs-space-2); border-block-end: 1px solid var(--fs-outline); color: var(--fs-on-surface-variant); font-weight: 600; text-align: start; }
+  th { white-space: nowrap; block-size: 2rem; padding: 0 var(--fs-space-2); border-block-end: 1px solid var(--fs-outline); color: var(--fs-on-surface-variant); font-weight: 600; text-align: start; }
   td { box-sizing: border-box; block-size: 2.125rem; padding: 0 var(--fs-space-2); border-block-end: 1px solid var(--fs-outline); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   td.mono, td .mono { font-family: var(--fs-font-mono); font-size: 0.75rem; }
   td.time { color: var(--fs-on-surface-variant); }
@@ -69,6 +69,7 @@ export const LOGS_STYLE = `
   .more .button { min-block-size: 1.75rem; padding: 0 12px; }
   .more[hidden], .states[hidden], .scroll[hidden] { display: none; }
   .states .state { padding-block-start: var(--fs-space-5); }
+  [hidden] { display: none !important; }
   .announce { position: absolute; inline-size: 1px; block-size: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 `;
 
@@ -107,7 +108,7 @@ export function buildHead(labels: LabelTable): HeadParts {
   live.append(node("span", "dot"), node("span", "text", labels.logsLive));
   const download = node("button", "button secondary download");
   download.type = "button";
-  download.append(document.createTextNode(labels.logsDownload));
+  download.append(icon("download", 16), document.createTextNode(labels.logsDownload));
   root.append(node("h2", "", labels.logs), node("p", "intro", labels.logsIntro), live, download);
   return { root, live, download };
 }

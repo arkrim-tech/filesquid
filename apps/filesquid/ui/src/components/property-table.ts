@@ -426,6 +426,7 @@ export class PropertyTable {
     const element = node("div", "row");
     element.dataset.key = row.key;
     const value = node("span", row.mono ? "value mono" : "value", row.value);
+    value.title = row.copy ?? row.value;
     const actions = node("span", "actions");
     for (const action of this.options.rowActions?.(row) ?? []) {
       action.classList.add("button-icon");

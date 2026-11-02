@@ -176,9 +176,10 @@ export function classifySearch(text: string): SearchKind {
 }
 
 /**
- * The filter with a search in it: the file, object and operation ID members are replaced, the
- * operation member only by an operation search, and every other filter is kept. A search that
- * names nothing clears the search members. Pure.
+ * The filter with a search in it: the file, object, operation ID and operation members (the ones
+ * the search field names, one at a time) are replaced by what the search names, and every other
+ * filter is kept. A search that names nothing clears the file, object and operation ID members.
+ * Pure.
  *
  * @param filter The filter before.
  * @param search What the text names.
@@ -194,7 +195,11 @@ export function searchedFilter(
   delete base.file;
   delete base.object;
   delete base.operation_id;
-  if (search.kind === "operation") delete base.operation;
+  // The search field names one of the file, object, operation ID and operation: a new search
+  // replaces whichever it held.
+  if (search.kind === "operation" || search.kind === "object" || search.kind === "uuid") {
+    delete base.operation;
+  }
   if (search.kind === "object") return { ...base, object: search.value };
   if (search.kind === "operation") return { ...base, operation: search.value };
   if (search.kind === "uuid") return { ...base, [uuidAs]: search.value };
@@ -256,13 +261,21 @@ export function shortId(id: string | undefined): string {
 
 /**
  * The text of an entry's target: the display name the route resolved, else the first target ID
- * (opaque), else a dash. Pure.
+ * (opaque) that is not a library, else the name the libraries route gave the library the entry
+ * is about, else the first target, else a dash. Pure.
  *
  * @param entry The entry.
+ * @param libraries The libraries the host opened, by ID (the names the libraries route gave).
  */
-export function targetText(entry: JournalEntryView): string {
+export function targetText(
+  entry: JournalEntryView,
+  libraries: ReadonlyMap<string, string> = new Map(),
+): string {
   if (entry.display_name !== undefined && entry.display_name !== "") return entry.display_name;
-  return entry.target_ids[0] ?? "—";
+  const own = entry.target_ids.find((id) => !libraries.has(id));
+  if (own !== undefined) return own;
+  const first = entry.target_ids[0];
+  return (first === undefined ? undefined : libraries.get(first)) ?? first ?? "—";
 }
 
 /** How the outcome chip of a row is drawn. */
@@ -386,9 +399,15 @@ export function utcOffsetLabel(at: Date, zone?: string): string {
  * @param entry The entry.
  * @param labels The active label table.
  * @param zone The IANA zone times are shown in; the viewer's when absent.
+ * @param libraries The libraries the host opened, by ID, for naming a library target.
  * @returns The row view.
  */
-export function rowView(entry: JournalEntryView, labels: LabelTable, zone?: string): RowView {
+export function rowView(
+  entry: JournalEntryView,
+  labels: LabelTable,
+  zone?: string,
+  libraries?: ReadonlyMap<string, string>,
+): RowView {
   const kind = outcomeKind(entry);
   const operationId = entry.operation_id ?? entry.provenance?.operation_id;
   return {
@@ -399,7 +418,7 @@ export function rowView(entry: JournalEntryView, labels: LabelTable, zone?: stri
     levelTone: entry.level === "info" ? "plain" : "alert",
     operation: entry.operation,
     outcome: { kind, text: labels[OUTCOME_LABEL[kind]], tone: OUTCOME_TONE[kind] },
-    target: targetText(entry),
+    target: targetText(entry, libraries),
     operationId: shortId(operationId),
     journalOnly: isJournalOnlyTagged(entry),
   };

@@ -66,11 +66,14 @@ export async function startClientEvents(options: ClientEventsOptions): Promise<C
   const restore = installConsoleCapture((input) => queue.record(input), options.console ?? console);
   const onPageHide = () => queue.pagehide();
   win.addEventListener("pagehide", onPageHide);
+  // A plain marker for tests and diagnostics: the console is captured from here on.
+  win.document.documentElement.dataset["clientEvents"] = "started";
   return {
     queue,
     credentialChanged: () => queue.credentialChanged(),
     stop: () => {
       restore();
+      delete win.document.documentElement.dataset["clientEvents"];
       win.removeEventListener("pagehide", onPageHide);
       queue.stop();
     },

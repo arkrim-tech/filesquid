@@ -52,8 +52,8 @@ export interface LogEntryOptions {
 
 const ENTRY_STYLE = `
   :host { display: flex; flex-direction: column; min-block-size: 100%; box-sizing: border-box; font-family: var(--fs-font-sans); font-size: var(--fs-font-size-ui); color: var(--fs-on-surface); }
-  :host([hidden]) { display: none; }
-  .head { display: grid; gap: var(--fs-space-2); padding: var(--fs-space-3) var(--fs-space-3) var(--fs-space-2) 1.25rem; border-block-end: 1px solid var(--fs-outline); }
+  :host([hidden]), [hidden] { display: none !important; }
+  .head { display: grid; gap: var(--fs-space-2); padding: var(--fs-space-3) var(--fs-space-3) 0.875rem 1.25rem; border-block-end: 1px solid var(--fs-outline); }
   .head-top { display: flex; align-items: center; justify-content: space-between; gap: var(--fs-space-2); }
   .head-top h2 { margin: 0; font-size: var(--fs-font-size-small); font-weight: 500; letter-spacing: 0.1em; color: var(--fs-on-surface-muted); }
   .close { display: inline-flex; align-items: center; justify-content: center; inline-size: 1.5rem; block-size: 1.5rem; padding: 0; border: 0; border-radius: var(--fs-radius-item); background: none; color: var(--fs-icon-muted); cursor: pointer; }
@@ -61,18 +61,18 @@ const ENTRY_STYLE = `
   .title { display: flex; align-items: center; justify-content: space-between; gap: var(--fs-space-2); }
   .operation { margin: 0; min-width: 0; font-family: var(--fs-font-mono); font-size: var(--fs-font-size-lead); font-weight: 600; color: var(--fs-on-surface-heading); overflow-wrap: anywhere; }
   .title .chip { flex: 0 0 auto; }
-  .rows { padding-block-start: var(--fs-space-1); }
+  .rows { padding-block-start: 0.4375rem; }
   .rows .row { min-block-size: 2.625rem; }
   .rows .row::after { display: none; }
-  .rows .row dd .value.mono { font-size: 0.75rem; }
+  .rows .row dd .value.mono { font-size: 0.75rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .rows .row[data-key="operation-id"] dd .value { font-size: var(--fs-font-size-eyebrow); }
-  .actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--fs-space-3); padding: var(--fs-space-3) 1.25rem 0; }
-  .actions a { display: inline-block; padding-block: var(--fs-space-1); color: var(--fs-on-primary-container); font-size: var(--fs-font-size-ui); font-weight: 600; text-decoration: none; }
-  .actions a:hover { text-decoration: underline; }
-  .copy-json { margin: var(--fs-space-2) 1.25rem 0; min-block-size: 1.75rem; align-self: start; padding: 0 var(--fs-space-3); }
+  .links { display: flex; flex-wrap: wrap; align-items: center; gap: var(--fs-space-3); padding: 0.6875rem 1.25rem 0; }
+  .links a { display: inline-block; padding-block: var(--fs-space-1); color: var(--fs-on-primary-container); font-size: var(--fs-font-size-ui); font-weight: 600; text-decoration: none; }
+  .links a:hover { text-decoration: underline; }
+  .copy-json { margin: 0.375rem 1.25rem 0; min-block-size: 1.75rem; align-self: start; padding: 0 var(--fs-space-3); }
   .journal-only { margin: var(--fs-space-3) 1.25rem 0; color: var(--fs-on-surface-variant); font-size: var(--fs-font-size-small); }
-  .journal-only[hidden], .actions[hidden] { display: none; }
-  .note-box.raised { display: flex; align-items: start; gap: var(--fs-space-2); margin: var(--fs-space-3) 1.25rem var(--fs-space-3); padding: var(--fs-space-3); border-radius: var(--fs-radius); font-size: var(--fs-font-size-small); color: var(--fs-on-surface-variant); }
+  .journal-only[hidden], .links[hidden] { display: none; }
+  .note-box.raised { display: flex; align-items: start; gap: var(--fs-space-2); margin: 1.5rem 1.25rem var(--fs-space-3); padding: var(--fs-space-3); border-radius: var(--fs-radius); font-size: var(--fs-font-size-small); color: var(--fs-on-surface-variant); }
   .note-box p { margin: 0; }
   .read-failed { margin: var(--fs-space-2) 1.25rem 0; color: var(--fs-error); font-size: var(--fs-font-size-small); }
   .read-failed[hidden] { display: none; }
@@ -192,7 +192,7 @@ export class FsLogEntry extends HTMLElement {
   /** The links, the journal-only line and Copy as JSON. */
   private actions(labels: LabelTable): HTMLElement {
     const box = node("div", "actions-box");
-    const links = node("div", "actions");
+    const links = node("div", "links");
     const provenance = node("a", "view-provenance", labels.logsViewProvenance);
     const file = node("a", "show-file", labels.logsShowFile);
     links.append(provenance, file);
@@ -272,7 +272,7 @@ export class FsLogEntry extends HTMLElement {
       if (canLink) show.href = openFileHash(libraryId, file, "details");
     }
     if (only) only.hidden = !entry.provenance?.journal_only;
-    const links = root.querySelector<HTMLElement>(".actions");
+    const links = root.querySelector<HTMLElement>(".links");
     if (links) links.hidden = !canLink;
   }
 
