@@ -19,7 +19,7 @@ Branch `feat/ui-f2.16-logs-view`, dispatched by global Task FS-2.9. Plan row: [T
 ## Owner decisions that bind this task
 
 - The journal holds opaque IDs only; the view shows what the journal routes return. A display name appears only through `names=true` (API-S-031), never from a lookup the UI invents, and the export never carries names (owner 2026-10-31, "accept recommendations").
-- Cubic capacity: when the review ends "neutral" with "AI review line limit reached", or Cubic is unavailable, push and hand back `BLOCKED: Cubic capacity`.
+- AI PR Agent capacity: when the review ends "neutral" with "AI review line limit reached", or the AI PR Agent is unavailable, push and hand back `BLOCKED: AI PR Agent capacity`.
 
 ## Contract on main (no unmerged fields)
 
