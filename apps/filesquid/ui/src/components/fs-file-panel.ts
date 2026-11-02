@@ -137,6 +137,25 @@ export class FsFilePanel extends HTMLElement {
     this.deliver();
   }
 
+  /**
+   * Show the tab registered under `id` (a link that opens the file on its Provenance tab,
+   * UI-S-021). Call it before handing the panel the file, so only the chosen tab reads. The
+   * selection is drawn without delivering the file the panel still holds. Returns from the
+   * Versions view to the tabs. An id no tab was registered under changes nothing.
+   *
+   * @param id The id the tab was registered under.
+   * @returns True when such a tab exists.
+   */
+  selectTab(id: string): boolean {
+    const index = this.tabs.findIndex((tab) => tab.id === id);
+    if (index < 0) return false;
+    this.versionsOpen = false;
+    this.selected = index;
+    this.showSelection();
+    this.applyModeOnly();
+    return true;
+  }
+
   /** Whether the Versions view is shown in place of the tabs. */
   get versionsShown(): boolean {
     return this.versionsOpen;
@@ -300,8 +319,8 @@ export class FsFilePanel extends HTMLElement {
     root?.querySelector("button.history")?.setAttribute("aria-pressed", String(this.versionsOpen));
   }
 
-  /** Show the selected tab or the Versions view, and hand the file to the panel shown. */
-  private applyMode(): void {
+  /** Mark the selected tab and show its panel, without handing out the file. */
+  private showSelection(): void {
     const root = this.shadowRoot;
     if (!root) return;
     const tabs = [...root.querySelectorAll<HTMLElement>('[role="tab"]')];
@@ -311,6 +330,12 @@ export class FsFilePanel extends HTMLElement {
       tab.tabIndex = index === this.selected ? 0 : -1;
     });
     panels.forEach((panel, index) => void (panel.hidden = index !== this.selected));
+  }
+
+  /** Show the selected tab or the Versions view, and hand the file to the panel shown. */
+  private applyMode(): void {
+    if (!this.shadowRoot) return;
+    this.showSelection();
     this.applyModeOnly();
     this.deliver();
   }

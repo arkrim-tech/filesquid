@@ -27,7 +27,7 @@
     - [API-F2.23](../apps/filesquid/crates/api/resources/plan.md#phase-f2-prov-o-history-global-task-fs-28) A copy records its source in the provenance history
     - [API-F2.33](../apps/filesquid/crates/api/resources/plan.md#phase-f2-prov-o-history-global-task-fs-28) Fixity and resources in the file facts, operation IDs on errors and newest-first history
 - [Task FS-2.9](./implementation-plan.md#task-fs-2.9) Durable journal, Logs view and file panel tabs: 8 of 9 module rows ticked
-    - [UI-F2.16](../apps/filesquid/ui/resources/plan.md#phase-f2-default-ui-global-tasks-fs-21-fs-22-fs-24-fs-25-11-12-after-the-mvp-ui-f26-in-global-task-fs-23-ui-f210-and-ui-f212-in-global-task-fs-27-ui-f213-in-global-task-fs-26-ui-f25-in-global-task-fs-c1-phase-c) Logs view and journal export
+    - [UI-F2.16](../apps/filesquid/ui/resources/plan.md#phase-f2-default-ui-global-tasks-fs-21-fs-22-fs-24-fs-25-11-12-after-the-mvp-ui-f26-in-global-task-fs-23-ui-f210-and-ui-f212-in-global-task-fs-27-ui-f213-in-global-task-fs-26-ui-f25-in-global-task-fs-c1-phase-c) Logs view and journal export ([PR #171](https://github.com/arkrim-tech/filesquid/pull/171))
 - [Task FS-3.4](./implementation-plan.md#task-fs-3.4) MVP performance gate (macOS desktop): 1 of 3 module rows ticked
     - [UI-F3.4](../apps/filesquid/ui/resources/plan.md#phase-f3-mvp-performance-global-task-fs-34) Virtualised navigation tree
     - [DE-F3.2](../apps/filesquid/crates/desktop/resources/plan.md#phase-f3-installers-and-performance-global-tasks-fs-31-fs-34-and-after-the-mvp-fs-311) Packaged desktop file-browsing performance
@@ -36,9 +36,9 @@
 
 - [DE-F3.1](../apps/filesquid/crates/desktop/resources/plan.md#phase-f3-installers-and-performance-global-tasks-fs-31-fs-34-and-after-the-mvp-fs-311) macOS early-access DMG and the FileSquid overlay (part of [Task FS-3.1](./implementation-plan.md#task-fs-3.1))
 
-Generated 2026-11-02T18:00:12Z (RFC 3339, UTC) from the ticked boxes, the module plans and the open pull requests at that time.
-<!-- generated-at: 2026-11-02T18:00:12Z -->
-<!-- in-progress-prs: none -->
+Generated 2026-11-02T20:13:47Z (RFC 3339, UTC) from the ticked boxes, the module plans and the open pull requests at that time.
+<!-- generated-at: 2026-11-02T20:13:47Z -->
+<!-- in-progress-prs: UI-F2.16=#171 -->
 <!-- mvp-progress:end -->
 
 This is a short, ordered view of [implementation-plan.md](./implementation-plan.md). Each numbered item is a global task in the order the dev team expects to finish it, and the nested items are the module tasks it dispatches, taken from each module's `resources/plan.md`. Task codes link to the full task description. A box is ticked when the matching box is ticked in the source plan.

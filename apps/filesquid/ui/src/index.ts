@@ -15,6 +15,8 @@ import { FsFilePreview } from "./components/fs-file-preview";
 import { FsDetailsPanel } from "./components/fs-details-panel";
 import { FsMetadataPanel } from "./components/fs-metadata-panel";
 import { FsProvenancePanel } from "./components/fs-provenance-panel";
+import { FsLogs } from "./components/fs-logs";
+import { FsLogEntry } from "./components/fs-log-entry";
 import { FsFilePanel } from "./components/fs-file-panel";
 import { FsVersionsPanel } from "./components/fs-versions-panel";
 import { FsHostIndicator } from "./components/fs-host-indicator";
@@ -522,13 +524,61 @@ export {
   bindMonitorRoute,
   bindNavigationRoute,
   bindSettingsRoute,
+  logsHash,
   memoryTokenStore,
+  parseLogsHash,
   parseNavigationHash,
   type FilePanelSources,
   type FilesRouteOptions,
+  type LogsFilter,
   type NavigationRouteOptions,
   type RouteHost,
 } from "./app/routes";
+export { bindLogsRoute, type LogsRouteOptions } from "./app/logs-route";
+export {
+  FsLogs,
+  LOGS_FOOTER_EVENT,
+  LOGS_SELECT_EVENT,
+  type LogsViewOptions,
+} from "./components/fs-logs";
+export { FsLogEntry, LOG_ENTRY_CLOSE_EVENT, type LogEntryOptions } from "./components/fs-log-entry";
+export { PANEL_WIDE } from "./components/panel-slot";
+export { ClientLogsSource, type LogsClient, type LogsSource } from "./logs/source";
+export {
+  DEFAULT_RANGE,
+  DENIED_OPERATION,
+  EMPTY_FILTER,
+  PAGE_SIZE as LOGS_PAGE_SIZE,
+  classifySearch,
+  detailRows as logDetailRows,
+  exportQuery,
+  journalQuery,
+  matchesFilter,
+  rowView as logRowView,
+  viewProvenanceTarget,
+  type LogsFilterState,
+  type LogsLibrary,
+} from "./logs/model";
+export {
+  ClientEventQueue,
+  type ClientEventInput,
+  type QueueOptions,
+  type QueueStats,
+} from "./clientevents/queue";
+export {
+  IndexedDbEventStore,
+  StoreRefusedError,
+  UnavailableEventStore,
+  type EventStore,
+  type StoredEvent,
+} from "./clientevents/store";
+export { installConsoleCapture, queueLog } from "./clientevents/console";
+export {
+  startClientEvents,
+  type ClientEvents,
+  type ClientEventsOptions,
+} from "./clientevents/start";
+export { openFileHash, parseOpenRequest, type OpenRequest, type PanelTabId } from "./files/model";
 export {
   accessibilityViolations,
   accessibleName,
@@ -599,6 +649,8 @@ export function defineElements(): void {
   if (!customElements.get("fs-versions-panel")) {
     customElements.define("fs-versions-panel", FsVersionsPanel);
   }
+  if (!customElements.get("fs-log-entry")) customElements.define("fs-log-entry", FsLogEntry);
+  if (!customElements.get("fs-logs")) customElements.define("fs-logs", FsLogs);
   if (!customElements.get("fs-file-panel")) customElements.define("fs-file-panel", FsFilePanel);
   if (!customElements.get("fs-host-indicator")) {
     customElements.define("fs-host-indicator", FsHostIndicator);

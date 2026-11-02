@@ -16,7 +16,8 @@
  * before the built-in ones.
  *
  * **Events** (bubbling and composed): `fs-location-change` (`detail.location`) when a folder is
- * entered, `fs-file-open` (`detail.file`, or null when the viewer closes) and `fs-files-change`
+ * entered, `fs-file-open` (`detail.file`, or null when the viewer closes, and `detail.tab` when a
+ * link asked for a panel tab, see `openRequest`) and `fs-files-change`
  * (`detail.operation`, `detail.commit`) after a write commits.
  *
  * Accessibility (UI-S-016): see {@link FileList} for the listing's keys and roving Tab stop;
@@ -48,7 +49,10 @@ import {
   type FileRow,
   type FolderEntry,
   type FolderPage,
+  type OpenRequest,
+  type PanelTabId,
 } from "../files/model";
+import { isOriginalPath } from "../files/ops";
 import type { PreviewRenderer } from "../files/preview";
 import type { FileSource } from "../files/source";
 import { buildFrame, STYLE as FRAME_STYLE, type Frame } from "./file-browser-frame";
@@ -122,6 +126,8 @@ export class FsFileBrowser extends HTMLElement {
   private current: FileRef | null = null;
   private returnKey = "";
   private hrefs = new Map<string, string>();
+  /** A file a link asked to open (`?open=<file>&tab=<tab>`), until a listing has answered it. */
+  private requested?: OpenRequest;
 
   constructor() {
     super();
@@ -162,6 +168,19 @@ export class FsFileBrowser extends HTMLElement {
     if (same && this.dataset.state === "ready") return;
     this.closeViewer(false);
     void this.loadFolder();
+  }
+
+  /**
+   * Ask the browser to open the file whose own original is `request.file` once its folder is
+   * listed (the deep link of the Logs view, UI-S-021), with `request.tab` as the panel's tab
+   * (`fs-file-open` carries it). Set it before the location: a folder already shown opens the
+   * file at once, otherwise it opens when the listing loads, reading further pages until the
+   * file is found or the listing ends. An answered request, or one this object's listing cannot
+   * answer, is forgotten, so a later listing never opens a file by itself.
+   */
+  set openRequest(request: OpenRequest | undefined) {
+    this.requested = request;
+    if (request && this.listed && this.sameLocation(this.listed)) this.openRequested();
   }
 
   /** The file open in the viewer, or null. */
@@ -398,6 +417,7 @@ export class FsFileBrowser extends HTMLElement {
     if (!options || this.cursor === null || this.loadingMore || this.pages >= limit) return;
     this.loadingMore = true;
     const generation = this.generation;
+    const pagesBefore = this.pages;
     try {
       const page = await options.source.list(
         this.where,
@@ -417,11 +437,13 @@ export class FsFileBrowser extends HTMLElement {
     } finally {
       this.loadingMore = false;
     }
+    if (generation === this.generation && this.pages !== pagesBefore) this.openRequested();
   }
 
   /** Show the loaded entries; return focus to the first row if it was in the old list. */
   private afterLoad(hadFocus: boolean): void {
     this.applyRows();
+    this.openRequested();
     const shadow = this.shadowRoot as ShadowRoot;
     if (hadFocus && shadow.activeElement === null) this.list?.focusFirst();
   }
@@ -533,11 +555,35 @@ export class FsFileBrowser extends HTMLElement {
     else this.openFile(row);
   }
 
+  /**
+   * Answer the pending open request from the rows shown now. A same-named original of another
+   * object is left alone. The request stays until the file is opened or this object's listing
+   * has no further page.
+   */
+  private openRequested(): void {
+    const request = this.requested;
+    if (!request) return;
+    const wanted = `urn:uuid:${request.file}`.toLowerCase();
+    if (this.where.object_id.toLowerCase() !== wanted) return;
+    const row = this.rows.find((r) => r.kind === "file" && isOriginalPath(r.path, request.file));
+    if (row) {
+      this.requested = undefined;
+      this.openFile(row, request.tab);
+      return;
+    }
+    const limit = this.options?.maxPages ?? MAX_LISTING_PAGES;
+    if (this.cursor === null || this.pages >= limit) {
+      this.requested = undefined;
+      return;
+    }
+    if (!this.loadingMore) void this.loadMore();
+  }
+
   /** Open a file in the viewer. */
-  private openFile(row: FileRow): void {
+  private openFile(row: FileRow, tab?: PanelTabId): void {
     const viewer = (this.frame as Frame).viewer;
     this.returnKey = row.key;
-    this.showViewer(this.refOf(row));
+    this.showViewer(this.refOf(row), tab);
     this.updateViewerHeader(row);
     focusElement(viewer.title);
   }
@@ -554,7 +600,7 @@ export class FsFileBrowser extends HTMLElement {
   }
 
   /** Show the viewer for `ref`, hide the listing, and hand `ref` to the preview and panels. */
-  private showViewer(ref: FileRef): void {
+  private showViewer(ref: FileRef, tab?: PanelTabId): void {
     const frame = this.frame as Frame;
     this.current = ref;
     frame.viewer.element.hidden = false;
@@ -565,7 +611,7 @@ export class FsFileBrowser extends HTMLElement {
     this.mountPanels();
     for (const panel of mounted) if (panel.element) panel.element.fileRef = ref;
     this.writes?.syncToolbar();
-    this.emit("fs-file-open", { file: ref });
+    this.emit("fs-file-open", tab === undefined ? { file: ref } : { file: ref, tab });
   }
 
   /** Close the viewer; when `focus`, return focus to the row that opened it. */

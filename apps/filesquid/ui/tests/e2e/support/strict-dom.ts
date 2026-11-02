@@ -26,7 +26,8 @@ export type Scheme = "light" | "dark";
  * routes is excused everywhere; the proxy's 500 to 504 only in the preview suite
  * (`FILESQUID_E2E_PREVIEW=1`, set by `playwright.preview.config.ts`), so the server-backed suite
  * still fails on a real 500 from them. The browser logs each refused fetch
- * as a console error. Only those lines, from those routes, are excused; the app's own messages
+ * as a console error. The preview suite also excuses the proxy's refusal of `POST
+ * /api/v1/client-events` (see below). Only those lines, from those routes, are excused; the app's own messages
  * and every other route's errors still fail a test.
  *
  * @param text - The console message text.
@@ -43,7 +44,12 @@ export function isNavigationUnavailable(
   const status = preview ? /status of 50[0-4] \(/ : /status of 503 \(/;
   const optional =
     status.test(text) && /\/api\/v1\/(preferences|libraries\/recent|jobs)(\?|$)/.test(url);
-  return navigation || optional;
+  // The page forwards its own console warnings to `POST /api/v1/client-events` (UI-F2.16,
+  // UI-S-023) and retries until the host answers; the preview has no host, so the proxy refuses
+  // each attempt. Only the preview suite excuses it; a spec that runs the real route fakes it.
+  const clientEvents =
+    preview && /status of 50[0-4] \(/.test(text) && /\/api\/v1\/client-events$/.test(url);
+  return navigation || optional || clientEvents;
 }
 
 /**

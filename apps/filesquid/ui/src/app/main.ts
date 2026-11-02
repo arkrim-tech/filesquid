@@ -37,6 +37,10 @@ import {
   PreferencesService,
   bindDriveRoute,
   bindFilesRoute,
+  bindLogsRoute,
+  ClientLogsSource,
+  selectHostAdapter,
+  startClientEvents,
   bindStorage,
   bindLibraryRoute,
   bindMonitorRoute,
@@ -54,6 +58,7 @@ import {
   redirectToFirstUse,
   resolveLocale,
   sharedNavigationStore,
+  type ClientEvents,
   type Distribution,
   type FsAppShell,
   type MountedImports,
@@ -80,6 +85,7 @@ const shell = document.querySelector<FsAppShell>("fs-app-shell");
 const tree = document.createElement("fs-nav-tree") as FsNavTree;
 let imports: MountedImports | undefined;
 const tokens = memoryTokenStore(() => {
+  clientEvents?.credentialChanged(); // events of the old credential wait for their principal
   void shell?.refreshHealth();
   void imports?.panel.reconnect(); // the Jobs panel's first read may have been refused
   navigation.reconnect();
@@ -87,6 +93,19 @@ const tokens = memoryTokenStore(() => {
   void preferences.start(); // reads again when the first read was refused before the token
 });
 const client = createHostClient(window, () => tokens.get());
+// Console warnings and errors are journaled through the client-events route (UI-F2.16, UI-S-023);
+// the queue holds them until the route acknowledges them. Started once, here, for every route.
+let clientEvents: ClientEvents | undefined;
+void startClientEvents({
+  win: window,
+  client,
+  host: selectHostAdapter(detectHost(window)).baseUrl,
+}).then(
+  (started) => {
+    clientEvents = started;
+  },
+  (error: unknown) => console.warn("FileSquid could not start client events", error),
+);
 const navigation = new ClientNavigationSource(client);
 const desktop = detectHost(window).isTauri;
 // Per-user preferences (UI-F2.8, UI-S-017): read once through the API; the navigation tree's
@@ -148,6 +167,8 @@ if (shell) {
   const monitor = { labels, client, tokens: desktop ? undefined : tokens };
   bindMonitorRoute(shell, { ...monitor, repairHref: libraryRepairHref });
 }
+// The Logs view (UI-F2.16): `#/logs` and its filtered forms; the sidebar row is the desktop's.
+if (shell) bindLogsRoute(shell, { labels, source: new ClientLogsSource(client) });
 if (shell) {
   const history = new ClientHistorySource(client);
   const filePanel = {
