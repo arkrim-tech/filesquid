@@ -71,4 +71,4 @@ Each line is a gate: coded and tested before the task is complete. See [the Plan
 - [ ] Playwright preview suite under the shared lock
 - [ ] Walkthrough with the SRS IDs and titles and the raw output; Plan and ToDos deleted
 - [ ] Plan row, checklist boxes, `update_mvp_progress.py`, README, ImageSquid labels
-- [ ] `bash scripts/pre-commit.sh` passes (scope npm), commit, merge `origin/main`, push, PR, Cubic loop
+- [ ] `bash scripts/pre-commit.sh` passes (scope npm), commit, merge `origin/main`, push, PR, AI PR Agent loop
