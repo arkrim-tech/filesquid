@@ -158,7 +158,7 @@ Both produce `apps/filesquid/target/debug/filesquid-desktop`, branded by the ove
 
 ## Run tests
 
-This repository has no hosted CI. The gate before every push is the local pre-commit hook. On every commit it runs the fast verifiers under `scripts/`: branch protection and the `<type>/<slug>` branch-name prefix, ports, document sync, traceability, links, workspace boundaries, logging, formatting, documentation checks, and the change-scope helper's own tests. Then it runs Clippy, Cargo and UI tests **for what changed**. Run it by hand from the repository root, or install it once as the git hook:
+Lint and tests do not run on GitHub Actions. The gate before every push is the local pre-commit hook. The AI PR Agent reviews pull requests from [`.github/workflows/pr-agent.yml`](./.github/workflows/pr-agent.yml). Add an `OPENAI_KEY` repository secret before that workflow can call a model. A later setup may move that review to a remote self-hosted server. The workflow does not replace this hook. On every commit it runs the fast verifiers under `scripts/`: branch protection and the `<type>/<slug>` branch-name prefix, ports, document sync, traceability, links, workspace boundaries, logging, formatting, documentation checks, and the change-scope helper's own tests. Then it runs Clippy, Cargo and UI tests **for what changed**. Run it by hand from the repository root, or install it once as the git hook:
 
 ```sh
 bash scripts/pre-commit.sh                     # change-aware run (the normal commit gate)
@@ -523,4 +523,4 @@ FileSquid and the ImageSquid distribution are licensed under the [MIT License](.
 
 # Open Agent Dev
 
-This project is developed with Claude Code and Grok Build using the [Open Agent Dev](https://github.com/peterVG/open-agent-dev/) tooling developed by [@peterVG](https://vangarderen.net)
+This project is developed with AI coding agents using the [Open Agent Dev](https://github.com/peterVG/open-agent-dev/) tooling developed by [@peterVG](https://vangarderen.net). Role prompts live in [.agents/agents/](./.agents/agents/README.md).

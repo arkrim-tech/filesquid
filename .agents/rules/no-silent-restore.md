@@ -32,4 +32,4 @@ When any of the following occur, the agent MUST treat the change as potentially 
 
 ## Enforcement
 
-This rule overrides default “helpful recovery” behavior. It applies to all agents operating in this repository (Grok, Cursor, and others that load `Agents.md` / `.agents/rules/`).
+This rule overrides default “helpful recovery” behavior. It applies to every agent operating in this repository that loads `AGENTS.md` and `.agents/rules/`.

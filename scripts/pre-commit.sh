@@ -98,7 +98,7 @@ if [ $? -ne 0 ]; then
 fi
 
 # 10. Lint and tests (Clippy, Cargo tests, rustdoc, UI lint/check/tests), limited to the change scope.
-#    No hosted CI: this is the gate before a push. FILESQUID_SKIP_TESTS=1 skips it for WIP commits.
+#    This local hook is the lint and test gate before a push. FILESQUID_SKIP_TESTS=1 skips it for WIP commits.
 ./scripts/verify_tests.sh --scope "$SCOPE"
 if [ $? -ne 0 ]; then
   echo "❌ pre-commit failed: Lint and Test Validation (test scope: $TEST_SCOPE)"

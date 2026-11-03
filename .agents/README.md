@@ -1,11 +1,13 @@
 # Agent Skills 1.0 Compliance
 
-This template follows the **Agent Skills 1.0 specification** to ensure compatibility with multiple AI coding assistants (Antigravity, Claude Code, Cursor, etc.).
+This template follows the **Agent Skills 1.0 specification** so any AI coding assistant can load the same skills, rules, and role definitions.
 
 ## Directory Structure
 
 ```
 .agents/
+├── agents/                  # Role prompts (Open Agent Format sub-agents)
+│   └── filesquid-orchestrator.md
 ├── skills/                  # Reusable capabilities
 │   └── gherkin-architect/   # BDD scenario generation
 │       └── SKILL.md         # Skill instructions (YAML + Markdown)
@@ -56,9 +58,16 @@ The `.agents/` directory is the **standard** defined by Agent Skills 1.0, ensuri
 - Loaded *only* when a specific Skill explicitly requests it via its YAML frontmatter, saving tokens and improving accuracy for low-level tasks.
 
 ### 5. Scripts (`.agents/scripts/`)
-**Executable scripts** that the AI agent can run using the `code_interpreter` tool.
+**Executable scripts** that an AI agent can run.
 - Used to validate logic, simulate load, or perform automated checks without deploying code.
 - Often executed by specific Skills to verify architecture decisions or calculations.
+
+### 6. Agents (`.agents/agents/`)
+**Role prompts** for the workers that implement the roadmap. See [agents/README.md](./agents/README.md).
+
+- A role is a sub-agent with its own session (orchestrator, modules, platform, UI).
+- A skill is a procedure any of those workers loads when the task needs it.
+- Role files follow the Open Agent Format simplified sub-agent definition: `name`, `description`, then the prompt. They name no coding tool and no model.
 
 ## Agent Skills 1.0 Format
 
@@ -82,14 +91,9 @@ description: Brief description of what this skill does
 [Detailed guidance for the AI agent]
 ```
 
-## Compatibility Matrix
+## Portability
 
-| AI Assistant | `.agents/skills/` Support | `.agents/rules/` Support |
-|--------------|----------------------|---------------------|
-| Antigravity  | ✅ Full              | ✅ Full             |
-| Claude Code  | ✅ Full              | ✅ Full             |
-| Cursor       | ✅ Full              | ⚠️ Partial          |
-| GitHub Copilot | ⚠️ Limited         | ❌ No               |
+Skills, rules, and role files are Markdown and YAML. Any assistant that reads `.agents/` can load them. Distribution and how a session is started stay with the assistant. The files do not name a product.
 
 ## Migration from `.agent/`
 
