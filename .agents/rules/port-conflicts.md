@@ -16,7 +16,7 @@ Always suggest the following UNIX command to the user as a hint for them to run 
 lsof -ti:<your_port_number> | xargs kill -9
 ```
 
-**Agents MUST NOT run this command.** Other agents may share the machine and hold the port, and `lsof … | xargs kill -9` kills whatever holds it, not only your process. It is advice for the human, never a step the agent executes (see the Process rules in [filesquid-platform-engineer.md](../../.claude/agents/filesquid-platform-engineer.md)).
+**Agents MUST NOT run this command.** Other agents may share the machine and hold the port, and `lsof … | xargs kill -9` kills whatever holds it, not only your process. It is advice for the human, never a step the agent executes (see the Process rules in [filesquid-platform-engineer.md](../agents/filesquid-platform-engineer.md)).
 
 **Agent Behavior:**
 1. An agent whose own server holds the port stops it by the PID it recorded when it started that server.

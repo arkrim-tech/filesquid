@@ -1,18 +1,20 @@
 ---
 trigger: always_on
-description: Run every quality gate through the local pre-commit hook; never add hosted CI such as GitHub Actions.
+description: Run every quality gate through the local pre-commit hook. The only hosted workflow is the pull-request reviewer.
 copyright: Pieter Van Garderen (2026)
 license: CC-BY
 ---
 
-# Local Verification, No Hosted CI
+# Local Verification
 
-**Purpose:** This rule enforces the "Local Verification, No Hosted CI" principle in `AGENTS.md`. FileSquid runs every quality gate on the developer's machine through `scripts/pre-commit.sh`. Hosted CI is slow, non-deterministic and outside the owner's control, so it is not used.
+**Purpose:** This rule enforces the "Local Verification" principle in `AGENTS.md`. FileSquid runs every quality gate on the developer's machine through `scripts/pre-commit.sh`. Hosted runners are slow and unreliable for those gates, so lint and tests stay local (owner decision, 2026-11-02, amending the 2026-10-17 ban on hosted CI). The one hosted workflow is the pull-request reviewer.
 
 ## MUST NOT
 
-- Create `.github/workflows/`, `.gitlab-ci.yml`, or any other hosted CI configuration. If one exists, remove it rather than fixing it.
-- Describe a check as "run in CI". Checks run in the pre-commit hook or not at all.
+- Move a quality gate to GitHub Actions or any other hosted CI. Lint and tests run in the pre-commit hook.
+- Add a hosted workflow other than [`.github/workflows/pr-agent.yml`](../../.github/workflows/pr-agent.yml). Do not add `.gitlab-ci.yml` or a second workflow. If another workflow appears, remove it.
+- Describe a lint or test check as "run in CI". Those checks run in the pre-commit hook or not at all.
+- Commit an API key. The review workflow reads `OPENAI_KEY` from a repository Actions secret.
 - Push a commit that fails `scripts/pre-commit.sh`.
 - Bypass the hook with `--no-verify`. The only sanctioned shortcut is `FILESQUID_SKIP_TESTS=1` for a work-in-progress commit that will not be pushed until `scripts/verify_tests.sh` passes.
 - Mark a pull request ready for review, or merge it, without the head-commit hook run required for its scope (below).
@@ -26,6 +28,7 @@ license: CC-BY
 - Run every cargo command in a gate that builds, tests, documents or formats through `cargo_locked` from `scripts/lib/cargo_shared.sh`, so two gate runs that share one target directory never use it at the same time. `cargo metadata --no-deps` in the scope helper reads manifests only and is not locked. Where `flock` is not installed (for example macOS without util-linux) the gates warn and run unlocked; there, do not run two gate runs on one target directory at once.
 - Keep the gates platform-agnostic ([platform-agnostic.md](./platform-agnostic.md)) and verify any command they run ([command-verification.md](./command-verification.md)).
 - Document a new gate, its environment variables and its runtime in the root README "Run tests" section in the same change.
+- Keep [`.github/workflows/pr-agent.yml`](../../.github/workflows/pr-agent.yml) as the current AI PR Agent runner. It reviews pull requests. It does not lint or test. Set `config.model` in that workflow when the owner names the model. When the owner moves reviews to a remote self-hosted server, that change replaces this workflow and updates [pr-review-loop.md](./pr-review-loop.md) in the same change.
 
 ## The gates
 

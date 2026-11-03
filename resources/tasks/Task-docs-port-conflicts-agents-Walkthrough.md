@@ -8,7 +8,7 @@ Cubic flagged (P1) on PR #60 that [port-conflicts.md](../../.agents/rules/port-c
 
 ## Changes
 
-- [port-conflicts.md](../../.agents/rules/port-conflicts.md): the one-liner is a hint the agent gives the human to run on their own machine. Agents MUST NOT run it. An agent whose own server holds the port stops it by the PID it recorded at start; if another process holds the port, the agent reports it to the human with the hint or uses a different free port where the task allows, and never kills it. Links to the Process rules in [filesquid-platform-engineer.md](../../.claude/agents/filesquid-platform-engineer.md).
+- [port-conflicts.md](../../.agents/rules/port-conflicts.md): the one-liner is a hint the agent gives the human to run on their own machine. Agents MUST NOT run it. An agent whose own server holds the port stops it by the PID it recorded at start; if another process holds the port, the agent reports it to the human with the hint or uses a different free port where the task allows, and never kills it. Links to the Process rules in [filesquid-platform-engineer.md](../../.agents/agents/filesquid-platform-engineer.md).
 
 ## Hook output (UTC)
 

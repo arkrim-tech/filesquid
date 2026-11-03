@@ -8,8 +8,8 @@ Add the build-efficiency and process rules decided on 2026-10-18 to the three ag
 
 ## Changes
 
-- [Modules engineer](../../.claude/agents/filesquid-modules-engineer.md) and [platform engineer](../../.claude/agents/filesquid-platform-engineer.md): new "Rust builds" section (narrow cargo commands under the shared-target lock, one full hook run per push, the "could not find" retry, the `FULL=1` rule linked to [local-verification.md](../../.agents/rules/local-verification.md#change-aware-test-scope), conditional [ADR 039](../architecture/039-cargo-hakari-workspace-hack.md) workspace-hack regeneration) and a "Process rules" section (merge by merge commit on its own, no owner email in requests, model names only in the session's attribution trailer).
-- [UI engineer](../../.claude/agents/filesquid-ui-engineer.md): a short "Rust builds" note that UI-only changes build no Rust, and the same "Process rules".
+- [Modules engineer](../../.agents/agents/filesquid-modules-engineer.md) and [platform engineer](../../.agents/agents/filesquid-platform-engineer.md): new "Rust builds" section (narrow cargo commands under the shared-target lock, one full hook run per push, the "could not find" retry, the `FULL=1` rule linked to [local-verification.md](../../.agents/rules/local-verification.md#change-aware-test-scope), conditional [ADR 039](../architecture/039-cargo-hakari-workspace-hack.md) workspace-hack regeneration) and a "Process rules" section (merge by merge commit on its own, no owner email in requests, model names only in the session's attribution trailer).
+- [UI engineer](../../.agents/agents/filesquid-ui-engineer.md): a short "Rust builds" note that UI-only changes build no Rust, and the same "Process rules".
 
 ## Verification
 

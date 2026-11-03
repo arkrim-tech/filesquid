@@ -37,7 +37,7 @@ Generators (owner decision, 2026-10-17):
 
 - **TypeScript:** the types in `apps/filesquid/ui/src/api/schema.d.ts` are generated with the npm package `openapi-typescript`, at the version pinned in `apps/filesquid/ui/package.json` (`npm run contract:types`).
 - **Rust:** no generator. The contract is hand-written (contract-first). Drift tests in `filesquid-api` (`unit_contract`) check it against the router's route table in both directions, against serialized Rust payload types with a strict schema checker, and against the core constants (for example the page-size bound of [CORE-S-005](../../apps/filesquid/crates/core/resources/srs.md)).
-- **Where the drift tests run:** in the local pre-commit hook (`scripts/pre-commit.sh`); the repository has no hosted CI. The Rust test is `unit_contract`; the TypeScript test is the Vitest `tests/unit/contract.test.ts` in `apps/filesquid/ui`.
+- **Where the drift tests run:** in the local pre-commit hook (`scripts/pre-commit.sh`), not on a hosted workflow. The Rust test is `unit_contract`; the TypeScript test is the Vitest `tests/unit/contract.test.ts` in `apps/filesquid/ui`.
 
 **3. Transport-agnostic router.** `filesquid-api` exposes its routes as one `tower::Service` over `http::Request`/`http::Response`. It MUST NOT bind sockets or depend on Tauri. Each host adapts that one service:
 
