@@ -1,0 +1,80 @@
+.agents/README.md
+  h_10c93bba641ef0 3,9-10,61,65-71,94,96
+.agents/agents/README.md
+  h_10c93bba641ef0 1-16
+.agents/agents/filesquid-modules-engineer.md
+  h_10c93bba641ef0 39,59
+.agents/agents/filesquid-orchestrator.md
+  h_10c93bba641ef0 3,14,21,27,42,44-45,50,52,54-55,60-67,69,71-72,76,81-85,87,89,94,100,103-105,107-114,116-141,144,150-151,153,156-158,163-165,169
+.agents/agents/filesquid-platform-engineer.md
+  h_10c93bba641ef0 39,59
+.agents/agents/filesquid-ui-engineer.md
+  h_10c93bba641ef0 41,57
+.agents/kb/agent-skills-1.0.md
+  h_10c93bba641ef0 36
+.agents/rules/local-verification.md
+  h_10c93bba641ef0 3,8,10,14-17,31
+.agents/rules/no-silent-restore.md
+  h_10c93bba641ef0 35
+.agents/rules/port-conflicts.md
+  h_10c93bba641ef0 19
+.agents/rules/pr-review-loop.md
+  h_10c93bba641ef0 31-32,38
+.agents/rules/task-workflow.md
+  h_10c93bba641ef0 14
+.agents/skills/init-rust-js/SKILL-init-rust-js.md
+  h_10c93bba641ef0 43,224-225,356
+.github/workflows/pr-agent.yml
+  h_10c93bba641ef0 1-30
+.grok/agents/filesquid-modules-engineer.md
+  h_10c93bba641ef0 1
+.grok/agents/filesquid-orchestrator.md
+  h_10c93bba641ef0 1
+.grok/agents/filesquid-platform-engineer.md
+  h_10c93bba641ef0 1
+.grok/agents/filesquid-ui-engineer.md
+  h_10c93bba641ef0 1
+AGENTS.md
+  h_10c93bba641ef0 42,44,46-47,82
+README.md
+  h_10c93bba641ef0 161,526
+apps/filesquid/crates/api/resources/plan.md
+  h_10c93bba641ef0 28
+apps/filesquid/crates/ocfl/resources/plan.md
+  h_10c93bba641ef0 42
+apps/filesquid/crates/ocfl/resources/srs.md
+  h_10c93bba641ef0 22
+resources/architecture/030-filesquid-api-and-transports.md
+  h_10c93bba641ef0 40
+resources/foundation-evidence.md
+  h_10c93bba641ef0 11
+resources/implementation-plan.md
+  h_10c93bba641ef0 146,160,206,646
+resources/tasks/Task-docs-agent-defs-build-lock-Walkthrough.md
+  h_10c93bba641ef0 11-12
+resources/tasks/Task-docs-agent-defs-no-pattern-kill-Walkthrough.md
+  h_10c93bba641ef0 9-11
+resources/tasks/Task-docs-orchestrator-agent-definition-Walkthrough.md
+  h_10c93bba641ef0 5
+resources/tasks/Task-docs-port-conflicts-agents-Walkthrough.md
+  h_10c93bba641ef0 11
+scripts/pre-commit.sh
+  h_10c93bba641ef0 101
+scripts/verify_branch.sh
+  h_10c93bba641ef0 38,43
+scripts/verify_relative_links.sh
+  h_10c93bba641ef0 21-23
+scripts/verify_tests.sh
+  h_10c93bba641ef0 6,8-9
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0948c9b7931b9808e029780b701bd2d24fa71c06",
+  "prompts": {},
+  "humans": {
+    "h_10c93bba641ef0": {
+      "author": "Peter Van Garderen <vangarderen.peter@gmail.com>"
+    }
+  }
+}
