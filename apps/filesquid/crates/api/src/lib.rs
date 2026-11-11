@@ -80,7 +80,7 @@ pub mod replica;
 mod routes;
 pub mod trace_layer;
 
-pub use error::{ApiError, DenialReason, ErrorCode};
+pub use error::{ApiError, DenialReason, ErrorCode, SubCode};
 pub use events::{ApiEvent, EventBus, EventFilter, EventSubscription};
 pub use routes::{route_actions, routed_paths, router, Liveness};
 

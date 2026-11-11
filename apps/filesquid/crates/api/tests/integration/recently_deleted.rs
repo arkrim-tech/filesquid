@@ -333,6 +333,40 @@ async fn a_restore_whose_home_is_gone_names_the_untitled_collection_it_created()
 }
 
 #[tokio::test]
+async fn a_restore_with_no_free_untitled_title_carries_its_sub_code() {
+    use filesquid_api::library::{MAX_UNTITLED_TITLES, UNTITLED_COLLECTION_TITLE};
+    let trash = Trash::new(None).await;
+    let file = trash.file("site-visit.jpg", LIBRARY, COLLECTION).await;
+    trash
+        .command(LIBRARY, json!({"command": "delete_collection", "library_id": LIBRARY, "collection_id": COLLECTION}))
+        .await;
+    let library = LibraryId::new(LIBRARY).expect("library");
+    for n in 1..=MAX_UNTITLED_TITLES {
+        let title = match n {
+            1 => UNTITLED_COLLECTION_TITLE.to_string(),
+            n => format!("{UNTITLED_COLLECTION_TITLE} {n}"),
+        };
+        let id = CollectionId::new(format!("taken-{n}")).expect("id");
+        let taken = Collection::new(id, library.clone(), title).expect("collection");
+        trash
+            .drive
+            .catalog
+            .insert_collection(taken)
+            .expect("insert");
+    }
+    let refused = trash
+        .command(
+            LIBRARY,
+            json!({"command": "restore_files", "library_id": LIBRARY, "file_ids": [file]}),
+        )
+        .await;
+    assert_eq!(refused.status, StatusCode::CONFLICT, "{:?}", refused.json());
+    assert_eq!(refused.json()["code"], "conflict");
+    assert_eq!(refused.json()["sub_code"], "restore_name_exhausted");
+    assert_eq!(refused.json()["kind"], "conflict");
+}
+
+#[tokio::test]
 async fn the_command_route_takes_only_trash_commands_in_their_own_scope() {
     let trash = Trash::new(None).await;
     let other = trash

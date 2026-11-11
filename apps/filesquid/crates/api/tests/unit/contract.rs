@@ -236,6 +236,31 @@ fn authentication_before_routing_is_documented_as_a_wire_convention() {
         api_error["properties"]["reason"]["$ref"],
         "#/components/schemas/DenialReason"
     );
+    assert_eq!(
+        api_error["properties"]["sub_code"]["$ref"], "#/components/schemas/ErrorSubCode",
+        "the rule a refusal broke is a member of ApiError (API-S-011)"
+    );
+    let documented: Vec<&str> = schema(&doc, "ErrorSubCode")["enum"]
+        .as_array()
+        .expect("enum")
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
+    let rust: Vec<&str> = filesquid_api::SubCode::ALL
+        .iter()
+        .map(|code| code.as_str())
+        .collect();
+    assert_eq!(
+        documented, rust,
+        "the contract lists every sub-code, in order"
+    );
+    for conflict in ["FileCommandConflict", "LibraryCommandConflict"] {
+        assert_eq!(
+            schema(&doc, conflict)["properties"]["sub_code"]["$ref"],
+            "#/components/schemas/ErrorSubCode",
+            "{conflict} carries the sub-code of its 409 refusals"
+        );
+    }
 }
 
 /// Every documented operation of a routed path, as (method, path).
@@ -1082,9 +1107,17 @@ fn operation_samples() -> Vec<(&'static str, Vec<Value>)> {
             vec![
                 to_value(ApiError::new(ErrorCode::Unavailable, "Not ready yet.")),
                 to_value(ApiError::denied(DenialReason::NotPermitted)),
+                to_value(
+                    ApiError::new(ErrorCode::NotFound, "Not in this library.")
+                        .with_rule("collection_not_found"),
+                ),
             ],
         ),
         ("DenialReason", DenialReason::ALL.map(to_value).to_vec()),
+        (
+            "ErrorSubCode",
+            filesquid_api::SubCode::ALL.map(to_value).to_vec(),
+        ),
         ("PortError", vec![to_value(port_error())]),
         ("CommandEnvelope", vec![to_value(command_envelope())]),
         ("QueryEnvelope", vec![to_value(query_envelope())]),

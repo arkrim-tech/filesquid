@@ -109,6 +109,7 @@ where
             objects: 0,
             contents: 0,
             bytes: 0,
+            history_bytes: 0,
             truncated: false,
         };
         let count = files.len();

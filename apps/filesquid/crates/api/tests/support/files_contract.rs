@@ -652,6 +652,12 @@ fn command_samples() -> Vec<(&'static str, Vec<Value>)> {
         result: None,
         error: ApiError::new(ErrorCode::Conflict, "It changed since it was read."),
     };
+    let exhausted = ConflictAnswer {
+        outcome: CommandOutcome::new(id.clone(), CommandOutcomeKind::Conflict),
+        result: None,
+        error: ApiError::new(ErrorCode::Conflict, "Every numbered name is taken.")
+            .with_rule("path_suffix_exhausted"),
+    };
     let input = |name: Option<&str>| UploadQuery {
         library_id: LIBRARY.into(),
         file_id: name.map(|_| FILE.to_string()),
@@ -723,7 +729,10 @@ fn command_samples() -> Vec<(&'static str, Vec<Value>)> {
             vec![to_value(&collection_folder)],
         ),
         ("CollectionFolder", vec![to_value(&numbered_folder)]),
-        ("FileCommandConflict", vec![to_value(conflict)]),
+        (
+            "FileCommandConflict",
+            vec![to_value(conflict), to_value(exhausted)],
+        ),
         (
             "UploadInput",
             vec![to_value(input(Some("upload"))), to_value(input(None))],
@@ -975,6 +984,7 @@ fn answer_samples() -> Vec<(&'static str, Vec<Value>)> {
         objects: 1,
         contents: 2,
         bytes: 11,
+        history_bytes: 5,
         truncated: false,
     };
     vec![
