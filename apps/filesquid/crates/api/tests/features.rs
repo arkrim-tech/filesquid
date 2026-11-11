@@ -15,8 +15,8 @@
 //! the view operation, copy and storage use per collection of API-S-011; the search
 //! operation and operator grammar of API-S-012; the journal and commit linkage of the file
 //! and metadata routes of API-S-028; the PROV-O records those commits write (SRS-F-067);
-//! the sealing service and journal rebuild of API-S-032; and the job routes and job events
-//! of API-S-037).
+//! the sealing service and journal rebuild of API-S-032; the job routes and job events
+//! of API-S-037; and the self-scoped journal route of API-S-031).
 //!
 //! Scenarios that need domain operations not built yet (import, journal-linked renames, the metadata writes
 //! beyond the API-S-035 routes, such as the inspector's EXIF edits, C2PA scans, sync) or the
@@ -160,6 +160,11 @@ mod import_steps;
 mod job_items_fixture;
 #[path = "support/library_facts_steps.rs"]
 mod library_facts_steps;
+#[path = "support/own_journal_fixture.rs"]
+#[allow(dead_code)]
+mod own_journal_fixture;
+#[path = "support/own_journal_steps.rs"]
+mod own_journal_steps;
 
 /// Administrator token accepted by [`admin_state`].
 const ADMIN_TOKEN: &str = "admin";
@@ -224,6 +229,7 @@ struct MonitorWorld {
     facts: library_facts_steps::FactsWorld,
     imports: import_steps::ImportsWorld,
     home: home_steps::HomeWorld,
+    own_journal: own_journal_steps::OwnJournalWorld,
 }
 
 impl std::fmt::Debug for MonitorWorld {

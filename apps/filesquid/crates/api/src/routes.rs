@@ -40,6 +40,7 @@ fn route_table() -> Vec<Route> {
         ("/host", get(host_handler), Action::ReadHost),
     ];
     table.extend(crate::admin::routes());
+    table.push(crate::journal::own::route());
     table.extend(crate::files::routes());
     table.push(crate::content::mint_route());
     table.push(crate::content::content_routes());

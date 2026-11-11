@@ -11,6 +11,9 @@
 //! only when asked with `names=true` and only through the host's [`JournalNames`], the
 //! current display name of the file its object ID names. Names are resolved at read time for
 //! the caller, never stored and never exported.
+//!
+//! The self-scoped route `GET /journal` ([`crate::journal::own`]) answers the same pages
+//! through [`answer_page`], limited to the caller's own entries.
 
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
@@ -114,7 +117,7 @@ impl ExportFormat {
 
 /// Query-string filters for the journal routes.
 #[derive(Debug, Default, Deserialize)]
-pub(super) struct JournalParams {
+pub(crate) struct JournalParams {
     from: Option<String>,
     to: Option<String>,
     actor: Option<String>,
@@ -137,6 +140,18 @@ pub(super) struct JournalParams {
 }
 
 impl JournalParams {
+    /// Whether the query string carries an `actor` filter. Pure.
+    pub(crate) fn filters_actor(&self) -> bool {
+        self.actor.is_some()
+    }
+
+    /// The store query and whether display names are asked for (`names=true`); `Err` names
+    /// the invalid parameter. Pure.
+    pub(crate) fn to_named_query(&self) -> Result<(JournalQuery, bool), &'static str> {
+        let query = self.to_query()?;
+        Ok((query, asks_names(self.names.as_deref())?))
+    }
+
     /// The requested page size: absent means the journal default (`0`); an explicit `limit`
     /// MUST be a [`PageSize`] (1 to [`filesquid_core::MAX_PAGE_SIZE`]), else `Err("limit")`.
     fn page_limit(&self) -> Result<usize, &'static str> {
@@ -228,7 +243,7 @@ fn asks_names(names: Option<&str>) -> Result<bool, &'static str> {
 }
 
 /// `invalid_request` error naming the invalid query parameter.
-fn bad_request(param: &str) -> ApiError {
+pub(crate) fn bad_request(param: &str) -> ApiError {
     ApiError::new(
         ErrorCode::InvalidRequest,
         format!("Invalid query parameter: {param}."),
@@ -238,7 +253,7 @@ fn bad_request(param: &str) -> ApiError {
 /// Resolve the monitor, then turn the (possibly rejected) query string into the parameters.
 /// The route's guard has already authorised the caller, so an anonymous caller never reaches
 /// parameter validation and learns nothing about parameters.
-fn monitor_params<P: Default>(
+pub(crate) fn monitor_params<P: Default>(
     state: &ApiState,
     params: Result<Query<P>, QueryRejection>,
 ) -> Result<(Monitor, P), ApiError> {
@@ -258,23 +273,40 @@ pub(super) async fn page(
         Ok(found) => found,
         Err(error) => return error.into_response(),
     };
-    let (query, asked) = match params
-        .to_query()
-        .and_then(|q| asks_names(params.names.as_deref()).map(|a| (q, a)))
-    {
+    let (query, asked) = match params.to_named_query() {
         Ok(found) => found,
         Err(param) => return bad_request(param).into_response(),
     };
+    answer_page(
+        &state,
+        &monitor,
+        &principal,
+        query,
+        asked,
+        "api.admin.journal",
+    )
+    .await
+}
+
+/// Read the page of `query` from the monitor's store (store I/O, off the async executor) and
+/// answer it as views for `principal`, with display names when `asked` and the host
+/// installed a lookup. A store failure answers `internal` for `operation`.
+pub(crate) async fn answer_page(
+    state: &ApiState,
+    monitor: &Monitor,
+    principal: &Principal,
+    query: JournalQuery,
+    asked: bool,
+    operation: &'static str,
+) -> Response {
     let store = monitor.store();
-    let page = match blocking("api.admin.journal", move || store.query(&query)).await {
+    let page = match blocking(operation, move || store.query(&query)).await {
         Ok(Ok(page)) => page,
-        Ok(Err(e)) => {
-            return ApiError::internal("api.admin.journal", &e.to_string()).into_response()
-        }
+        Ok(Err(e)) => return ApiError::internal(operation, &e.to_string()).into_response(),
         Err(error) => return error.into_response(),
     };
-    let names = wanted_names(&state, asked);
-    Json(view_page(page, names, &principal).await).into_response()
+    let names = wanted_names(state, asked);
+    Json(view_page(page, names, principal).await).into_response()
 }
 
 /// `GET /admin/journal/entries/{entry}`: one entry view, or `not_found`.
