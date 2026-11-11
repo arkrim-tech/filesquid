@@ -87,6 +87,7 @@ The Playwright specs assert: custom elements defined, every word from the active
 ### Not run
 
 - The server-backed Playwright suite (`playwright.config.ts`): it needs a `filesquid-server` build and this machine builds no Rust. The change keeps its flows: without a credential no probe is sent (the sign-in specs), and with the admin launch token the probe answers 200.
+- The performance suite (`playwright.performance.config.ts`): the change adds one admin health read at start only while the page holds a credential, and no browsing, scrolling or preview path.
 - Coverage: `@filesquid/ui` has no coverage reporter configured; none was added.
 
 ## Pre-commit
