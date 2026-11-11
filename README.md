@@ -518,7 +518,7 @@ What exists and what is still open ([ADR 033](./resources/architecture/033-activ
 |---|---|---|
 | Activity journal, process registry, health rules, admin routes, `/metrics` and the **Monitor** dashboard (`#/monitor`) | Done | [Task FS-2.4](./resources/implementation-plan.md#task-fs-2.4) |
 | Client events, journal query filters, CSV and JSON Lines export, journaling of every `fsquid` command, durable per-commit entries and the journal rebuild from files | Done | [Task FS-2.9](./resources/implementation-plan.md#task-fs-2.9) (API-F2.10, API-F2.11, CLI-0.2, CL-1.9) |
-| Host journal sealing into OCFL, the **Logs** view and console forwarding from the default UI | Open | Task FS-2.9 (DE-0.11, UI-F2.16) |
+| Host journal sealing into OCFL, the **Logs** view (`#/logs`) and console forwarding from the default UI | Done | [Task FS-2.9](./resources/implementation-plan.md#task-fs-2.9) (DE-0.11, UI-F2.16) |
 | Store-and-forward **OTLP export** of journal entries and metrics | Open | [Task FS-3.6](./resources/implementation-plan.md#task-fs-3.6) |
 
 - **Retention:** the journal keeps every entry, which is ADR 033's default. There is no retention setting yet. ADR 033 also allows archiving older journal segments into an OCFL object, and Task FS-2.9 builds that.
