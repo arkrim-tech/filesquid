@@ -35,7 +35,8 @@
 #     apps/imagesquid keeps its own npm scripts for running by hand; the hook does not
 #     run its lint, typecheck, Vitest or Playwright suite.
 #     Desktop packaged window (apps/filesquid/crates/desktop/tests/e2e):
-#       8. only when FILESQUID_DESKTOP_E2E=1: build the test-instrumented binary,
+#       8. only when FILESQUID_DESKTOP_E2E=1: build the production UI the binary embeds
+#          (npm run build in apps/filesquid/ui), build the test-instrumented binary,
 #          check formatting, run WebdriverIO (under xvfb-run on Linux without a display)
 #   rust:<crates>  steps 1, 2 and 4 with `-p <crate>` for each listed crate (the
 #          changed crates and every crate that depends on them), step 3 for each
@@ -290,6 +291,14 @@ run_desktop_e2e() {
     FAILED=1
     return
   fi
+  # The binary embeds the UI at compile time, and the branding spec (Task DE-F3.1) needs the
+  # production UI in the window, not the build script's stub page: build the UI first.
+  if [ ! -d "$WORKSPACE/ui/node_modules" ]; then
+    echo "❌ ERROR ($WORKSPACE/ui): node_modules missing. Run 'npm ci' in $WORKSPACE/ui first; the packaged-window tests embed its production build."
+    FAILED=1
+    return
+  fi
+  run_step "UI production build (embedded in the desktop binary)" "$WORKSPACE/ui" npm run build
   # Built from $WORKSPACE, so a relative CARGO_TARGET_DIR is relative to it; wdio.conf.mjs
   # resolves it the same way and copies the binary to a run-specific directory before launch.
   run_step "Desktop test-instrumented build" "$WORKSPACE" cargo_locked build -p "$DESKTOP_CRATE" --features test-webdriver --locked
