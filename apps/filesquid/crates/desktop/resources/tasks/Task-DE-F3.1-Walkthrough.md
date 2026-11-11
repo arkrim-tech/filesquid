@@ -124,7 +124,7 @@ test the_macos_icon_is_an_apple_icon_image ... FAILED
 test result: FAILED. 1 passed; 14 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
 ```
 
-The inventory script and its tests were written together, not test-first. Its tests then caught two defects, which were fixed: `--without-vips` still looked for libvips, and the ImageMagick check matched a folder name.
+The inventory script and its tests were written together, not test-first. Its tests then caught two defects, which were fixed: `--without-vips` still looked for libvips, and the ImageMagick check matched a folder name. A later reading of the script found that a symbolic-link loop was followed without a bound and that the macOS parsing split paths at spaces; both were fixed, the first with a test.
 
 The branding spec against a binary built over the stub page (the UI not built):
 
@@ -163,12 +163,13 @@ test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fin
      Running tests/integration/linked_inventory.rs (integration_linked_inventory)
 test it_lists_the_dynamic_libraries_of_a_real_binary ... ok
 test it_fails_when_imagemagick_is_in_the_inventory ... ok
-test it_refuses_a_subject_that_does_not_exist ... ok
 test it_refuses_a_folder_with_no_executable_in_it ... ok
+test it_refuses_a_subject_that_does_not_exist ... ok
 test it_lists_the_run_time_loaded_libvips_and_its_loader_modules ... ok
+test it_ends_on_a_symbolic_link_loop ... ok
 test it_lists_the_rust_crates_with_their_licences ... ok
 test it_says_when_libvips_is_missing_and_lists_it_when_it_is_installed ... ok
-test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 19.40s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 21.94s
 ```
 
 `cargo test -p filesquid-desktop --locked --features test-webdriver --test features`, the new feature and the summary:
@@ -379,7 +380,7 @@ cd apps/filesquid
 cargo test -p filesquid-desktop --locked --test integration_distribution_overlay --test integration_linked_inventory
 ```
 
-Expect: `15 passed` and `7 passed`.
+Expect: `15 passed` and `8 passed`.
 
 Send back: the output of the three test commands.
 

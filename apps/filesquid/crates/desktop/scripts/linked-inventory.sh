@@ -40,6 +40,9 @@ set -u
 # with a `finding` row and exit status 1, because the inventory would be incomplete.
 MAX_ITEMS=5000
 
+# The most symbolic links followed to reach one file.
+MAX_LINKS=40
+
 SUBJECT=""
 WITHOUT_VIPS=0
 WITH_CRATES=1
@@ -88,21 +91,21 @@ is_object_file() {
   esac
 }
 
-# Print the physical path of $1, or $1 itself when it cannot be resolved.
+# Print the physical path of $1, or $1 itself when it cannot be resolved. Follows at most
+# MAX_LINKS symbolic links ($2 counts them), so a link loop ends with the path reached.
 physical_path() {
-  local dir base
+  local dir base target links="${2:-0}"
   dir=$(cd "$(dirname "$1")" 2>/dev/null && pwd -P) || { printf '%s\n' "$1"; return; }
   base=$(basename "$1")
-  if [ -L "$dir/$base" ] && command -v readlink >/dev/null 2>&1; then
-    local target
-    target=$(readlink "$dir/$base")
-    case "$target" in
-      /*) physical_path "$target" ;;
-      *) physical_path "$dir/$target" ;;
-    esac
+  if [ ! -L "$dir/$base" ] || [ "$links" -ge "$MAX_LINKS" ] || ! command -v readlink >/dev/null 2>&1; then
+    printf '%s\n' "$dir/$base"
     return
   fi
-  printf '%s\n' "$dir/$base"
+  target=$(readlink "$dir/$base")
+  case "$target" in
+    /*) physical_path "$target" $((links + 1)) ;;
+    *) physical_path "$dir/$target" $((links + 1)) ;;
+  esac
 }
 
 # Print the object files of the subject, one per line: the file itself, or every object file
@@ -127,29 +130,43 @@ list_dependencies_linux() {
     $1 ~ /^\// { print $1 }'
 }
 
-# Print the run paths (LC_RPATH) of Mach-O file $1, one per line.
+# Print the run paths (LC_RPATH) of Mach-O file $1, one per line. A path may hold spaces.
 list_rpaths_macos() {
-  otool -l "$1" 2>/dev/null | awk '/cmd LC_RPATH/ { getline; getline; print $2 }'
+  otool -l "$1" 2>/dev/null | awk '/cmd LC_RPATH/ {
+    getline; getline
+    sub(/^[ \t]*path /, ""); sub(/ \(offset [0-9]+\)$/, "")
+    print
+  }'
+}
+
+# Print the first existing file that @rpath name $1 resolves to for loader $2, trying the run
+# paths of the loader and then of the main executable; nothing when none exists.
+resolve_rpath_name_macos() {
+  local name="$1" loader="$2" rpath candidate
+  { list_rpaths_macos "$loader"; list_rpaths_macos "$MAIN_FILE"; } | while IFS= read -r rpath; do
+    case "$rpath" in
+      @rpath/*) continue ;;
+    esac
+    candidate=$(resolve_install_name_macos "$rpath/${name#@rpath/}" "$loader")
+    if [ -e "$candidate" ]; then
+      printf '%s\n' "$candidate"
+      break
+    fi
+  done
 }
 
 # Print install name $1 resolved for the file $2 that names it: @executable_path,
 # @loader_path and @rpath are expanded; a name that cannot be found is printed with a
 # leading "!".
 resolve_install_name_macos() {
-  local name="$1" loader="$2" loader_dir rpath candidate
+  local name="$1" loader="$2" loader_dir found
   loader_dir=$(dirname "$loader")
   case "$name" in
     @executable_path/*) printf '%s\n' "$MAIN_DIR/${name#@executable_path/}" ;;
     @loader_path/*) printf '%s\n' "$loader_dir/${name#@loader_path/}" ;;
     @rpath/*)
-      for rpath in $(list_rpaths_macos "$loader") $(list_rpaths_macos "$MAIN_FILE"); do
-        candidate=$(resolve_install_name_macos "$rpath/${name#@rpath/}" "$loader")
-        if [ -e "$candidate" ]; then
-          printf '%s\n' "$candidate"
-          return
-        fi
-      done
-      printf '!%s\n' "$name"
+      found=$(resolve_rpath_name_macos "$name" "$loader")
+      if [ -n "$found" ]; then printf '%s\n' "$found"; else printf '!%s\n' "$name"; fi
       ;;
     *) printf '%s\n' "$name" ;;
   esac
@@ -157,7 +174,10 @@ resolve_install_name_macos() {
 
 # Print the dynamic libraries file $1 names, resolved, one per line (macOS: otool).
 list_dependencies_macos() {
-  otool -L "$1" 2>/dev/null | awk 'NR > 1 && $1 !~ /:$/ { print $1 }' | sort -u |
+  otool -L "$1" 2>/dev/null | awk '!/:$/ {
+    sub(/^[ \t]+/, ""); sub(/ \(compatibility version.*$/, "")
+    if ($0 != "") print
+  }' | sort -u |
     while IFS= read -r name; do
       resolve_install_name_macos "$name" "$1"
     done

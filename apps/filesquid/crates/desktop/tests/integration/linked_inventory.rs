@@ -152,6 +152,24 @@ fn it_fails_when_imagemagick_is_in_the_inventory() {
 }
 
 #[test]
+fn it_ends_on_a_symbolic_link_loop() {
+    let scratch = Scratch::new("loop");
+    let first = scratch.0.join("libvips.so.42");
+    let second = scratch.0.join("libvips.so.42.17");
+    std::os::unix::fs::symlink(&second, &first).expect("first link");
+    std::os::unix::fs::symlink(&first, &second).expect("second link");
+    let library = first.to_string_lossy().into_owned();
+    let output = run_inventory(&["--no-crates", "--runtime-lib", &library, &this_binary()]);
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(0), "{text}");
+    let runtime: Vec<_> = rows(&text, "lib")
+        .into_iter()
+        .filter(|row| row.starts_with("lib\truntime\t"))
+        .collect();
+    assert_eq!(runtime.len(), 1, "{text}");
+}
+
+#[test]
 fn it_lists_the_rust_crates_with_their_licences() {
     let output = run_inventory(&["--without-vips", &this_binary()]);
     let text = stdout(&output);
