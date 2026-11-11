@@ -840,9 +840,10 @@ fn start_monitor(
     Ok(())
 }
 
-/// Start the expiry of deleted files (Task API-F2.15): install it as the `library.expiry` job
-/// runner, run it at launch and then hourly until `stop` (the app's exit), and keep its handle
-/// in Tauri's managed state. Starts a task.
+/// Start the expiry of deleted files (Tasks API-F2.15 and API-F2.30): install it as the
+/// `library.expiry` job runner, run it at launch and then at the installation's stored expiry
+/// interval until `stop` (the app's exit), and keep its handle in Tauri's managed state.
+/// Starts a task.
 fn start_expiry(
     app: &tauri::AppHandle,
     (trash, catalog, jobs): (
@@ -857,7 +858,8 @@ fn start_expiry(
     let expiry = recently_deleted::ExpiryHandle::new(expiry, stop.clone());
     app.state::<ApiState>()
         .install_job_runner(filesquid_api::library::EXPIRY_JOB_KIND, expiry.clone());
-    recently_deleted::spawn_expiry(expiry.clone());
+    let monitor = recently_deleted::ExpiryMonitor::new(expiry.clone());
+    recently_deleted::spawn_expiry(Arc::new(monitor));
     app.manage(DesktopExpiry(expiry));
 }
 

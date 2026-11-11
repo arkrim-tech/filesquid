@@ -46,6 +46,7 @@ mod memory;
 mod plan;
 mod policy;
 mod query;
+mod schedule;
 mod service;
 mod settings;
 
@@ -67,9 +68,12 @@ pub use expiry::{
 pub use ids::{is_uuid_v4, mint_uuid_v4};
 pub use memory::MemoryCatalog;
 pub use policy::{
-    is_retention, Deletion, DeletionCause, DeletionPolicy, ExpiryMode, FileState,
-    PurgeConfirmation, VisibilityFilter, MAX_RETENTION_DAYS, MIN_RETENTION_DAYS, RECOVERABLE_DAYS,
+    is_expiry_interval, is_retention, Deletion, DeletionCause, DeletionPolicy, ExpiryMode,
+    FileState, PurgeConfirmation, VisibilityFilter, DEFAULT_EXPIRY_INTERVAL_MINUTES,
+    MAX_EXPIRY_INTERVAL_MINUTES, MAX_RETENTION_DAYS, MIN_EXPIRY_INTERVAL_MINUTES,
+    MIN_RETENTION_DAYS, RECOVERABLE_DAYS,
 };
 pub use query::{Cursor, LibraryQuery, Page, QueryAnswer, QueryRequest};
+pub use schedule::ExpirySchedule;
 pub use service::LibraryService;
 pub use settings::{InstallationSettings, MemorySettings, RetentionSettings, SETTINGS_OPERATION};
