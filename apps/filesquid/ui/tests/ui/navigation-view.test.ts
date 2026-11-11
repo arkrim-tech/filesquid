@@ -244,7 +244,13 @@ describe("<fs-navigation-view>", () => {
 
   it("shows the error state for a trail that does not start at a repository", async () => {
     vi.spyOn(console, "error").mockImplementation(() => undefined);
-    const photos = { node: "c1", kind: "collection", name: "Photos", has_children: true } as const;
+    const photos = {
+      node: "c1",
+      kind: "collection",
+      name: "Photos",
+      has_children: true,
+      collection_id: "c1",
+    } as const;
     const source: NavigationSource = {
       list: async () => ({ nodes: [], ancestors: [photos], next_cursor: null }),
     };

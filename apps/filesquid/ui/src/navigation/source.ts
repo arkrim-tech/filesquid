@@ -158,5 +158,12 @@ export class MemoryNavigationSource implements NavigationSource {
 /** The listed form of a fixture node. */
 function toNode(item: FixtureNode): NavigationNode {
   const hasChildren = (item.children ?? []).length > 0;
-  return { node: item.node, kind: item.kind, name: item.name, has_children: hasChildren };
+  // A fixture node names no collection: destinations come from a host (API-S-021).
+  return {
+    node: item.node,
+    kind: item.kind,
+    name: item.name,
+    has_children: hasChildren,
+    collection_id: null,
+  };
 }

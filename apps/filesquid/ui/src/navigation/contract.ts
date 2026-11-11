@@ -45,7 +45,16 @@ function parseNode(value: unknown): NavigationNode | undefined {
   if (!NAVIGATION_KINDS.includes(kind) || !validName(kind, value.name)) return undefined;
   if (typeof value.has_children !== "boolean") return undefined;
   const name = value.name as string | null;
-  return { node: value.node, kind, name, has_children: value.has_children };
+  // The collection a collection or folder node names as a destination (API-S-021); null on
+  // every other kind, and for a host whose contract predates the member.
+  const collectionId = typeof value.collection_id === "string" ? value.collection_id : null;
+  return {
+    node: value.node,
+    kind,
+    name,
+    has_children: value.has_children,
+    collection_id: collectionId,
+  };
 }
 
 /** Check a list of nodes of at most {@link MAX_PAGE_NODES}; undefined when any breaks it. */
