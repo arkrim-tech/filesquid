@@ -18,6 +18,9 @@ fi
 FAILED=0
 
 for FILE in $STAGED_FILES; do
+  if [ ! -f "$FILE" ]; then
+    continue
+  fi
   if grep -qiE "file:///" "$FILE"; then
     echo "❌ ERROR: Absolute path 'file:///' detected in $FILE!"
     FAILED=1

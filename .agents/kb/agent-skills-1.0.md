@@ -33,7 +33,7 @@ To avoid overwhelming the agent's context window (which leads to hallucinations 
 *   **Actionable Rule:** Agents must selectively load reference materials or technical specifications (e.g., from `/docs/kb/` or `/docs/references/`) *only* when the current task explicitly requires that deep domain knowledge.
 
 ### 2. Vendor Neutrality
-Agent skills and instructions MUST NOT be hardcoded to rely on the proprietary quirks of a single AI model (e.g., Claude, Gemini, OpenAI). 
+Agent skills and instructions MUST NOT be hardcoded to rely on the proprietary quirks of a single AI model or coding assistant. 
 *   **Actionable Rule:** Use standard industry formats (Markdown, YAML, JSON) for definitions. Ensure that prompt instructions are clear, logical, and universally understandable by any capable frontier model. Use standard standard terminology (like RFC 2119).
 
 ### 3. Multi-Tool Support

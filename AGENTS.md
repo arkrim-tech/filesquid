@@ -39,11 +39,12 @@
 
 - **Active Enforcement:** This principle is tactically enforced on all AI agents via the instructions in `[command-verification.md](./.agents/rules/command-verification.md)`.
 
-## 5. Local Verification, No Hosted CI
+## 5. Local Verification
 
-**Purpose:** Keep every quality gate fast, deterministic and under the developer's control. This repository does NOT use GitHub Actions or any other hosted CI; every gate runs locally through the repository's pre-commit hook before a push.
+**Purpose:** Keep every quality gate fast, deterministic and under the developer's control. Lint and tests run locally through the repository's pre-commit hook before a push. GitHub Actions is slow and unreliable for those gates, so they stay local. GitHub Actions is used for one job: the pull-request reviewer.
 
-- **No hosted CI:** Agents MUST NOT add `.github/workflows/` or any other hosted CI configuration. Pull request status comes from the local hook, AI PR Agent review and human review.
+- **Quality gates stay local:** Agents MUST NOT move lint, tests, or any other quality gate into GitHub Actions or any other hosted CI. A pull request still needs the local hook, the AI PR Agent review, and human review where the review loop requires it.
+- **Pull-request reviewer:** The only hosted workflow is [`.github/workflows/pr_agent.yml`](./.github/workflows/pr_agent.yml). It runs the AI PR Agent on pull requests and does not build or test the repository. A later owner decision may replace that workflow with a remote self-hosted review server. Until that change lands, do not delete the workflow and do not add any other workflow.
 - **Pre-commit is the gate:** `scripts/pre-commit.sh` runs the branch, port, document-sync, traceability, link, workspace-boundary, logging, formatting, documentation and lint/test verifiers. A commit that fails the hook MUST NOT be pushed.
 - **Active Enforcement:** This principle is tactically enforced on all AI agents via the instructions in `[local-verification.md](./.agents/rules/local-verification.md)`.
 
@@ -78,6 +79,7 @@
 **Purpose:** Ensure the project adheres to established industry standards for interoperability, requirements engineering, and documentation.
 
 - **Agent Skills 1.0:** The project template and agent tools comply with the Agent Skills 1.0 specification (including progressive disclosure, multi-tool support, and vendor neutrality). The framework principles are defined in [`.agents/kb/agent-skills-1.0.md`](./.agents/kb/agent-skills-1.0.md).
+- **Agent roles:** The build team is four Open Agent Format sub-agent definitions in [`.agents/agents/`](./.agents/agents/README.md): an orchestrator and the modules, platform, and UI engineers. A role is a worker with its own session. A skill in [`.agents/skills/`](./.agents/skills/) is a procedure a worker loads. Role files name no coding tool and no model.
 - **Conventional Commits:** All git commits MUST use the Conventional Commits format (`feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `chore:`). The exact formatting rules are located in [`.agents/kb/conventional-commits.md`](./.agents/kb/conventional-commits.md).
 - **ISO/IEC/IEEE 29148:** The Software Requirements Specification (SRS) MUST be Unambiguous, Complete, Verifiable, Consistent, and Traceable. Specific agent instructions for these criteria are defined in [`.agents/kb/iso-29148-srs.md`](./.agents/kb/iso-29148-srs.md).
 - **ISO/IEC/IEEE 42010:** Architecture Decision Records (ADRs) MUST include the 9 specific information items required by the ISO 42010 standard for architecture descriptions as defined in [`.agents/kb/iso-42010-adr.md`](./.agents/kb/iso-42010-adr.md). ADR location, naming, and formatting rules are tactically enforced via [`adr-formatting.md`](./.agents/rules/adr-formatting.md).

@@ -2,7 +2,7 @@
 
 ## What changed
 
-A new agent definition, [filesquid-orchestrator.md](../../.claude/agents/filesquid-orchestrator.md), describes the FileSquid build orchestrator. It turns the owner's orchestrator prompt into a standing definition, so later orchestrator prompts only carry the live lane session IDs, the per-chat merge budget and any new decisions.
+A new agent definition, [filesquid-orchestrator.md](../../.agents/agents/filesquid-orchestrator.md), describes the FileSquid build orchestrator. It turns the owner's orchestrator prompt into a standing definition, so later orchestrator prompts only carry the live lane session IDs, the per-chat merge budget and any new decisions.
 
 - Frontmatter follows the three engineer role files: `name`, `description` (when to use it) and `color`. Like them, it sets no `tools` or `model` field.
 - Sections: what the owner's prompt supplies, role and milestone, times, start-up state rebuild, dispatch model (cloud lanes, in-container sub-agents, concurrency, model choice and escalation), the pasteable instructions block for every agent and lane, merge procedure, cleanup and capacity, token discipline and the per-chat merge budget, and owner decisions.

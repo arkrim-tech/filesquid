@@ -3,10 +3,10 @@
 #
 # SPDX-License-Identifier: MIT
 #
-# Lint and test validation: runs the Cargo and npm quality gates that stand in for hosted CI, limited to the change scope (pre-commit, before every push).
+# Lint and test validation: runs the Cargo and npm quality gates locally, limited to the change scope (pre-commit, before every push).
 #
-# This repository has no hosted CI; these are the gates that would otherwise
-# run there. The scope comes from scripts/changed_scope.sh (the diff between
+# These gates stay on this hook. They are not moved to a hosted workflow.
+# The scope comes from scripts/changed_scope.sh (the diff between
 # the merge-base with origin/main and the working tree):
 #
 #   full  (FULL=1, the Cargo manifest or lockfile, a toolchain, an unlisted package

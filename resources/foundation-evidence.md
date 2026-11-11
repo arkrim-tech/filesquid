@@ -8,7 +8,7 @@ The foundation record that [Task 0.8](./implementation-plan.md#task-0.8) produce
 
 ## 1. Test reporting (NFR-008, ADR 017)
 
-Lint and format run before unit, integration, BDD and built-production UI tests, in the local pre-commit hook (`bash scripts/pre-commit.sh`); there is no hosted CI ([local-verification.md](../.agents/rules/local-verification.md)). Each workspace writes structured results into its own `tests/allure-results/` directory, which is cleared before each run, and each task walkthrough pastes the raw output of its runs. The commands are in the README section [Run tests](../README.md#run-tests).
+Lint and format run before unit, integration, BDD and built-production UI tests, in the local pre-commit hook (`bash scripts/pre-commit.sh`). Those gates are not hosted ([local-verification.md](../.agents/rules/local-verification.md)). The pull-request reviewer is the one hosted workflow. Each workspace writes structured results into its own `tests/allure-results/` directory, which is cleared before each run, and each task walkthrough pastes the raw output of its runs. The commands are in the README section [Run tests](../README.md#run-tests).
 
 | Workspace | Runners | Results | Cleared | Report | Delivered by |
 |---|---|---|---|---|---|

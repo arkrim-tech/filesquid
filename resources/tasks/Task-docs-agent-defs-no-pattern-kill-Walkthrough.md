@@ -6,9 +6,9 @@ Run at 2026-10-18T22:56:31Z (UTC), on the head commit of the first push.
 
 One bullet was added to the "Process rules" section of each engineer agent definition:
 
-- [filesquid-modules-engineer.md](../../.claude/agents/filesquid-modules-engineer.md)
-- [filesquid-platform-engineer.md](../../.claude/agents/filesquid-platform-engineer.md)
-- [filesquid-ui-engineer.md](../../.claude/agents/filesquid-ui-engineer.md)
+- [filesquid-modules-engineer.md](../../.agents/agents/filesquid-modules-engineer.md)
+- [filesquid-platform-engineer.md](../../.agents/agents/filesquid-platform-engineer.md)
+- [filesquid-ui-engineer.md](../../.agents/agents/filesquid-ui-engineer.md)
 
 The bullet forbids stopping processes by name or pattern (`pkill -f`, `killall`, `pgrep … | xargs kill`). Agents share one machine, so a pattern kill can stop another agent's hook run. An agent stops only a process it started, by the PID it recorded. The owner specified the wording. Nothing else in the three files, frontmatter included, changed.
 
