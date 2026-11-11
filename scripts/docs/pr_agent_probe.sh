@@ -8,3 +8,5 @@ if [ $message == "ok" ]; then
 else
   echo not ok
 fi
+
+printf 'probe=%s\n' "$message"
