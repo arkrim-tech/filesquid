@@ -197,6 +197,15 @@ pub fn sample(
             (format!("{path}?node={node}&sort=modified_by_me"), None)
         }
         ("GET", "/api/v1/files/search") => (format!("{path}?q=a&sort=modified_by_me"), None),
+        ("GET", "/api/v1/navigation/destination") => {
+            let collection =
+                filesquid_core::CollectionId::new("2c0d1e2f-3a4b-4c5d-8e6f-7a8b9c0d1e2f")
+                    .expect("collection");
+            let node = filesquid_api::navigation::NodeRef::Collection(collection)
+                .to_handle()
+                .expect("handle");
+            (format!("{path}?node={node}"), None)
+        }
         ("GET", "/api/v1/files/collection-history-size") => (
             format!("{path}?collection_id={}", crate::drive_catalog::COLLECTION),
             None,
@@ -769,7 +778,8 @@ fn command_samples() -> Vec<(&'static str, Vec<Value>)> {
 fn drive_samples() -> Vec<(&'static str, Vec<Value>)> {
     use filesquid_api::files::copy::{CopyRequest, CopyView};
     use filesquid_api::files::drive::{
-        DeletedRow, FileRow, FolderKind, FolderRow, ViewKind, ViewPage, ViewRow,
+        DeletedRow, FileRow, FolderKind, FolderRow, RecentAction, RecentKind, ViewKind, ViewPage,
+        ViewRow,
     };
     use filesquid_api::files::CollectionHistorySizeView;
     use filesquid_api::library::DeletionCause;
@@ -793,13 +803,26 @@ fn drive_samples() -> Vec<(&'static str, Vec<Value>)> {
         path: Some("Holidays/Été à Nice-1.jpg".into()),
     };
     let folder = FolderRow {
-        node: "n1.abc".into(),
-        node_kind: FolderKind::Collection,
-        name: "Holidays".into(),
+        collection_id: Some("c0ffee00-1234-4abc-8def-0123456789ab".into()),
+        files: 3,
+        bytes: 3_000,
+        count_complete: true,
+        ..FolderRow::uncounted("n1.abc".into(), FolderKind::Collection, "Holidays".into())
     };
+    let uncounted = FolderRow::uncounted(
+        "n1.abd".into(),
+        FolderKind::VirtualCollection,
+        "Favourites".into(),
+    );
     let file = |mine: Option<String>| FileRow {
         file_id: FILE.into(),
         object_id: format!("urn:uuid:{FILE}"),
+        library_id: LIBRARY.into(),
+        version: "v2".into(),
+        collection_id: mine
+            .as_ref()
+            .map(|_| "c0ffee00-1234-4abc-8def-0123456789ab".to_string()),
+        collection_title: mine.as_ref().map(|_| "Holidays".to_string()),
         display_name: "Été à Nice.jpg".into(),
         media_type: "image/jpeg".into(),
         size: 5,
@@ -807,7 +830,22 @@ fn drive_samples() -> Vec<(&'static str, Vec<Value>)> {
         modified_by_me: mine.clone(),
         opened_by_me: mine,
         deleted: None,
+        recent: None,
     };
+    let recents = [
+        RecentKind::Changed,
+        RecentKind::Opened,
+        RecentKind::Uploaded,
+    ]
+    .map(|action| {
+        ViewRow::File(Box::new(FileRow {
+            recent: Some(RecentAction {
+                action,
+                at: "2026-10-20T01:00:00.000Z".into(),
+            }),
+            ..file(Some("2026-10-20T01:00:00.000Z".into()))
+        }))
+    });
     let deleted = FileRow {
         deleted: Some(Box::new(DeletedRow {
             library_id: LIBRARY.into(),
@@ -825,10 +863,10 @@ fn drive_samples() -> Vec<(&'static str, Vec<Value>)> {
     };
     let rows = vec![
         ViewRow::Folder(folder.clone()),
-        ViewRow::File(file(Some("2026-10-20T01:00:00.000Z".into()))),
-        ViewRow::File(file(None)),
+        ViewRow::File(Box::new(file(Some("2026-10-20T01:00:00.000Z".into())))),
+        ViewRow::File(Box::new(file(None))),
     ];
-    let deleted = ViewRow::File(deleted);
+    let deleted = ViewRow::File(Box::new(deleted));
     let page = |view, rows: Vec<ViewRow>, next: Option<String>, complete| ViewPage {
         node: "n1.abc".into(),
         view,
@@ -867,10 +905,38 @@ fn drive_samples() -> Vec<(&'static str, Vec<Value>)> {
                 .map(to_value)
                 .to_vec(),
         ),
-        ("ViewFolderRow", vec![to_value(ViewRow::Folder(folder))]),
+        (
+            "ViewFolderRow",
+            vec![
+                to_value(ViewRow::Folder(folder)),
+                to_value(ViewRow::Folder(uncounted)),
+            ],
+        ),
         (
             "ViewFileRow",
-            rows[1..].iter().chain([&deleted]).map(to_value).collect(),
+            rows[1..]
+                .iter()
+                .chain([&deleted])
+                .chain(&recents)
+                .map(to_value)
+                .collect(),
+        ),
+        (
+            "RecentAction",
+            vec![to_value(RecentAction {
+                action: RecentKind::Opened,
+                at: "2026-10-20T01:00:00.000Z".into(),
+            })],
+        ),
+        (
+            "RecentKind",
+            [
+                RecentKind::Changed,
+                RecentKind::Opened,
+                RecentKind::Uploaded,
+            ]
+            .map(to_value)
+            .to_vec(),
         ),
         (
             "ViewRow",
@@ -887,6 +953,7 @@ fn drive_samples() -> Vec<(&'static str, Vec<Value>)> {
                 )),
                 to_value(page(ViewKind::All, rows.clone(), None, false)),
                 to_value(page(ViewKind::Deleted, vec![deleted.clone()], None, true)),
+                to_value(page(ViewKind::Recent, recents.to_vec(), None, true)),
             ],
         ),
         ("CollectionHistorySize", vec![to_value(size)]),

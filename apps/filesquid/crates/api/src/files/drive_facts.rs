@@ -18,8 +18,8 @@ use crate::journal::parse_rfc3339_ms;
 use crate::ErrorCode;
 use filesquid_core::FileId;
 use filesquid_metadata::file_record::safe_display_name;
-use filesquid_ocfl::read::Object;
-use filesquid_ocfl::storage::StorageBackend;
+use filesquid_ocfl::read::{Object, ReadError};
+use filesquid_ocfl::storage::{StorageBackend, StorageError};
 use filesquid_ocfl::view;
 use filesquid_ocfl::write::VersionReservations;
 use serde::{Deserialize, Serialize};
@@ -140,14 +140,33 @@ where
     }
 }
 
-/// What `file_id` is at its head, or `None` when its object holds no record.
+/// The OCFL validation code of an object root that holds no object declaration.
+const NO_OBJECT_DECLARATION: &str = "E003";
+
+/// True when `err` says the storage root holds no object at an object's root (nothing is
+/// there, or what is there declares no OCFL object): the catalog lists a file whose object
+/// cannot be read. Pure.
+fn object_missing(err: &ReadError) -> bool {
+    match err {
+        ReadError::Storage(StorageError::NotFound { .. }) => true,
+        ReadError::Format(format) => format.code() == Some(NO_OBJECT_DECLARATION),
+        _ => false,
+    }
+}
+
+/// What `file_id` is at its head, or `None` when its object is not in the storage root or
+/// holds no record.
 async fn head_facts<B: StorageBackend, R, S>(
     library: &super::service::Library<B, R, S>,
     backend: &B,
     file_id: &FileId,
 ) -> Result<Option<FileFacts>, FileError> {
     let root = file_object_root(file_id).map_err(|_| FileError::not_found())?;
-    let object = Object::open(backend, &root).await?;
+    let object = match Object::open(backend, &root).await {
+        Ok(object) => object,
+        Err(err) if object_missing(&err) => return Ok(None),
+        Err(err) => return Err(err.into()),
+    };
     let head = object.head().clone();
     let Some(described) = library.described(&object, &head).await? else {
         return Ok(None);
@@ -166,6 +185,7 @@ async fn head_facts<B: StorageBackend, R, S>(
     Ok(Some(FileFacts {
         file_id: file_id.as_str().to_string(),
         object_id: file_object_id(file_id),
+        version: head.to_string(),
         display_name,
         media_type,
         size,

@@ -2,7 +2,7 @@
 //! of the files a library, collection or virtual-collection node holds, at
 //! `GET /api/v1/files/view`.
 //!
-//! A request names the node, the view (`all` or `deleted` for now), the sort key (`name`,
+//! A request names the node, the view (`all`, `deleted` or `recent`), the sort key (`name`,
 //! `size`, `modified`, `modified_by_me`, `opened_by_me`), the direction, the folder placement
 //! (`on_top` or `mixed`), an optional view-local filter on the name and a cursor. A library
 //! node's `all` view shows its collections and virtual collections as folder rows (every file
@@ -11,6 +11,12 @@
 //! deleted files of the node with no folder rows. The repository's Recently deleted node
 //! shows the deleted files of every library the caller may read, whatever the view, each
 //! row with its [`DeletedRow`] (Task API-F2.15, ADR 041 Decision 8).
+//!
+//! Every file row names its library, its head version and its home collection with that
+//! collection's title, and every folder row the files and bytes beneath it and, for a
+//! collection, its collection ID (Task API-F2.21; API-S-011 **Row facts**). The `recent` view
+//! lists the files the caller changed, opened or uploaded, newest first, each with its
+//! [`RecentAction`] ([`super::recent`]).
 //!
 //! Every page sorts the whole scope again and starts after the cursor's row key. The cursor
 //! also carries a digest of every row key of the scope, so when the rows or their order
@@ -59,7 +65,7 @@ pub enum ViewKind {
     All,
     /// The personal library (not available yet).
     Personal,
-    /// Recent files (not available yet).
+    /// The files the caller changed, opened or uploaded, newest first.
     Recent,
     /// Favorites (not available yet).
     Favorites,
@@ -135,6 +141,74 @@ pub struct FolderRow {
     pub node_kind: FolderKind,
     /// Its name.
     pub name: String,
+    /// For a collection, its identifier, which an upload, copy or move names as its
+    /// destination; `null` for a virtual collection.
+    pub collection_id: Option<String>,
+    /// The ordinary files beneath it that were counted.
+    pub files: u64,
+    /// Their bytes: each file's original at its head.
+    pub bytes: u64,
+    /// False when the bound of one view ([`MAX_VIEW_FILES`]) or a file that could not be
+    /// read stopped the count, so `files` and `bytes` are lower bounds.
+    pub count_complete: bool,
+}
+
+impl FolderRow {
+    /// The row of `node`, of kind `node_kind` and named `name`, before anything beneath it
+    /// was counted: no files, no bytes and an incomplete count, which
+    /// [`super::folder_counts`] replaces for the rows of a page. Pure.
+    pub fn uncounted(node: String, node_kind: FolderKind, name: String) -> Self {
+        Self {
+            node,
+            node_kind,
+            name,
+            collection_id: None,
+            files: 0,
+            bytes: 0,
+            count_complete: false,
+        }
+    }
+}
+
+/// The home collection of a file: its identifier and title.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HomeCollection {
+    /// The collection.
+    pub id: String,
+    /// Its title.
+    pub title: String,
+}
+
+/// Where a file row's file is: its library and, when it is registered in a collection that
+/// exists there, that collection.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FilePlace {
+    /// The library.
+    pub library_id: String,
+    /// The home collection, or `None` for a file registered in no collection.
+    pub home: Option<HomeCollection>,
+}
+
+/// What the caller last did to a file of the Recent view.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RecentKind {
+    /// The caller changed it (renamed, moved, restored or copied it, or changed its
+    /// metadata).
+    Changed,
+    /// The caller opened it (a content handle or a download).
+    Opened,
+    /// The caller uploaded it or new content for it.
+    Uploaded,
+}
+
+/// The caller's latest action on a file of the Recent view.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct RecentAction {
+    /// What the caller did.
+    pub action: RecentKind,
+    /// When (RFC 3339 UTC).
+    pub at: String,
 }
 
 /// A file row.
@@ -144,6 +218,14 @@ pub struct FileRow {
     pub file_id: String,
     /// Its object, `urn:uuid:<file-id>`.
     pub object_id: String,
+    /// Its library.
+    pub library_id: String,
+    /// The head version of its object (`v1`, `v2`, ...).
+    pub version: String,
+    /// Its home collection; `null` for a file registered in no collection.
+    pub collection_id: Option<String>,
+    /// The home collection's title; `null` when `collection_id` is.
+    pub collection_title: Option<String>,
     /// The name users see (API-S-027).
     pub display_name: String,
     /// The media type of the original.
@@ -160,6 +242,9 @@ pub struct FileRow {
     /// Recently deleted node's view only.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub deleted: Option<Box<DeletedRow>>,
+    /// The caller's latest action on the file; present in the Recent view only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recent: Option<RecentAction>,
 }
 
 /// The Recently deleted facts of one deleted file (mockup 16: Library, Was in, Deleted, How
@@ -196,8 +281,8 @@ pub struct DeletedRow {
 pub enum ViewRow {
     /// A collection or virtual collection.
     Folder(FolderRow),
-    /// A file.
-    File(FileRow),
+    /// A file. Boxed, because a file row is several times the size of a folder row.
+    File(Box<FileRow>),
 }
 
 /// One page of a view.
@@ -229,6 +314,8 @@ pub struct FileFacts {
     pub file_id: String,
     /// Its object.
     pub object_id: String,
+    /// The head version of its object.
+    pub version: String,
     /// Its display name.
     pub display_name: String,
     /// Its media type.
@@ -311,9 +398,10 @@ pub fn folder_candidate(folder: FolderRow, sort: SortKey) -> Candidate {
     }
 }
 
-/// The file row of `facts` and the caller's `mine` as a candidate under `sort`.
+/// The file row of `facts` at `place` and the caller's `mine` as a candidate under `sort`.
 pub fn file_candidate(
     facts: FileFacts,
+    place: FilePlace,
     mine: MyTimes,
     sort: SortKey,
     deleted: Option<DeletedRow>,
@@ -333,9 +421,17 @@ pub fn file_candidate(
         name: facts.display_name.clone(),
         id: facts.file_id.clone(),
     };
+    let (collection_id, collection_title) = match place.home {
+        Some(home) => (Some(home.id), Some(home.title)),
+        None => (None, None),
+    };
     let row = FileRow {
         file_id: facts.file_id,
         object_id: facts.object_id,
+        library_id: place.library_id,
+        version: facts.version,
+        collection_id,
+        collection_title,
         display_name: facts.display_name,
         media_type: facts.media_type,
         size: facts.size,
@@ -343,11 +439,26 @@ pub fn file_candidate(
         modified_by_me: mine.modified_ms.map(format_rfc3339_ms),
         opened_by_me: mine.opened_ms.map(format_rfc3339_ms),
         deleted: deleted.map(Box::new),
+        recent: None,
     };
     Candidate {
-        row: ViewRow::File(row),
+        row: ViewRow::File(Box::new(row)),
         key,
     }
+}
+
+/// `candidate` as a row of the Recent view: it carries `action` and sorts by its time
+/// `at_ms`, so the newest action comes first in descending order. A folder row is left as
+/// it is. Pure.
+pub fn recent_candidate(mut candidate: Candidate, action: RecentKind, at_ms: i64) -> Candidate {
+    if let ViewRow::File(row) = &mut candidate.row {
+        row.recent = Some(RecentAction {
+            action,
+            at: format_rfc3339_ms(at_ms),
+        });
+        candidate.key.value = Some(SortValue::Number(at_ms));
+    }
+    candidate
 }
 
 /// The checked view-local filter: `None` for none, else the text folded to lower case.
@@ -380,12 +491,12 @@ pub fn check_limit(limit: Option<usize>) -> Result<usize, FileError> {
 /// `invalid_request` unless this release serves `view`.
 ///
 /// # Errors
-/// `invalid_request` naming the view for every view but `all` and `deleted`.
+/// `invalid_request` naming the view for every view but `all`, `deleted` and `recent`.
 pub fn check_view(view: ViewKind) -> Result<(), FileError> {
     match view {
-        ViewKind::All | ViewKind::Deleted => Ok(()),
+        ViewKind::All | ViewKind::Deleted | ViewKind::Recent => Ok(()),
         other => Err(FileError::invalid(format!(
-            "The {} view is not available yet; use all or deleted.",
+            "The {} view is not available yet; use all, deleted or recent.",
             other.as_str()
         ))),
     }
@@ -521,7 +632,7 @@ fn compare(a: &RowKey, b: &RowKey, direction: SortDirection, folders: FolderPlac
 }
 
 /// The digest of every parameter but the cursor and the limit.
-fn fingerprint(request: &ViewRequest) -> String {
+pub(super) fn fingerprint(request: &ViewRequest) -> String {
     digest_parameters(&format!(
         "{}\n{}\n{:?}\n{:?}\n{:?}\n{}",
         request.node,
@@ -602,27 +713,89 @@ fn decode_hex(text: &str) -> Option<Vec<u8>> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn a_file_row_carries_its_place_and_a_recent_row_sorts_by_its_action_time() {
+        let old = recent_candidate(
+            file("1", "a", 1, 1, SortKey::Name),
+            RecentKind::Opened,
+            1_000,
+        );
+        let new = recent_candidate(
+            file("2", "b", 1, 1, SortKey::Name),
+            RecentKind::Uploaded,
+            2_000,
+        );
+        let params = PageParams {
+            fingerprint: "p".into(),
+            direction: SortDirection::Descending,
+            folders: FolderPlacement::Mixed,
+            cursor: None,
+            limit: 10,
+        };
+        let rows = page_rows(params, vec![old, new]).expect("page").rows;
+        let ViewRow::File(first) = &rows[0] else {
+            panic!("a file row");
+        };
+        assert_eq!(first.file_id, "2", "the newest action first");
+        assert_eq!(first.library_id, "lib");
+        assert_eq!(first.version, "v1");
+        assert_eq!(first.collection_id.as_deref(), Some("c"));
+        assert_eq!(first.collection_title.as_deref(), Some("Summer"));
+        let recent = first.recent.as_ref().expect("recent");
+        assert_eq!(recent.action, RecentKind::Uploaded);
+        assert_eq!(recent.at, format_rfc3339_ms(2_000));
+        let loose = FilePlace {
+            library_id: "lib".into(),
+            home: None,
+        };
+        let facts = FileFacts {
+            file_id: "3".into(),
+            object_id: "urn:uuid:3".into(),
+            version: "v4".into(),
+            display_name: "c".into(),
+            media_type: "text/plain".into(),
+            size: 1,
+            modified_ms: 1,
+            statements: Vec::new(),
+        };
+        let candidate = file_candidate(facts, loose, MyTimes::default(), SortKey::Name, None);
+        let ViewRow::File(row) = candidate.row else {
+            panic!("a file row");
+        };
+        assert_eq!((row.collection_id, row.collection_title), (None, None));
+        assert_eq!(row.version, "v4");
+        assert_eq!(row.recent, None);
+    }
+
     /// A file candidate named `name` of `size` bytes, modified at `ms`.
     fn file(id: &str, name: &str, size: u64, ms: i64, sort: SortKey) -> Candidate {
         let facts = FileFacts {
             file_id: id.into(),
             object_id: format!("urn:uuid:{id}"),
+            version: "v1".into(),
             display_name: name.into(),
             media_type: "image/jpeg".into(),
             size,
             modified_ms: ms,
             statements: Vec::new(),
         };
-        file_candidate(facts, MyTimes::default(), sort, None)
+        file_candidate(facts, place(), MyTimes::default(), sort, None)
+    }
+
+    /// A library with one home collection.
+    fn place() -> FilePlace {
+        FilePlace {
+            library_id: "lib".into(),
+            home: Some(HomeCollection {
+                id: "c".into(),
+                title: "Summer".into(),
+            }),
+        }
     }
 
     /// A folder candidate named `name`.
     fn folder(node: &str, name: &str, sort: SortKey) -> Candidate {
-        let row = FolderRow {
-            node: node.into(),
-            node_kind: FolderKind::Collection,
-            name: name.into(),
-        };
+        let row = FolderRow::uncounted(node.into(), FolderKind::Collection, name.into());
         folder_candidate(row, sort)
     }
 
@@ -797,7 +970,16 @@ mod tests {
         assert!(check_limit(Some(MAX_VIEW_LIMIT + 1)).is_err());
         assert_eq!(check_limit(None).expect("default"), DEFAULT_VIEW_LIMIT);
         assert!(check_view(ViewKind::All).is_ok() && check_view(ViewKind::Deleted).is_ok());
-        assert!(check_view(ViewKind::Favorites).is_err());
+        assert!(check_view(ViewKind::Recent).is_ok());
+        for waiting in [
+            ViewKind::Home,
+            ViewKind::Personal,
+            ViewKind::Favorites,
+            ViewKind::Shares,
+            ViewKind::Tags,
+        ] {
+            assert!(check_view(waiting).is_err(), "{waiting:?}");
+        }
         let row = file("1", "Holiday.JPG", 1, 1, SortKey::Name);
         assert!(matches_filter(&row, Some("day.jpg")));
         assert!(!matches_filter(&row, Some("png")));

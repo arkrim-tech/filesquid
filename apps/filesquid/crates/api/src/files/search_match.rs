@@ -15,7 +15,7 @@
 //! - **Folder rows** match free text by name, `type:folder` and `owner:me`; every
 //!   file-only clause leaves them out unless it is excluded.
 
-use super::drive::{FileFacts, FolderRow};
+use super::drive::{FileFacts, FilePlace, FolderRow};
 use super::search_query::{fold, parse_date, Clause, Query, Term, TypeClass};
 use crate::journal::parse_rfc3339_ms;
 use time::{Date, OffsetDateTime, UtcOffset};
@@ -49,6 +49,8 @@ pub struct SearchFile {
     pub facts: FileFacts,
     /// The folded title of its home collection, or `None` when that collection was deleted.
     pub collection: Option<String>,
+    /// Its library and home collection, as its row names them.
+    pub place: FilePlace,
     /// True when it is recoverably deleted.
     pub deleted: bool,
 }
@@ -220,6 +222,7 @@ mod tests {
             facts: FileFacts {
                 file_id: "f".into(),
                 object_id: "urn:uuid:f".into(),
+                version: "v1".into(),
                 display_name: name.into(),
                 media_type: "image/jpeg".into(),
                 size,
@@ -230,6 +233,10 @@ mod tests {
                     .collect(),
             },
             collection: Some("holidays".into()),
+            place: FilePlace {
+                library_id: "lib".into(),
+                home: None,
+            },
             deleted: false,
         }
     }
@@ -358,11 +365,11 @@ mod tests {
 
     #[test]
     fn folders_match_by_name_and_type_and_relevance_ranks_names_first() {
-        let folder = FolderRow {
-            node: "n".into(),
-            node_kind: super::super::drive::FolderKind::Collection,
-            name: "Client decks".into(),
-        };
+        let folder = FolderRow::uncounted(
+            "n".into(),
+            super::super::drive::FolderKind::Collection,
+            "Client decks".into(),
+        );
         assert!(folder_matches(
             &parse("client type:folder").expect("q"),
             &folder,

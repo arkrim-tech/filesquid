@@ -8,7 +8,9 @@
 //! The journal is filtered by actor before anything is kept, so another user's activity
 //! never shapes the caller's order (SRS-F-062).
 
-use super::drive::{DeletedRow, FolderKind, FolderRow, MyTimes, ViewKind, MAX_VIEW_FILES};
+use super::drive::{
+    DeletedRow, FolderKind, FolderRow, HomeCollection, MyTimes, ViewKind, MAX_VIEW_FILES,
+};
 use super::error::FileError;
 use super::nodes::file_error;
 use super::search_scope::MAX_SEARCH_LIBRARIES;
@@ -26,7 +28,7 @@ use crate::library::{
     VisibilityFilter,
 };
 use crate::navigation::{NavigationService, NodeRef};
-use filesquid_core::{FileId, LibraryId};
+use filesquid_core::{CollectionId, FileId, LibraryId};
 use std::collections::HashMap;
 
 /// Most folder rows (collections and virtual collections) one library view shows.
@@ -65,6 +67,9 @@ pub struct LibraryFiles {
     pub files: Vec<FileId>,
     /// For a deleted view, what Recently deleted shows of each deleted file, by file ID.
     pub deleted: HashMap<String, DeletedRow>,
+    /// The home collection of each file registered in a collection of the library, by file
+    /// ID; a file registered in none has no entry.
+    pub homes: HashMap<String, HomeCollection>,
 }
 
 /// The files and folder rows one view covers: one library's files for a library, collection
@@ -215,11 +220,55 @@ fn library_files(
             }
         }
     }
+    let homes = home_collections(catalog, library_id, &entries)?;
     Ok(LibraryFiles {
         library_id: library_id.as_str().to_string(),
         files: entries.into_iter().map(|e| e.file.id().clone()).collect(),
         deleted,
+        homes,
     })
+}
+
+/// The home collection of each of `entries` whose home is a collection of `library_id`, by
+/// file ID. Reads each distinct collection once.
+///
+/// # Errors
+/// `unavailable` or `internal` when the catalog fails.
+pub(super) fn home_collections(
+    catalog: &dyn LibraryCatalog,
+    library_id: &LibraryId,
+    entries: &[FileEntry],
+) -> Result<HashMap<String, HomeCollection>, FileError> {
+    let mut titles: HashMap<CollectionId, Option<String>> = HashMap::new();
+    let mut homes = HashMap::new();
+    for entry in entries {
+        let home = entry.file.home_collection_id();
+        if !titles.contains_key(home) {
+            let title = collection_title(catalog, home, library_id)?;
+            titles.insert(home.clone(), title);
+        }
+        if let Some(Some(title)) = titles.get(home) {
+            let found = HomeCollection {
+                id: home.as_str().to_string(),
+                title: title.clone(),
+            };
+            homes.insert(entry.file.id().as_str().to_string(), found);
+        }
+    }
+    Ok(homes)
+}
+
+/// The title of collection `id` of `library_id`, or `None` when it no longer exists there
+/// (the collection was deleted with the file, ADR 041 Decision 8).
+pub(super) fn collection_title(
+    catalog: &dyn LibraryCatalog,
+    id: &CollectionId,
+    library_id: &LibraryId,
+) -> Result<Option<String>, FileError> {
+    let collection = catalog.collection(id).map_err(catalog_error)?;
+    Ok(collection
+        .filter(|c| c.library_id() == library_id)
+        .map(|c| c.title().to_string()))
 }
 
 /// What the Recently deleted facts of one library's files are read from.
@@ -414,7 +463,7 @@ fn record_time(
 }
 
 /// The library of `node` and the catalog scope it lists.
-fn file_scope(
+pub(super) fn file_scope(
     catalog: &dyn LibraryCatalog,
     node: &NodeRef,
 ) -> Result<(LibraryId, FileScope), FileError> {
@@ -526,10 +575,13 @@ fn collect_folders(
             after = Some(key);
             let handle = readable(&node).then(|| node.to_handle()).flatten();
             if let Some(handle) = handle {
+                let collection_id = match &node {
+                    NodeRef::Collection(id) => Some(id.as_str().to_string()),
+                    _ => None,
+                };
                 rows.push(FolderRow {
-                    node: handle,
-                    node_kind,
-                    name,
+                    collection_id,
+                    ..FolderRow::uncounted(handle, node_kind, name)
                 });
             }
         }

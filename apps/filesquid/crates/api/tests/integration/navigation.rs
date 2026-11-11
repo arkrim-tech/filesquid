@@ -818,7 +818,12 @@ async fn collection_and_folder_nodes_carry_their_collection_id_and_no_other_kind
     let carried: Vec<&Value> = ancestors.iter().map(|n| &n["collection_id"]).collect();
     assert_eq!(
         carried,
-        [&Value::Null, &Value::Null, &json!(photos_id), &json!(photos_id)],
+        [
+            &Value::Null,
+            &Value::Null,
+            &json!(photos_id),
+            &json!(photos_id)
+        ],
         "repository, library, collection, folder"
     );
 }
@@ -853,7 +858,9 @@ async fn a_folder_node_resolves_to_its_collection_and_folder() {
         })
     );
     assert!(
-        rig.photos_rig.journaled("navigation.destination").is_empty(),
+        rig.photos_rig
+            .journaled("navigation.destination")
+            .is_empty(),
         "a successful read is not journaled"
     );
 }
@@ -862,7 +869,10 @@ async fn a_folder_node_resolves_to_its_collection_and_folder() {
 async fn a_node_that_is_no_collection_or_folder_is_no_destination() {
     let rig = NavRig::new().await;
     let root = rig.get("").await.json();
-    let repository = root["nodes"][0]["node"].as_str().expect("handle").to_string();
+    let repository = root["nodes"][0]["node"]
+        .as_str()
+        .expect("handle")
+        .to_string();
     let level = rig.get(&format!("node={repository}")).await.json();
     let trash = level["nodes"]
         .as_array()
