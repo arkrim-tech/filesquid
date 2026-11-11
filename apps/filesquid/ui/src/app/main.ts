@@ -12,7 +12,10 @@
  * file browser until the API lists files by navigation node, with the file panel (File info and Versions) for the open file. On the desktop host the client
  * uses the per-launch token; on the server host the Monitor asks for the administrator token,
  * which is kept in memory only, and entering it reconnects the event channel and reads the
- * host, the health and the tree again.
+ * host, the health and the tree again. One admin role store (UI-F2.21, UI-S-032) asks the admin
+ * health route whether the page's credential is granted the admin routes, at start and after a
+ * token is entered: a refused caller sees no Monitor button or Logs row, and `#/monitor` shows
+ * the permission state with no further admin call.
  */
 import "../theme/tokens.css";
 import labels from "../theme/labels.en.json";
@@ -39,6 +42,8 @@ import {
   bindFilesRoute,
   bindLogsRoute,
   ClientLogsSource,
+  AdminAccessStore,
+  launchToken,
   selectHostAdapter,
   startClientEvents,
   bindStorage,
@@ -91,8 +96,15 @@ const tokens = memoryTokenStore(() => {
   navigation.reconnect();
   void tree.reload();
   void preferences.start(); // reads again when the first read was refused before the token
+  void access.probe(); // the new credential's admin role (UI-S-032)
 });
 const client = createHostClient(window, () => tokens.get());
+// The one role check of the Monitor button and route and the Logs row (UI-F2.21, UI-S-032).
+const access = new AdminAccessStore(
+  client,
+  () => launchToken(window) !== undefined || tokens.get() !== undefined,
+);
+void access.probe();
 // Console warnings and errors are journaled through the client-events route (UI-F2.16, UI-S-023);
 // the queue holds them until the route acknowledges them. Started once, here, for every route.
 let clientEvents: ClientEvents | undefined;
@@ -134,7 +146,7 @@ shell?.append(searchBar);
 const newMenu = document.createElement("fs-new-menu") as FsNewMenu;
 newMenu.configure({ labels });
 shell?.append(newMenu);
-shell?.configure({ distribution: filesquid, client, theme });
+shell?.configure({ distribution: filesquid, client, theme, access });
 tree.slot = "navigation";
 tree.configure({ labels, source: navigation });
 shell?.append(tree);
@@ -164,7 +176,7 @@ if (shell) bindLibraryRoute(shell, libraries);
 // First use (UI-S-034): with no library known to the host, the launch goes to the welcome screen.
 void redirectToFirstUse(window, libraries.source);
 if (shell) {
-  const monitor = { labels, client, tokens: desktop ? undefined : tokens };
+  const monitor = { labels, client, tokens: desktop ? undefined : tokens, access };
   bindMonitorRoute(shell, { ...monitor, repairHref: libraryRepairHref });
 }
 // The Logs view (UI-F2.16): `#/logs` and its filtered forms; the sidebar row is the desktop's.
@@ -177,6 +189,7 @@ if (shell) {
     facts: new ClientFactsSource(client),
     provenance: new ClientProvenanceSource(client),
   };
-  const browser = { labels, source: files, filePanel, metadata: new ClientMetadataSource(client) };
+  const metadata = new ClientMetadataSource(client);
+  const browser = { labels, source: files, filePanel, metadata, access };
   bindFilesRoute(shell, browser);
 }
