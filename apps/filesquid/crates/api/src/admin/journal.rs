@@ -13,7 +13,7 @@
 //! the caller, never stored and never exported.
 //!
 //! The self-scoped route `GET /journal` ([`crate::journal::own`]) answers the same pages
-//! through [`answer_page`], limited to the caller's own entries.
+//! through the same page reader (`answer_page`), limited to the caller's own entries.
 
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
