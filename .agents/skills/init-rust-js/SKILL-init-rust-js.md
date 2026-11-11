@@ -222,7 +222,7 @@ Mirror the Python/JS taxonomy with Rust-native tools on the crates and JS tools 
 - **ESLint** (flat config) and **Prettier** inside each UI package.
 
 ### 5. Pre-commit verification
-- Every quality gate runs locally through `scripts/pre-commit.sh` before a push. Do not add a test or release workflow. The only hosted workflow is the pull-request reviewer, `.github/workflows/pr-agent.yml`, and a later self-hosted review server may replace it.
+- Every quality gate runs locally through `scripts/pre-commit.sh` before a push. Do not add a test or release workflow. The only hosted workflow is the pull-request reviewer, `.github/workflows/pr_agent.yml`, and a later self-hosted review server may replace it.
 - `scripts/verify_formatting.sh`: `cargo fmt --all --check` from the Cargo workspace and `prettier --check` in each UI package.
 - `scripts/verify_tests.sh`: Clippy, workspace tests, `cargo test -p <crate>` for **each module crate alone** ([ADR 029](../../../resources/architecture/029-filesquid-unified-product-and-distributions.md)), `cargo doc`, then ESLint, `tsc --noEmit` and Vitest in each UI package. Playwright runs when `FILESQUID_E2E=1`; `FILESQUID_SKIP_TESTS=1` skips this step for work-in-progress commits.
 - `scripts/verify_docs.sh`: the validators under `scripts/docs/` (ADR structure, PRD allocation, relative links, FileSquid/ImageSquid boundary) and task cleanup.
@@ -353,7 +353,7 @@ Verify every documented command actually runs ([command-verification.md](../../r
 - [ ] `docs-enforce.md` and `lint-enforce.md` describe rustdoc/rustfmt/Clippy/ESLint/Prettier for the real crate and package paths, not Ruff, Mix, or PHPCS.
 - [ ] ADRs exist for test, docs, lint, server, desktop, workspace, API, UI, observability, and distribution, and they do not contradict earlier accepted ADRs.
 - [ ] Tauri stays on stable major 2; capabilities, production CSP, separate `devCsp`, and `frontendDist` are configured; no v1 allowlist/`devPath` APIs; `gen/schemas/` is gitignored.
-- [ ] `scripts/pre-commit.sh` runs formatting, Clippy, workspace and per-crate tests, UI lint/check/tests and the documentation validators, and passes. The only hosted workflow is `.github/workflows/pr-agent.yml`.
+- [ ] `scripts/pre-commit.sh` runs formatting, Clippy, workspace and per-crate tests, UI lint/check/tests and the documentation validators, and passes. The only hosted workflow is `.github/workflows/pr_agent.yml`.
 - [ ] Root README explains rustup/Node/Tauri prerequisites, server vs desktop run/test/log paths, without erasing About this project.
 - [ ] Relative links only; no absolute developer machine paths. `scripts/verify_relative_links.sh` passes.
 - [ ] Compose does not containerize the Tauri host. Unique ports; `scripts/verify_isolated_ports.sh` passes.

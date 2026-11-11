@@ -12,7 +12,7 @@ license: CC-BY
 ## MUST NOT
 
 - Move a quality gate to GitHub Actions or any other hosted CI. Lint and tests run in the pre-commit hook.
-- Add a hosted workflow other than [`.github/workflows/pr-agent.yml`](../../.github/workflows/pr-agent.yml). Do not add `.gitlab-ci.yml` or a second workflow. If another workflow appears, remove it.
+- Add a hosted workflow other than [`.github/workflows/pr_agent.yml`](../../.github/workflows/pr_agent.yml). Do not add `.gitlab-ci.yml` or a second workflow. If another workflow appears, remove it.
 - Describe a lint or test check as "run in CI". Those checks run in the pre-commit hook or not at all.
 - Commit an API key. The review workflow reads `OPENAI_KEY` from a repository Actions secret.
 - Push a commit that fails `scripts/pre-commit.sh`.
@@ -28,7 +28,7 @@ license: CC-BY
 - Run every cargo command in a gate that builds, tests, documents or formats through `cargo_locked` from `scripts/lib/cargo_shared.sh`, so two gate runs that share one target directory never use it at the same time. `cargo metadata --no-deps` in the scope helper reads manifests only and is not locked. Where `flock` is not installed (for example macOS without util-linux) the gates warn and run unlocked; there, do not run two gate runs on one target directory at once.
 - Keep the gates platform-agnostic ([platform-agnostic.md](./platform-agnostic.md)) and verify any command they run ([command-verification.md](./command-verification.md)).
 - Document a new gate, its environment variables and its runtime in the root README "Run tests" section in the same change.
-- Keep [`.github/workflows/pr-agent.yml`](../../.github/workflows/pr-agent.yml) as the current AI PR Agent runner. It reviews pull requests. It does not lint or test. Set `config.model` in that workflow when the owner names the model. When the owner moves reviews to a remote self-hosted server, that change replaces this workflow and updates [pr-review-loop.md](./pr-review-loop.md) in the same change.
+- Keep [`.github/workflows/pr_agent.yml`](../../.github/workflows/pr_agent.yml) as the current AI PR Agent runner. It reviews pull requests. It does not lint or test. Set `config.model` in that workflow when the owner names the model. When the owner moves reviews to a remote self-hosted server, that change replaces this workflow and updates [pr-review-loop.md](./pr-review-loop.md) in the same change.
 
 ## The gates
 

@@ -44,7 +44,7 @@
 **Purpose:** Keep every quality gate fast, deterministic and under the developer's control. Lint and tests run locally through the repository's pre-commit hook before a push. GitHub Actions is slow and unreliable for those gates, so they stay local. GitHub Actions is used for one job: the pull-request reviewer.
 
 - **Quality gates stay local:** Agents MUST NOT move lint, tests, or any other quality gate into GitHub Actions or any other hosted CI. A pull request still needs the local hook, the AI PR Agent review, and human review where the review loop requires it.
-- **Pull-request reviewer:** The only hosted workflow is [`.github/workflows/pr-agent.yml`](./.github/workflows/pr-agent.yml). It runs the AI PR Agent on pull requests and does not build or test the repository. A later owner decision may replace that workflow with a remote self-hosted review server. Until that change lands, do not delete the workflow and do not add any other workflow.
+- **Pull-request reviewer:** The only hosted workflow is [`.github/workflows/pr_agent.yml`](./.github/workflows/pr_agent.yml). It runs the AI PR Agent on pull requests and does not build or test the repository. A later owner decision may replace that workflow with a remote self-hosted review server. Until that change lands, do not delete the workflow and do not add any other workflow.
 - **Pre-commit is the gate:** `scripts/pre-commit.sh` runs the branch, port, document-sync, traceability, link, workspace-boundary, logging, formatting, documentation and lint/test verifiers. A commit that fails the hook MUST NOT be pushed.
 - **Active Enforcement:** This principle is tactically enforced on all AI agents via the instructions in `[local-verification.md](./.agents/rules/local-verification.md)`.
 
