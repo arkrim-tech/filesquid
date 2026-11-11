@@ -48,6 +48,12 @@ pub const OBJECT: &str = "urn:uuid:0b6f6a58-5c1d-4b5e-9f3e-2a7d8c9e0f11";
 /// Where the object lives in the storage root.
 const OBJECT_ROOT: &str = "objects/holiday";
 
+/// The folder of a rig's directory that holds the staging area of the service under test.
+pub const API_STAGING: &str = "api-staging";
+
+/// The folder of a rig's directory that holds that staging area's multipart parts.
+pub const API_STAGING_PARTS: &str = "api-staging-parts";
+
 /// Lease TTL 60 s with a 10 s margin.
 const LEASES: LeaseConfig = LeaseConfig {
     ttl_ms: 60_000,
@@ -117,13 +123,20 @@ pub type ReadHook = Box<dyn Fn() + Send + Sync>;
 
 /// A filesystem backend that counts reads (`get_range` and `head` of any key) and content
 /// reads (`get_range` of a key in an OCFL content directory), so a test can prove that an
-/// answer read no file, or no file content.
+/// answer read no file, or no file content. It also keeps the largest ranged read it answered,
+/// how many reads answered at least 1 MiB,
+/// the largest single write it took (`put`, `put_if` or one multipart part) and the bytes
+/// written in all, so a test can prove that a transfer was streamed in bounded pieces.
 pub struct CountedFs {
     inner: FsBackend,
     reads: AtomicU64,
     content_reads: AtomicU64,
     content_heads: AtomicU64,
-    on_read: Mutex<Option<ReadHook>>,
+    largest_read: AtomicU64,
+    chunk_reads: AtomicU64,
+    largest_write: AtomicU64,
+    written: AtomicU64,
+    on_read: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
 }
 
 impl CountedFs {
@@ -134,8 +147,39 @@ impl CountedFs {
             reads: AtomicU64::new(0),
             content_reads: AtomicU64::new(0),
             content_heads: AtomicU64::new(0),
+            largest_read: AtomicU64::new(0),
+            chunk_reads: AtomicU64::new(0),
+            largest_write: AtomicU64::new(0),
+            written: AtomicU64::new(0),
             on_read: Mutex::new(None),
         }
+    }
+
+    /// The most bytes one ranged read answered so far.
+    pub fn largest_read(&self) -> u64 {
+        self.largest_read.load(Ordering::SeqCst)
+    }
+
+    /// The ranged reads so far that answered at least 1 MiB: chunks of a large file.
+    pub fn chunk_reads(&self) -> u64 {
+        self.chunk_reads.load(Ordering::SeqCst)
+    }
+
+    /// The most bytes one write (`put`, `put_if` or a multipart part) carried so far.
+    pub fn largest_write(&self) -> u64 {
+        self.largest_write.load(Ordering::SeqCst)
+    }
+
+    /// The bytes written so far, over every write.
+    pub fn written(&self) -> u64 {
+        self.written.load(Ordering::SeqCst)
+    }
+
+    /// Count one write of `len` bytes.
+    fn wrote(&self, len: usize) {
+        let len = len as u64;
+        self.largest_write.fetch_max(len, Ordering::SeqCst);
+        self.written.fetch_add(len, Ordering::SeqCst);
     }
 
     /// Reads so far.
@@ -155,13 +199,15 @@ impl CountedFs {
 
     /// Run `hook` after every later read.
     pub fn on_read(&self, hook: ReadHook) {
-        *self.on_read.lock().expect("hook lock") = Some(hook);
+        *self.on_read.lock().expect("hook lock") = Some(Arc::from(hook));
     }
 
-    /// Count one read and run the hook.
+    /// Count one read and run the hook. The hook runs outside the hook lock, so a hook that
+    /// waits does not hold up the reads of another task.
     fn read(&self) {
         self.reads.fetch_add(1, Ordering::SeqCst);
-        if let Some(hook) = self.on_read.lock().expect("hook lock").as_ref() {
+        let hook = self.on_read.lock().expect("hook lock").clone();
+        if let Some(hook) = hook {
             hook();
         }
     }
@@ -173,6 +219,7 @@ impl StorageBackend for CountedFs {
     }
 
     async fn put(&self, key: &StorageKey, bytes: &[u8]) -> Result<ObjectMeta, StorageError> {
+        self.wrote(bytes.len());
         self.inner.put(key, bytes).await
     }
 
@@ -182,11 +229,19 @@ impl StorageBackend for CountedFs {
         bytes: &[u8],
         precondition: &Precondition,
     ) -> Result<ObjectMeta, StorageError> {
+        self.wrote(bytes.len());
         self.inner.put_if(key, bytes, precondition).await
     }
 
     async fn get_range(&self, key: &StorageKey, range: ByteRange) -> Result<Vec<u8>, StorageError> {
         let bytes = self.inner.get_range(key, range).await;
+        if let Ok(read) = &bytes {
+            self.largest_read
+                .fetch_max(read.len() as u64, Ordering::SeqCst);
+            if read.len() >= 1024 * 1024 {
+                self.chunk_reads.fetch_add(1, Ordering::SeqCst);
+            }
+        }
         if key.as_str().contains("/content/") {
             self.content_reads.fetch_add(1, Ordering::SeqCst);
         }
@@ -233,6 +288,7 @@ impl StorageBackend for CountedFs {
         part_number: u32,
         bytes: &[u8],
     ) -> Result<CompletedPart, StorageError> {
+        self.wrote(bytes.len());
         self.inner.upload_part(upload, part_number, bytes).await
     }
 
@@ -256,7 +312,7 @@ impl StorageBackend for CountedFs {
 pub type Leases = LeaseStore<FsBackend, TestClock>;
 
 /// The file service the rig uses.
-pub type Service = FileService<CountedFs, Leases, FsBackend>;
+pub type Service = FileService<CountedFs, Leases, CountedFs>;
 
 /// A credential whose acceptance and permissions a test can withdraw, standing in for the
 /// server's accounts until API-F1.9: `accepting` false is a rotated, logged-out or ended
@@ -349,6 +405,9 @@ pub struct FilesRig {
     pub leases: Arc<Leases>,
     /// Staging for the fixture's own commits.
     pub staging: Arc<FsBackend>,
+    /// The staging area of the service under test, on disk in `<dir>/api-staging` (its
+    /// multipart parts in `<dir>/api-staging-parts`), behind the write counters.
+    pub api_staging: Arc<CountedFs>,
     /// The clock of the leases, the service and the content handles.
     pub clock: TestClock,
     /// The service under test.
@@ -430,13 +489,15 @@ impl FilesRig {
         let lease_root = fs_backend(&dir, "leases", "lease-parts");
         let leases =
             Arc::new(LeaseStore::new(lease_root, "leases", clock.clone(), LEASES).expect("leases"));
+        let api_staging = fs_backend(&dir, API_STAGING, API_STAGING_PARTS);
+        let api_staging = Arc::new(CountedFs::new(api_staging));
         let service = FileService::with_clock(clock.as_fn());
         let opened = service.open_library(
             &library(),
             FileLibrary {
                 backend: root.clone(),
                 reservations: leases.clone(),
-                staging: Arc::new(fs_backend(&dir, "api-staging", "api-staging-parts")),
+                staging: api_staging.clone(),
                 staging_prefix: "api".to_string(),
             },
         );
@@ -451,6 +512,7 @@ impl FilesRig {
             root,
             leases,
             staging,
+            api_staging,
             clock,
             service,
             state,

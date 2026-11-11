@@ -343,6 +343,14 @@ cargo test -p filesquid-api --locked --lib files::drive
 cargo test -p filesquid-api --locked --test integration_drive_views --test unit_canonical --test features
 ```
 
+A copy streams a file version of any size (API-F2.26, API-S-011, NFR-003): the source's stored original is staged through the OCFL module's streamed `stage_file`, read in ranges of at most 8 MiB and written in multipart parts of at most 64 MiB, so it is never held in memory, on the desktop as on `filesquid-server`. The staged bytes go to the library's staging area on disk (an in-memory staging backend holds what it stages). The library's write lock is held for the commit only, and a source that moved on, changed while it was read (`source_changed`) or could not be read (`source_unreadable`) is refused as `409 conflict` with nothing committed and nothing left staged. The tests copy 1 MiB, 9 MiB, 65 MiB and 600 MiB files through the router against file-system backends in the system temporary directory, which needs about 2.5 GiB free while the 600 MiB test runs (it runs alone in its own test binary and, on Linux, checks that the process's peak memory grows by less than 256 MiB); the desktop test copies a 70 MiB file through the `filesquid://` scheme:
+
+```sh
+cd apps/filesquid
+cargo test -p filesquid-api --locked --test integration_streamed_copies --test integration_streamed_copy_large --test features
+cargo test -p filesquid-desktop --locked --test integration_streamed_copy
+```
+
 The search operation of API-F2.3 (API-S-012: the operator grammar, unknown and unavailable operators, permission filtering before ranking, relevance and view sort keys, stable paging, case folding and node scopes) is tested the same way; the grammar, matching and ordering have unit tests in the library:
 
 ```sh

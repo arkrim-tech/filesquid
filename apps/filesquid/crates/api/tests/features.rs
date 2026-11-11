@@ -12,7 +12,8 @@
 //! history size of API-S-014; the client events, journal query and export of API-S-030
 //! and API-S-031; the preferences, whole-file download and drive listings of API-S-011;
 //! the metadata property routes of API-S-035; the display and download names of API-S-027;
-//! the view operation, copy and storage use per collection of API-S-011; the search
+//! the view operation, copy and storage use per collection of API-S-011; the streamed
+//! copies of any size of API-S-011 and NFR-003 (Task API-F2.26); the search
 //! operation and operator grammar of API-S-012; the journal and commit linkage of the file
 //! and metadata routes of API-S-028; the PROV-O records those commits write (SRS-F-067);
 //! the sealing service and journal rebuild of API-S-032; and the job routes and job events
@@ -141,6 +142,11 @@ mod search_steps;
 #[path = "support/view_steps.rs"]
 mod view_steps;
 
+#[path = "support/copy_fixture.rs"]
+mod copy_fixture;
+#[path = "support/streamed_copy_steps.rs"]
+mod streamed_copy_steps;
+
 #[path = "support/seal_steps.rs"]
 mod seal_steps;
 
@@ -216,6 +222,7 @@ struct MonitorWorld {
     metadata: metadata_steps::MetadataWorld,
     names: names_steps::NamesWorld,
     view: view_steps::ViewWorld,
+    streamed_copy: streamed_copy_steps::StreamedCopyWorld,
     search: search_steps::SearchWorld,
     journal: journal_steps::JournalWorld,
     seal: seal_steps::SealWorld,
