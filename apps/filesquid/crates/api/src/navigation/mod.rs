@@ -11,6 +11,10 @@
 //! nodes the caller may read are listed or counted, and an unknown node and an unreadable one
 //! get the same `not_found`.
 //!
+//! `GET /api/v1/navigation/destination` resolves one collection or folder node to the
+//! `library_id`, `collection_id` and `folder` an upload, import, copy or move names (Task
+//! API-F2.21), with the listing's one `not_found` for every node the caller cannot read.
+//!
 //! The service keeps no copy of the catalog or the folders: libraries, collections and
 //! virtual collections come from the [`crate::library::LibraryCatalog`] queries and folders
 //! from the host's [`FolderIndex`] (the folder listing by logical-path prefix over the
@@ -24,6 +28,9 @@ const LOG_TARGET: &str = "filesquid::navigation";
 
 /// Journal operation of a refused navigation listing.
 pub const NAVIGATE_OPERATION: &str = "navigation.list";
+
+/// Journal operation of a refused destination lookup (`GET /api/v1/navigation/destination`).
+pub const DESTINATION_OPERATION: &str = "navigation.destination";
 
 /// Nodes in a page when the request names no limit.
 pub const DEFAULT_LIMIT: usize = 200;
@@ -54,4 +61,6 @@ pub use node::{FolderScope, NodeRef, MAX_HANDLE_BYTES};
 pub use port::{FolderIndex, HostAccess, NavigationAccess};
 pub(crate) use routes::routes;
 pub use service::{NavigationService, RepositoryInfo};
-pub use view::{NavigationPage, NavigationRequest, NodeKind, NodeView};
+pub use view::{
+    DestinationRequest, DestinationView, NavigationPage, NavigationRequest, NodeKind, NodeView,
+};

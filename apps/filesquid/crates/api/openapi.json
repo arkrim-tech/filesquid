@@ -2292,7 +2292,7 @@
       "get": {
         "operationId": "listNavigation",
         "summary": "List one level of the navigation tree",
-        "description": "One level of the tree a UI shows as its navigation and breadcrumb (API-S-021). Without node: the host's one repository. With node: that node's children - a repository's libraries, then its one `recently_deleted` node (Task API-F2.15; a filter over the deleted files of every library this host has opened, `name` null, `has_children` false); a library's collections, then its virtual collections (no file is ever unfiled); a collection's folders; a folder's subfolders; nothing under a virtual collection; never files. A folder exists only when committed ordinary files imply it, so one implied only by hidden or deleted files is not listed. Every node carries an opaque handle (at most 512 bytes, never a path, storage key, SQL or token), its kind, its name and has_children (true only when the caller may read a child). ancestors holds the nodes from the repository down to and including the listed node, for the breadcrumb. Paging: limit 1-1000 (default 200) and an opaque cursor, in a stable order - the fixed kind order library, collection, virtual_collection, folder; libraries, collections and virtual collections in catalog order; folders by name in Unicode code-point order; no repeat or gap across pages. A page may hold fewer nodes than limit while next_cursor is present (nodes the caller may not read are skipped); keep following next_cursor until it is null. Only nodes the caller may read are listed, counted or named in an ancestor trail; an unknown node and one the caller may not read, or one under an unreadable ancestor, get the same 404 not_found. A folder whose handle would exceed 512 bytes cannot be named and is not listed. A malformed cursor, a cursor of another level, a limit outside 1-1000 or an unknown parameter answers 400 invalid_request. A successful read is not journaled; a refusal is journaled once as navigation.list (API-S-017). Subscribe to navigation.change on the event channel to know when to read a level again.",
+        "description": "One level of the tree a UI shows as its navigation and breadcrumb (API-S-021). Without node: the host's one repository. With node: that node's children - a repository's libraries, then its one `recently_deleted` node (Task API-F2.15; a filter over the deleted files of every library this host has opened, `name` null, `has_children` false); a library's collections, then its virtual collections (no file is ever unfiled); a collection's folders; a folder's subfolders; nothing under a virtual collection; never files. A folder exists only when committed ordinary files imply it, so one implied only by hidden or deleted files is not listed. Every node carries an opaque handle (at most 512 bytes, never a path, storage key, SQL or token), its kind, its name, has_children (true only when the caller may read a child) and collection_id (the collection of a collection node or of a folder node inside one, null on every other kind, so a client can name it as a destination). ancestors holds the nodes from the repository down to and including the listed node, for the breadcrumb. Paging: limit 1-1000 (default 200) and an opaque cursor, in a stable order - the fixed kind order library, collection, virtual_collection, folder; libraries, collections and virtual collections in catalog order; folders by name in Unicode code-point order; no repeat or gap across pages. A page may hold fewer nodes than limit while next_cursor is present (nodes the caller may not read are skipped); keep following next_cursor until it is null. Only nodes the caller may read are listed, counted or named in an ancestor trail; an unknown node and one the caller may not read, or one under an unreadable ancestor, get the same 404 not_found. A folder whose handle would exceed 512 bytes cannot be named and is not listed. A malformed cursor, a cursor of another level, a limit outside 1-1000 or an unknown parameter answers 400 invalid_request. A successful read is not journaled; a refusal is journaled once as navigation.list (API-S-017). Subscribe to navigation.change on the event channel to know when to read a level again.",
         "x-filesquid-action": "navigation.read",
         "parameters": [
           {
@@ -2312,6 +2312,56 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/NavigationPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/navigation/destination": {
+      "get": {
+        "operationId": "getNavigationDestination",
+        "summary": "Resolve a collection or folder node to a destination",
+        "description": "The library_id and collection_id an upload, import, copy or move into the node names (API-S-021 Destination, API-S-011, API-S-036), and for a folder node also folder, its logical folder path inside that collection (null for a collection node). The node must be a collection, or a folder inside a collection, that the caller may read together with every node above it; a readable node of any other kind (the repository, a library, a virtual collection, the recently_deleted node) answers 400 invalid_request. An unknown node, a malformed handle, a node the caller may not read, a node under an ancestor the caller may not read and a node that no longer exists all get the same 404 not_found answer as the navigation listing, so nothing reveals whether a node exists. A missing node or an unknown parameter answers 400 invalid_request. A successful read is not journaled; a refusal is journaled once as navigation.destination with its error code and no node, name or path (API-S-017).",
+        "x-filesquid-action": "navigation.read",
+        "parameters": [
+          {
+            "name": "node",
+            "in": "query",
+            "required": true,
+            "description": "The opaque handle of a collection node or of a folder node inside a collection, as the navigation listing answered it.",
+            "schema": {
+              "type": "string",
+              "maxLength": 512
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The destination the node names.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NavigationDestination"
                 }
               }
             }
@@ -6258,7 +6308,8 @@
           "node",
           "kind",
           "name",
-          "has_children"
+          "has_children",
+          "collection_id"
         ],
         "properties": {
           "node": {
@@ -6279,6 +6330,13 @@
           "has_children": {
             "type": "boolean",
             "description": "True only when the caller may read at least one child of the node. A virtual collection never has children here."
+          },
+          "collection_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "For a node of kind collection, and for a folder node inside a collection, the identifier of that collection, which an upload, copy or move names as its destination (API-S-011); null on every other kind."
           }
         }
       },
@@ -6313,6 +6371,33 @@
             "description": "The opaque cursor of the next page, or null on the last page."
           }
         }
+      },
+      "NavigationDestination": {
+        "type": "object",
+        "description": "What an upload, import, copy or move into a collection or folder node names as its destination (API-S-021 Destination, API-S-011, API-S-036).",
+        "required": [
+          "library_id",
+          "collection_id",
+          "folder"
+        ],
+        "properties": {
+          "library_id": {
+            "type": "string",
+            "description": "The library of the collection."
+          },
+          "collection_id": {
+            "type": "string",
+            "description": "The collection."
+          },
+          "folder": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "For a folder node, its logical folder path inside the collection (segments joined by `/`); null for a collection node, the collection's root."
+          }
+        },
+        "additionalProperties": false
       },
       "NavigationChange": {
         "type": "object",

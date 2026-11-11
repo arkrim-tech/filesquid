@@ -1080,6 +1080,14 @@ fn navigation_samples() -> Vec<(&'static str, Vec<Value>)> {
         kind: NodeKind::Folder,
         name: Some("b".to_string()),
         has_children: false,
+        collection_id: Some("c".to_string()),
+    });
+    let destinations = [Some("a/b".to_string()), None].map(|folder| {
+        to_value(filesquid_api::navigation::DestinationView {
+            library_id: "6f1d2c3b-4a5e-4f60-8a7b-9c0d1e2f3a4b".to_string(),
+            collection_id: "c".to_string(),
+            folder,
+        })
     });
     let page_with_ancestors = serde_json::json!({
         "nodes": [nodes.clone()], "ancestors": [nodes.clone()], "next_cursor": "c1.3330"
@@ -1088,6 +1096,7 @@ fn navigation_samples() -> Vec<(&'static str, Vec<Value>)> {
         ("NavigationKind", kinds.map(to_value).to_vec()),
         ("NavigationNode", vec![nodes]),
         ("NavigationPage", vec![repository, page_with_ancestors]),
+        ("NavigationDestination", destinations.to_vec()),
         (
             "NavigationChange",
             vec![
