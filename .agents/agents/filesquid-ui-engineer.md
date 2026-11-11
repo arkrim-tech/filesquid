@@ -50,6 +50,8 @@ Follow `.agents/rules/task-workflow.md` and the Shared agent prompt contract in 
 
 UI-only changes do not build Rust: when the hook reports `Test scope: npm:<packages>` or `docs`, it runs no Cargo step ([local-verification.md](../../.agents/rules/local-verification.md#change-aware-test-scope)), so run no cargo yourself. If it reports `full` or `rust:`, the head-commit run is `FULL=1 bash scripts/pre-commit.sh` as that rule requires. Otherwise run `bash scripts/pre-commit.sh` once per push, not once per edit.
 
+On the orchestrator's machine, run only the preview and performance Playwright suites, one run at a time under the shared lock, and not the server-backed suite (`playwright.config.ts`), which needs a `filesquid-server` build. Say in the walkthrough which suites ran and which did not. The decision and the lock command are in the [orchestrator's worktree-worker bullet](./filesquid-orchestrator.md#worktree-workers-docs-ui-and-tooling).
+
 ## Process rules
 
 - Merge `origin/main` into your branch by merge commit. Never rebase and never force-push. Commit the merge on its own; the only code it may contain is conflict resolution. Commit feature and fix code separately, because the AI PR Agent skips merge commits and would not review it (owner decision).
