@@ -1,0 +1,24 @@
+.github/workflows/pr_agent.yml
+  h_10c93bba641ef0 1-20
+.agents/rules/local-verification.md
+  h_10c93bba641ef0 15,31
+.agents/rules/pr-review-loop.md
+  h_10c93bba641ef0 31
+.agents/skills/init-rust-js/SKILL-init-rust-js.md
+  h_10c93bba641ef0 225,356
+AGENTS.md
+  h_10c93bba641ef0 47
+README.md
+  h_10c93bba641ef0 161
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8d076660a028efe45e9c467e174684769dc3e268",
+  "prompts": {},
+  "humans": {
+    "h_10c93bba641ef0": {
+      "author": "Peter Van Garderen <vangarderen.peter@gmail.com>"
+    }
+  }
+}
