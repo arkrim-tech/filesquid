@@ -97,26 +97,6 @@ async function serveShell(page: Page, host: Host): Promise<void> {
     }),
   );
   await page.routeWebSocket(/\/api\/v1\/events$/, (ws) => void host.sockets.push(ws));
-  await serveStartUpReads(page);
-}
-
-/**
- * The two routes every page of the shell uses besides what a spec measures: the Jobs button's
- * start-up read (UI-1.2, API-S-037), answered with no upload jobs, and the route the page
- * forwards its own console warnings to (UI-F2.16, UI-S-023), which acknowledges each event as
- * a host does. Without them the catch-all would count both as unserved.
- */
-async function serveStartUpReads(page: Page): Promise<void> {
-  await page.route(/\/api\/v1\/jobs\?/, (route) => json(route, { jobs: [], truncated: false }));
-  await page.route(/\/api\/v1\/client-events$/, (route) => {
-    const body = route.request().postDataJSON() as { events?: { id?: unknown }[] } | null;
-    const events = body?.events ?? [];
-    return json(route, {
-      acknowledged: events.map((event) => event.id),
-      journaled: events.length,
-      principal: "urn:uuid:5a0c41e2-0000-4000-8000-00000000e19b",
-    });
-  });
 }
 
 /** The storage block's reads and the preferences, which start as `initial` over the defaults. */
