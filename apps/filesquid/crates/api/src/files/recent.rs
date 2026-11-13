@@ -13,7 +13,8 @@
 //! library node that library and a collection node the files whose home is that collection.
 //! Reads the journal and the catalog, which may block; the view route calls it on a blocking
 //! thread. Every loop is bounded: [`MAX_SEARCH_LIBRARIES`] libraries, [`MAX_JOURNAL_PAGES`]
-//! journal pages per library and [`MAX_VIEW_FILES`] files in all.
+//! journal pages per library and [`MAX_VIEW_FILES`] files in all: the newest actions across
+//! the libraries, never the first library's older ones.
 
 use super::drive::{HomeCollection, RecentKind, MAX_VIEW_FILES};
 use super::drive_scope::{
@@ -31,7 +32,7 @@ use crate::journal::{JournalQuery, JournalStore, Outcome, MAX_PAGE};
 use crate::library::FileEntry;
 use crate::navigation::{NavigationService, NodeRef};
 use filesquid_core::{CollectionId, FileId, LibraryId};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// Prefix of a file object's identifier among a journal entry's targets.
 const OBJECT_PREFIX: &str = "urn:uuid:";
@@ -110,16 +111,53 @@ pub fn recent_scope(
         .map_err(file_error)?;
     let (targets, mut complete) = targets(navigation, principal, node)?;
     let mut scope = RecentScope::default();
-    let mut room = MAX_VIEW_FILES;
     for target in targets {
         let hits = latest_actions(store, principal.actor(), target.library_id.as_str())?;
-        let library = recent_library(navigation, principal, &target, hits, room)?;
-        complete &= library.1;
-        room = room.saturating_sub(library.0.files.len());
-        scope.libraries.push(library.0);
+        let (library, all) = recent_library(navigation, principal, &target, hits, MAX_VIEW_FILES)?;
+        complete &= all;
+        scope.libraries.push(library);
+        // Keep the newest actions across the libraries read so far, so the bound never
+        // prefers an earlier library's older actions to a later library's newer ones, and
+        // at most twice the bound is held at once.
+        complete &= retain_newest(&mut scope, MAX_VIEW_FILES);
     }
     scope.complete = complete;
     Ok(scope)
+}
+
+/// One kept action: newest first, then by library and file for a stable cut.
+type Ranked = (std::cmp::Reverse<i64>, String, String);
+
+/// Keep only the `limit` newest actions of `scope`, across its libraries, with each kept
+/// file's facts and each library's own order; false when actions were left out. Pure.
+fn retain_newest(scope: &mut RecentScope, limit: usize) -> bool {
+    let mut ranked: Vec<Ranked> = scope
+        .libraries
+        .iter()
+        .flat_map(|library| {
+            library.hits.iter().map(|(file_id, hit)| {
+                let when = std::cmp::Reverse(hit.time_ms);
+                (when, library.library_id.clone(), file_id.clone())
+            })
+        })
+        .collect();
+    if ranked.len() <= limit {
+        return true;
+    }
+    ranked.sort_unstable();
+    ranked.truncate(limit);
+    let kept: HashSet<(String, String)> = ranked
+        .into_iter()
+        .map(|(_, library_id, file_id)| (library_id, file_id))
+        .collect();
+    for library in &mut scope.libraries {
+        let id = library.library_id.clone();
+        let keeps = |file: &str| kept.contains(&(id.clone(), file.to_string()));
+        library.files.retain(|file| keeps(file.as_str()));
+        library.hits.retain(|file, _| keeps(file));
+        library.homes.retain(|file, _| keeps(file));
+    }
+    false
 }
 
 /// One library a Recent view covers, narrowed to one home collection when the node is one.
@@ -299,6 +337,53 @@ fn listed_file(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A library `id` whose files `files` were last touched at the matching `times`.
+    fn library_of(id: &str, files: &[(&str, i64)]) -> RecentLibrary {
+        let hit = |time_ms| RecentHit {
+            kind: RecentKind::Uploaded,
+            time_ms,
+        };
+        RecentLibrary {
+            library_id: id.to_string(),
+            files: files
+                .iter()
+                .map(|(f, _)| FileId::new(*f).expect("id"))
+                .collect(),
+            hits: files
+                .iter()
+                .map(|(f, t)| (f.to_string(), hit(*t)))
+                .collect(),
+            homes: HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn the_bound_keeps_the_newest_actions_across_libraries_not_the_first_library() {
+        let mut scope = RecentScope {
+            libraries: vec![
+                library_of("first", &[("a", 1), ("b", 2), ("c", 3)]),
+                library_of("second", &[("d", 9), ("e", 8)]),
+            ],
+            complete: true,
+        };
+        assert!(!retain_newest(&mut scope, 3), "two actions were left out");
+        let first: Vec<&str> = scope.libraries[0]
+            .files
+            .iter()
+            .map(FileId::as_str)
+            .collect();
+        let second: Vec<&str> = scope.libraries[1]
+            .files
+            .iter()
+            .map(FileId::as_str)
+            .collect();
+        assert_eq!(first, ["c"], "the older actions of the first library go");
+        assert_eq!(second, ["d", "e"], "the newer library keeps its order");
+        assert!(scope.libraries[0].hits.contains_key("c"));
+        assert_eq!(scope.libraries[0].hits.len(), 1);
+        assert!(retain_newest(&mut scope, 3), "nothing more is left out");
+    }
 
     /// The targets of a journal entry about file object `id`.
     fn targets_of(id: &str) -> Vec<String> {
