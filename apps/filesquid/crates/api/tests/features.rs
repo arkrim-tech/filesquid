@@ -15,8 +15,9 @@
 //! the view operation, copy and storage use per collection of API-S-011; the search
 //! operation and operator grammar of API-S-012; the journal and commit linkage of the file
 //! and metadata routes of API-S-028; the PROV-O records those commits write (SRS-F-067);
-//! the sealing service and journal rebuild of API-S-032; and the job routes and job events
-//! of API-S-037).
+//! the sealing service and journal rebuild of API-S-032; the job routes and job events
+//! of API-S-037; and the row facts, the Recent view, the destination route, the history
+//! bytes and the refusal sub-codes of API-S-011, API-S-012, API-S-014 and API-S-021).
 //!
 //! Scenarios that need domain operations not built yet (import, journal-linked renames, the metadata writes
 //! beyond the API-S-035 routes, such as the inspector's EXIF edits, C2PA scans, sync) or the
@@ -136,6 +137,8 @@ mod linkage_steps;
 mod names_steps;
 #[path = "support/prov_steps.rs"]
 mod prov_steps;
+#[path = "support/row_facts_steps.rs"]
+mod row_facts_steps;
 #[path = "support/search_steps.rs"]
 mod search_steps;
 #[path = "support/view_steps.rs"]
@@ -217,6 +220,7 @@ struct MonitorWorld {
     names: names_steps::NamesWorld,
     view: view_steps::ViewWorld,
     search: search_steps::SearchWorld,
+    row_facts: row_facts_steps::RowFactsWorld,
     journal: journal_steps::JournalWorld,
     seal: seal_steps::SealWorld,
     jobs: job_steps::JobWorld,
