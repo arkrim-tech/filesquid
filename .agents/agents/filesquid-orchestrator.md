@@ -70,6 +70,7 @@ Long-lived lanes for Rust, and separate worktree workers for everything else, ar
 
 - Docs, UI-only (`UI-`, `IS-`) and tooling work run as workers in isolated git worktrees. A UI task uses the `filesquid-ui-engineer` role; a docs or tooling task runs without an engineer role and follows the instructions block below.
 - Run up to **6** worktree workers at once, and at most **1** worker on this machine that builds Rust (a full hook run counts). Rust lanes on their own build directories count toward neither cap.
+- UI worktree workers on the orchestrator's machine run the preview and performance Playwright suites only (`playwright.preview.config.ts`, `playwright.performance.config.ts`). They run one at a time under a shared lock, because every worktree uses preview port 4173: `flock -w 5400 /dev/shm/filesquid-ui-playwright.lock <command>`. They do not run the server-backed suite (`playwright.config.ts`): it needs a `filesquid-server` build, and this machine builds no Rust. Each walkthrough says which suites ran and which did not. Owner decision of 2026-11-11: "okay on not running server backed UI specs".
 
 ### Concurrency
 
