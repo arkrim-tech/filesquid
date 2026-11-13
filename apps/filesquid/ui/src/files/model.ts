@@ -84,6 +84,12 @@ export interface FileLocation extends ObjectRef {
    * it the location is no destination and an upload is refused before any call.
    */
   readonly collection_id?: string;
+  /**
+   * The name of that collection as the API gave it to the route that placed the browser. The
+   * viewer's top bar shows it (UI-S-031); without it the bar leaves the collection out and never
+   * guesses one from a path.
+   */
+  readonly collection_name?: string;
 }
 
 /**
