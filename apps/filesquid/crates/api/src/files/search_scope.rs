@@ -1,5 +1,5 @@
 //! What one search covers (Task API-F2.3; API-S-012, SRS-F-063, SRS-NFR-004): the libraries,
-//! files and folder rows a caller may read, from the host's [`LibraryCatalog`], each file
+//! files and folder rows a caller may read, from the host's [`LibraryCatalog`](crate::library::LibraryCatalog), each file
 //! with its home collection's title and its delete state.
 //!
 //! Permission filtering comes first: a library, collection or virtual collection the caller
