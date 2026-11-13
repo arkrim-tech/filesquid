@@ -15,7 +15,7 @@ import { BACKGROUND_EVENTS_PER_SECOND, BUDGETS, PRESSURE_CPU_RATE } from "./budg
 import { FILES_FIRST, folderClass, selectClass, sortClass, WARM } from "./browse-classes";
 import { Catalogue, PROFILES } from "./fixtures";
 import { devtools, openView } from "./harness";
-import { assertBudgets, latency, publish, treeGap, type Measurement } from "./report";
+import { assertBudgets, latency, publish, type Measurement } from "./report";
 
 /** A record of one measurement; asserted when `gated`, reported otherwise. */
 function record(
@@ -112,14 +112,11 @@ test("background work: opening folders under the same stream", async ({ page }, 
       ),
     ];
     await publish(info, records);
+    // Gated strictly, as the idle open-folder class is: each navigation event reads the tree
+    // again, and the tree draws only its window (Task UI-F3.4), so no record is a known gap.
+    assertBudgets(records);
     expect(session.errors).toEqual([]);
     expect(session.host.unserved).toEqual([]);
-    // The same known gap as the idle open-folder class (Finding 4): each navigation event draws
-    // the 10,000-node tree again. Every other assertion above stays strict.
-    assertBudgets(
-      records,
-      treeGap("background-open-folder-feedback-large", "background-open-folder-result-large"),
-    );
   } finally {
     clearInterval(timer);
   }

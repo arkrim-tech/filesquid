@@ -246,6 +246,14 @@ export {
 } from "./files/preview";
 export { treeKeyAction, type KeyItem, type TreeKeyAction } from "./components/nav-tree-keys";
 export {
+  TREE_OVERSCAN,
+  treeWindow,
+  type TreeBand,
+  type TreeWindowInput,
+  type TreeWindowRange,
+} from "./components/nav-tree-window";
+export { TREE_ROW_REM, domViewport, type TreeViewport } from "./components/nav-tree-viewport";
+export {
   EMPTY_NAVIGATION_PREFERENCES,
   KIND_LABEL,
   MAX_COLLAPSED,
