@@ -28,6 +28,10 @@ BDD scenarios: [`monitor_by_role_UI-S-032.feature`](../../tests/features/monitor
 
 No contract field, route or label key was added: the only route used is `GET /api/v1/admin/health`, in the contract on main; `stateDenied` and `authNotPermitted` already exist in both label tables.
 
+## Owner decision 2026-11-13
+
+Owner decision of 2026-11-13, verbatim: "A: keep button (Recommended)". The option as offered, verbatim: "Signed-out callers keep the Monitor button so they can reach the sign-in form; only a signed-in caller refused with not_permitted loses it." Recorded in [UI-S-032](../srs.md): a caller who is not signed in (no credential, or a credential refused as `invalid_credentials`) keeps the Monitor button so the sign-in form stays reachable, and only a signed-in caller the API refuses with `not_permitted` loses it. This confirms the interpretation below; the code is unchanged.
+
 ## Interpretation recorded for the owner
 
 - API-S-004 answers invalid credentials with `403 invalid_credentials`. That is not a role refusal (no caller was identified), so it keeps the server host's sign-in form; only a `403` with another reason (`not_permitted`) hides the Monitor.
