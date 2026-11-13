@@ -154,4 +154,9 @@ The same 404 lines on an unmodified `origin/main` export:
 
 ### Pre-commit hook
 
-See the pull request for the head commit's `Test scope:` line.
+Ordinary run (`bash scripts/pre-commit.sh`) on the branch after merging `origin/main`:
+
+```
+ℹ️  Test scope: npm:apps/filesquid/ui
+✅ All Pre-Commit Hooks Passed! Test scope: npm:apps/filesquid/ui (132s)
+```
