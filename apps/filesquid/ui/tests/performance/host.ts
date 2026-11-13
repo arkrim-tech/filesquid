@@ -78,7 +78,13 @@ function searchParams(params: URLSearchParams): SearchParams {
   };
 }
 
-/** The shell's health, host and event channel. */
+/**
+ * The shell's health, host, event channel and the Jobs button's start-up listing of import
+ * jobs (`GET /api/v1/jobs`, UI-1.2, API-S-037), answered as an empty page: the measured views
+ * import nothing. Unserved, that read takes the catch-all's 404, the browser logs it as a console
+ * error, and the UI forwards its own warning to `POST /api/v1/client-events`, which the
+ * catch-all refuses too, so every test that tracks errors would fail on it.
+ */
 async function serveShell(page: Page, host: Host): Promise<void> {
   await page.route("**/api/v1/health", (route) =>
     json(route, { schema_version: 1, status: "ok", product: "filesquid" }),
@@ -97,6 +103,7 @@ async function serveShell(page: Page, host: Host): Promise<void> {
     }),
   );
   await page.routeWebSocket(/\/api\/v1\/events$/, (ws) => void host.sockets.push(ws));
+  await page.route(/\/api\/v1\/jobs\?/, (route) => json(route, { jobs: [], truncated: false }));
 }
 
 /** The storage block's reads and the preferences, which start as `initial` over the defaults. */
