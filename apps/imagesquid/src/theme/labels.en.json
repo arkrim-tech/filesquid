@@ -175,6 +175,8 @@
   "fileNext": "Next file",
   "filePosition": "{position} of {total}",
   "filePreview": "Preview",
+  "fileZoomFit": "Fit · {percent}%",
+  "fileLoadingFullSize": "Loading full size",
   "filePanels": "File panels",
   "fileNoPreview": "No preview for this format",
   "filePreviewError": "This file could not be loaded",

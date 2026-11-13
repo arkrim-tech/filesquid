@@ -65,6 +65,11 @@ Feature: Preview top bar and zoom chip
     When I choose Previous
     Then the top bar should show "facade-study.jpg" and "3 of 11"
 
+  Scenario: Back returns to the folder's list
+    When I open "facade-study.jpg" in the preview
+    And I choose Back
+    Then the preview should close and the folder's trail and list should show again
+
   # Edge cases
   Scenario: A location without a collection shows no collection name
     Given the browser shows a location that names no collection

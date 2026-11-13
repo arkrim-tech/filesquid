@@ -8,9 +8,8 @@
  * only kept its look with 13 rows would not be the product the budgets describe.
  *
  * The mockups draw a 28 px macOS title bar the webview has not, so a mockup y of n is n - 28 here.
- * Mockup 22's bar (collection, badge, zoom chip) and its filmstrip are built by no task done so
- * far; the preview is measured as built (viewer header, media, file panel) and the gap is
- * recorded in the Walkthrough.
+ * Mockup 22's top bar and zoom chip are measured as Task UI-F2.19 built them; its filmstrip is
+ * deferred after the MVP (owner decision 2026-10-30), so it is not measured.
  */
 import { expect, test, type Page } from "@playwright/test";
 import { FILES_FIRST } from "./browse-classes";
@@ -152,12 +151,17 @@ for (const scheme of SCHEMES) {
       expect(edge).toEqual({ width: "1px", colour: rgbOf(c.outline) });
       expect(await look(preview.locator("img"))).toMatchObject({
         background: rgbOf(c.raised),
-        // As built: the token radius (8 px). Mockup 22 draws 10 px; recorded as a gap in the
-        // Walkthrough, since no task built the mockup's media frame yet.
+        // The 8 px --fs-radius frame mockup 22 draws (owner decisions 2026-10-30 and 2026-10-31).
         radius: "8px",
       });
+      // Mockup 22's top bar and zoom chip (Task UI-F2.19); its filmstrip is deferred.
+      const bar = page.locator("fs-file-browser .viewer header.bar");
+      await expectBox(bar, { x: 240, y: 61, width: 880, height: 52 });
+      expect(await look(bar)).toMatchObject({ background: rgbOf(c.card) });
+      await expectBox(preview.locator(".zoom"), { y: 596, height: 36 });
+      await expect(preview.locator(".zoom .fit")).toBeVisible();
       await expect(page.locator("fs-file-browser .viewer-title")).toHaveText(smallName(1));
-      await expect(page.locator("fs-file-browser button.next")).toHaveText(
+      await expect(page.locator("fs-file-browser button.next")).toHaveAccessibleName(
         label(labels, "fileNext"),
       );
       expect(errors).toEqual([]);

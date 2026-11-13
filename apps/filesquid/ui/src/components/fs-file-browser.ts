@@ -58,6 +58,8 @@ import type { FileSource } from "../files/source";
 import { buildFrame, STYLE as FRAME_STYLE, type Frame } from "./file-browser-frame";
 import { FileList, type FileLayout } from "./file-list";
 import { STYLE as ROW_STYLE } from "./file-row-view";
+import { BADGE_STYLE } from "./drive-row-view";
+import { badgeKind, extensionOf } from "../files/badge";
 import { FileWrites, type WriteOperation, type WritesHost } from "./file-browser-writes";
 
 /** What the browser needs. */
@@ -267,7 +269,7 @@ export class FsFileBrowser extends HTMLElement {
     this.writes = new FileWrites(frame, this.writesHost(options));
     this.wireEvents(root, frame);
     const style = document.createElement("style");
-    style.textContent = A11Y_STYLE + CONTROL_STYLE + STYLE + FRAME_STYLE + ROW_STYLE;
+    style.textContent = A11Y_STYLE + CONTROL_STYLE + STYLE + BADGE_STYLE + FRAME_STYLE + ROW_STYLE;
     root.replaceChildren(style, frame.root);
     this.configurePreview();
     this.mountPanels();
@@ -603,6 +605,7 @@ export class FsFileBrowser extends HTMLElement {
   private showViewer(ref: FileRef, tab?: PanelTabId): void {
     const frame = this.frame as Frame;
     this.current = ref;
+    this.toggleAttribute("viewing", true);
     frame.viewer.element.hidden = false;
     frame.listing.element.hidden = true;
     frame.panels.hidden = this.panels.length === 0;
@@ -619,6 +622,7 @@ export class FsFileBrowser extends HTMLElement {
     const frame = this.frame;
     if (!frame || this.current === null) return;
     this.current = null;
+    this.toggleAttribute("viewing", false);
     frame.viewer.element.hidden = true;
     frame.listing.element.hidden = false;
     frame.panels.hidden = true;
@@ -629,11 +633,22 @@ export class FsFileBrowser extends HTMLElement {
     if (focus) this.list?.focusRow(this.returnKey);
   }
 
-  /** The title, position and the previous and next buttons for the open file. */
+  /**
+   * The top bar for the open file (UI-S-031): the collection the location names (left out when
+   * it names none), the badge, the display name, the position, and the previous and next
+   * buttons. Every name is set as text.
+   */
   private updateViewerHeader(row: FileRow): void {
     const { viewer } = this.frame as Frame;
     const files = this.rows.filter((r) => r.kind === "file");
     const index = files.findIndex((r) => r.key === row.key);
+    const collection = this.where.collection_name ?? "";
+    viewer.collection.textContent = collection;
+    viewer.collection.hidden = collection === "";
+    const extension = extensionOf(row.name);
+    const kind = badgeKind(extension);
+    viewer.badge.className = kind === "other" ? "badge" : `badge ${kind}`;
+    viewer.badge.textContent = extension;
     viewer.title.textContent = row.name;
     viewer.position.textContent = formatLabel(this.labels.filePosition, {
       position: String(index + 1),
