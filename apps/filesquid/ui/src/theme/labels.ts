@@ -180,6 +180,8 @@ export const REQUIRED_LABEL_KEYS = [
   "fileNext",
   "filePosition",
   "filePreview",
+  "fileZoomFit",
+  "fileLoadingFullSize",
   "filePanels",
   "fileNoPreview",
   "filePreviewError",
