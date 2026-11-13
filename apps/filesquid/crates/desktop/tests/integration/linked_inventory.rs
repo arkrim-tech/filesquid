@@ -170,6 +170,112 @@ fn it_ends_on_a_symbolic_link_loop() {
 }
 
 #[test]
+fn it_fails_when_imagemagick_is_bundled_inside_the_subject() {
+    let scratch = Scratch::new("bundled-magick");
+    let executable = scratch.0.join("Contents/MacOS/filesquid-desktop");
+    let bundled = scratch.0.join("Contents/Frameworks/libMagickCore-7.so");
+    for target in [&executable, &bundled] {
+        std::fs::create_dir_all(target.parent().expect("parent")).expect("bundle folder");
+        std::fs::copy(this_binary(), target).expect("copy a real object file");
+    }
+    let folder = scratch.0.to_string_lossy().into_owned();
+    let output = run_inventory(&["--without-vips", "--no-crates", &folder]);
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(2), "{text}");
+    let findings = rows(&text, "finding");
+    assert_eq!(findings.len(), 1, "{text}");
+    assert!(findings[0].starts_with("finding\timagemagick\t"), "{text}");
+    assert!(findings[0].ends_with("libMagickCore-7.so"), "{text}");
+}
+
+/// Build, with the workspace's `rustc`, an executable in `dir` that links the shared
+/// library `libfilesquid_absent.so`, then delete that library, so the executable names a
+/// library that cannot be found. Returns the executable's path. Starts processes and performs
+/// filesystem I/O.
+#[cfg(target_os = "linux")]
+fn build_executable_with_a_missing_library(dir: &Path) -> String {
+    let library_source = dir.join("absent.rs");
+    let program_source = dir.join("program.rs");
+    std::fs::write(
+        &library_source,
+        "#[no_mangle]\npub extern \"C\" fn absent() {}\n",
+    )
+    .expect("library source");
+    std::fs::write(
+        &program_source,
+        "extern \"C\" { fn absent(); }\nfn main() { unsafe { absent() } }\n",
+    )
+    .expect("program source");
+    let library = dir.join("libfilesquid_absent.so");
+    let program = dir.join("program");
+    let rustc = |arguments: Vec<&std::ffi::OsStr>| {
+        let status = Command::new("rustc")
+            .current_dir(env!("CARGO_MANIFEST_DIR"))
+            .args(arguments)
+            .status()
+            .expect("rustc starts");
+        assert!(status.success(), "rustc failed");
+    };
+    rustc(vec![
+        "--crate-type".as_ref(),
+        "cdylib".as_ref(),
+        "--crate-name".as_ref(),
+        "filesquid_absent".as_ref(),
+        "-o".as_ref(),
+        library.as_os_str(),
+        library_source.as_os_str(),
+    ]);
+    rustc(vec![
+        "-L".as_ref(),
+        dir.as_os_str(),
+        "-l".as_ref(),
+        "dylib=filesquid_absent".as_ref(),
+        "-o".as_ref(),
+        program.as_os_str(),
+        program_source.as_os_str(),
+    ]);
+    std::fs::remove_file(&library).expect("remove the library");
+    program.to_string_lossy().into_owned()
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn it_fails_when_a_linked_library_cannot_be_found() {
+    let scratch = Scratch::new("unresolved");
+    let program = build_executable_with_a_missing_library(&scratch.0);
+    let output = run_inventory(&["--without-vips", "--no-crates", &program]);
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(1), "{text}");
+    let findings = rows(&text, "finding");
+    assert_eq!(findings.len(), 1, "{text}");
+    assert!(
+        findings[0].starts_with("finding\tunresolved\tlibfilesquid_absent.so"),
+        "{text}"
+    );
+}
+
+#[test]
+fn it_fails_when_the_rust_crates_cannot_be_listed() {
+    let scratch = Scratch::new("no-workspace");
+    let copy = scratch.0.join("crates/desktop/scripts/linked-inventory.sh");
+    std::fs::create_dir_all(copy.parent().expect("parent")).expect("script folder");
+    std::fs::copy(script(), &copy).expect("copy the script");
+    let output = Command::new("bash")
+        .arg(&copy)
+        .args(["--without-vips", &this_binary()])
+        .output()
+        .expect("the copied script starts");
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(1), "{text}");
+    let findings = rows(&text, "finding");
+    assert_eq!(findings.len(), 1, "{text}");
+    assert!(
+        findings[0].starts_with("finding\tcrates-unlisted\t"),
+        "{text}"
+    );
+}
+
+#[test]
 fn it_lists_the_rust_crates_with_their_licences() {
     let output = run_inventory(&["--without-vips", &this_binary()]);
     let text = stdout(&output);

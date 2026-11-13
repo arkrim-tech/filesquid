@@ -30,9 +30,11 @@
 # Reads files and runs ldd (Linux) or otool (macOS), and cargo for the crates section. It
 # writes only to a temporary directory, which it removes on every exit path.
 #
-# Exit status: 0 complete inventory; 1 usage or unreadable subject; 2 ImageMagick is in the
-# inventory (ADR 006 forbids it; the inventory is still printed); 3 libvips was not found, so
-# the inventory is incomplete.
+# Exit status: 0 complete inventory; 1 usage error, unreadable subject, or an incomplete
+# inventory (a library that could not be found, the Rust crates not listed, or the walk
+# limit reached); 2 ImageMagick is in the inventory, bundled in the subject or reached from it
+# (ADR 006 forbids it; the inventory is still printed); 3 libvips was not found, so the
+# inventory is incomplete. Each case also prints a `finding` row.
 
 set -u
 
@@ -362,21 +364,21 @@ inventory_crates() {
   }' | sort -u
 }
 
-# Record a finding for every library or loader in the rows whose file name names ImageMagick
-# (ADR 006). The folder it is in does not count.
+# Record a finding for every file of the subject, and every library or loader it reaches,
+# whose file name names ImageMagick (ADR 006). The folder it is in does not count.
 find_imagemagick() {
   awk -F'\t' '{
     count = split($NF, parts, "/")
     if (tolower(parts[count]) ~ /magick/) print "finding\timagemagick\t" $NF
-  }' "$ROWS" >> "$FINDINGS"
+  }' "$WORK/files" "$ROWS" >> "$FINDINGS"
 }
 
 # Print the exit status the findings call for: 2 ImageMagick, 3 libvips missing, 1 an
-# incomplete walk, else 0.
+# incomplete inventory (walk limit, unresolved library, crates not listed), else 0.
 exit_status() {
-  if grep -q '^finding	imagemagick' "$FINDINGS"; then echo 2; return; fi
-  if grep -q '^finding	libvips-missing' "$FINDINGS"; then echo 3; return; fi
-  if grep -q '^finding	limit' "$FINDINGS"; then echo 1; return; fi
+  if grep -q '^finding	imagemagick	' "$FINDINGS"; then echo 2; return; fi
+  if grep -q '^finding	libvips-missing	' "$FINDINGS"; then echo 3; return; fi
+  if grep -Eq '^finding	(limit|unresolved|crates-unlisted)	' "$FINDINGS"; then echo 1; return; fi
   echo 0
 }
 
