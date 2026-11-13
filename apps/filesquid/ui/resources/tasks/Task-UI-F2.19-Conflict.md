@@ -27,3 +27,13 @@ Mockups read: [`22-preview-image.svg`](../../../../../resources/ui-mockups/v3/22
 3. **ADR reference.** UI-F2.17 (plan row): "Left for this task: a producer of `FileLocation.collection_id` (no route or tree node supplies one yet …)". UI-S-019: names shown come from the API.
 4. **Recommended resolution.** Built: `FileLocation` gains the optional `collection_name` (the collection's name as the API gave it to the route); the bar shows it when present and leaves it out otherwise, never guessing from a path. The task that produces `collection_id` (UI-F2.17, through `GET /api/v1/navigation/destination` and the navigation node's title) also sets `collection_name`. Artifacts to update: the UI-F2.17 plan row (one line).
 5. **Impact assessment.** Until then the bar shows the back control, the badge, the name and the position, without the collection. No wrong name is shown.
+
+## Resolution (owner, 2026-11-13)
+
+The owner answered the three conflicts by choosing these options, verbatim:
+
+1. Dark fill: "Plan: #1c1c1c (Recommended)" — "Keep what was built (--fs-surface-card), matching the plan row's text. The mockup's dark fill is recorded as superseded in a docs follow-up."
+2. Zoom icons: "Accept, no icons (Recommended)" — "Merge as built. Zoom controls and the 260 px chip come with whatever later row adds zooming beyond Fit."
+3. Collection name: "UI-F2.17 sets it (Recommended)" — "UI-F2.17, which already starts using collection_id from API-F2.21, also sets collection_name. I add that to the UI-F2.17 row in a docs PR and merge #181 as is."
+
+Recorded in the [UI-F2.19 and UI-F2.17 rows of the plan](../plan.md) and in UI-S-031 of the [UI SRS](../srs.md).
