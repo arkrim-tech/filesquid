@@ -7,6 +7,7 @@
  * with `textContent` from the label table.
  */
 import type { LabelTable } from "../theme/labels";
+import { icon, type IconName } from "./icons";
 import type { FsBreadcrumb } from "./fs-breadcrumb";
 import type { FsFilePreview } from "./fs-file-preview";
 import type { FsStates } from "./fs-states";
@@ -53,10 +54,14 @@ export interface Frame {
     readonly more: HTMLElement;
     readonly limit: HTMLElement;
   };
-  /** The viewer. */
+  /** The viewer: its top bar (UI-S-031) and the stage with the preview between the steps. */
   readonly viewer: {
     readonly element: HTMLElement;
     readonly back: HTMLButtonElement;
+    /** The collection the shown file is in; hidden when the location names none. */
+    readonly collection: HTMLElement;
+    /** The file-type badge (UI-S-026). */
+    readonly badge: HTMLElement;
     readonly title: HTMLElement;
     readonly position: HTMLElement;
     readonly previous: HTMLButtonElement;
@@ -77,6 +82,19 @@ export interface Frame {
  * the message below the field in `--fs-error`. The form sits in the page, so it is on
  * `--fs-surface-card`: the error text there meets the contrast rule in both themes, which it
  * would not on `--fs-surface-overlay` in dark (4.01:1).
+ *
+ * The viewer (UI-S-031, mockup 22, Task UI-F2.19): while a file is shown the host carries
+ * `viewing`, cancels the shell's `--fs-space-4` padding of `main` (the local
+ * `--fs-viewer-bleed`) and fills it, and the folder's trail, toolbar and name form are hidden,
+ * because mockup 22 draws the viewer's bar straight under the header. The bar is 52 px on
+ * `--fs-surface-card` with a 1 px `--fs-outline` bottom line: back (a 16 px chevron), the
+ * collection (13 px `--fs-on-surface-variant`), the badge of UI-S-026, the display name (14 px
+ * 600 `--fs-on-surface-heading`) and the position (13 px `--fs-on-surface-muted`). The stage
+ * on `--fs-surface-container` measures mockup 22: previous and next are 40 px round controls
+ * 24 px from the sides, the media box starts 56 px inside them and 37 px under the bar, its 36 px
+ * zoom chip row follows 20 px under it, and the last 228 px stay empty for the deferred
+ * filmstrip (mockup 22 leaves 240 px under the chip in its window, whose bottom is 12 px below
+ * the end of the shell's `main`).
  */
 export const STYLE = `
   .frame { display: flex; flex-direction: column; gap: var(--fs-space-3); min-width: 0; font-size: var(--fs-font-size-ui); }
@@ -102,9 +120,27 @@ export const STYLE = `
   .panels section { min-width: 0; }
   .drop { position: absolute; inset: 0; z-index: 1; display: flex; align-items: center; justify-content: center; padding: var(--fs-space-4); border: 2px dashed var(--fs-primary); border-radius: var(--fs-radius); background: var(--fs-primary-container); color: var(--fs-on-primary-container); font-weight: 600; text-align: center; }
   .summary, .more, .limit { margin: 0; font-size: var(--fs-font-size-small); color: var(--fs-on-surface-variant); }
-  .viewer header { display: flex; flex-wrap: wrap; align-items: center; gap: var(--fs-space-2) var(--fs-space-3); }
-  .viewer h2 { flex: 1 1 8rem; min-width: 0; margin: 0; font-family: var(--fs-font-sans); font-size: var(--fs-font-size-ui); font-weight: 600; color: var(--fs-on-surface); overflow-wrap: anywhere; }
-  .position { font-size: var(--fs-font-size-small); color: var(--fs-on-surface-variant); }
+  :host([viewing]) { --fs-viewer-bleed: calc(-1 * var(--fs-space-4)); display: block; margin: var(--fs-viewer-bleed); block-size: calc(100% + 2 * var(--fs-space-4)); }
+  :host([viewing]) .frame { block-size: 100%; gap: 0; }
+  :host([viewing]) fs-breadcrumb, :host([viewing]) .toolbar, :host([viewing]) .name-form { display: none; }
+  :host([viewing]) .main { flex: 1 1 auto; flex-wrap: nowrap; align-items: stretch; gap: 0; min-height: 0; }
+  .viewer { gap: 0; background: var(--fs-surface-container); }
+  .bar { flex: none; display: flex; align-items: center; gap: var(--fs-space-2); box-sizing: border-box; block-size: 3.25rem; min-width: 0; padding: 0 var(--fs-space-3); border-block-end: 1px solid var(--fs-outline); background: var(--fs-surface-card); }
+  .back { flex: none; display: inline-flex; align-items: center; justify-content: center; inline-size: 1rem; block-size: 1.5rem; padding: 0; border: 0; border-radius: var(--fs-radius-input); background: var(--fs-surface-card); color: var(--fs-icon); cursor: pointer; }
+  .collection { flex: 0 1 auto; min-width: 0; margin-inline-end: var(--fs-space-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-font-size-small); font-weight: 400; color: var(--fs-on-surface-variant); }
+  .bar .badge { flex: none; }
+  .bar .badge:empty { display: none; }
+  .viewer-title { flex: 0 1 auto; min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--fs-font-sans); font-size: var(--fs-font-size-ui); font-weight: 600; color: var(--fs-on-surface-heading); }
+  .position { flex: none; font-size: var(--fs-font-size-small); font-weight: 400; color: var(--fs-on-surface-muted); }
+  .stage { flex: 1 1 auto; display: grid; grid-template-columns: var(--fs-space-4) 2.5rem 3.5rem minmax(0, 1fr) 3.5rem 2.5rem var(--fs-space-4); grid-template-rows: 2.3125rem minmax(0, 1fr) 3.5rem 14.25rem; min-width: 0; min-height: 0; }
+  .stage fs-file-preview { grid-column: 4; grid-row: 2 / 4; }
+  .step { grid-row: 2; align-self: center; display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; inline-size: 2.5rem; block-size: 2.5rem; padding: 0; border: 1px solid var(--fs-outline); border-radius: var(--fs-radius-pill); background: var(--fs-surface-card); color: var(--fs-icon); cursor: pointer; }
+  .step.previous { grid-column: 2; }
+  .step.next { grid-column: 6; }
+  .step[aria-disabled="true"] { color: var(--fs-icon-disabled); cursor: default; }
+  @media (max-width: 40rem), (max-height: 40rem) {
+    .stage { grid-template-columns: var(--fs-space-2) 2.5rem var(--fs-space-2) minmax(0, 1fr) var(--fs-space-2) 2.5rem var(--fs-space-2); grid-template-rows: var(--fs-space-3) minmax(0, 1fr) 3.5rem var(--fs-space-3); }
+  }
   [hidden] { display: none !important; }
 `;
 
@@ -217,22 +253,45 @@ function buildListing(labels: LabelTable): Frame["listing"] {
   return { element, drop, states, host, summary, more, limit };
 }
 
-/** The viewer with its header and preview. */
+/** A `type="button"` that shows only an icon and is named by `name` from the label table. */
+function iconButton(
+  className: string,
+  name: string,
+  glyph: IconName,
+  size: number,
+): HTMLButtonElement {
+  const out = node("button", className);
+  out.type = "button";
+  out.setAttribute("aria-label", name);
+  out.append(icon(glyph, size));
+  return out;
+}
+
+/**
+ * The viewer: the top bar of UI-S-031 (the UI-F2.2 header, completed) and the stage with the
+ * preview between the previous and next controls. No filmstrip (deferred, owner decision
+ * 2026-10-30) and no zoom control beyond Fit.
+ */
 function buildViewer(labels: LabelTable): Frame["viewer"] {
   const element = node("section", "viewer");
   element.hidden = true;
   element.setAttribute("aria-label", labels.filePreview);
-  const back = button("back", labels.fileBackToList);
+  const back = iconButton("back", labels.fileBackToList, "chevron-back", 16);
+  const collection = node("span", "collection");
+  collection.hidden = true;
+  const badge = node("span", "badge");
   const title = node("h2", "viewer-title");
   title.tabIndex = -1;
   const position = node("span", "position");
-  const previous = button("previous", labels.filePrevious);
-  const next = button("next", labels.fileNext);
-  const header = document.createElement("header");
-  header.append(back, title, position, previous, next);
+  const header = node("header", "bar");
+  header.append(back, collection, badge, title, position);
+  const previous = iconButton("previous step", labels.filePrevious, "chevron-back", 20);
+  const next = iconButton("next step", labels.fileNext, "chevron", 20);
   const preview = document.createElement("fs-file-preview") as FsFilePreview;
-  element.append(header, preview);
-  return { element, back, title, position, previous, next, preview };
+  const stage = node("div", "stage");
+  stage.append(previous, preview, next);
+  element.append(header, stage);
+  return { element, back, collection, badge, title, position, previous, next, preview };
 }
 
 /**

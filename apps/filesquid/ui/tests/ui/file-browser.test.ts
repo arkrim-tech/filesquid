@@ -308,6 +308,126 @@ describe("<fs-file-browser> viewer", () => {
   });
 });
 
+describe("<fs-file-browser> preview top bar (UI-S-031, Task UI-F2.19)", () => {
+  it("completes the viewer header as the one bar: back, badge, display name and position", async () => {
+    const browser = await mount(fixture());
+    await click(control(browser, "facade-study.png"));
+    expect(all(browser, ".viewer header")).toHaveLength(1);
+    const bar = one(browser, ".viewer header.bar");
+    const parts = [...bar.children].map((child) => child.className.split(" ")[0]);
+    expect(parts).toEqual(["back", "collection", "badge", "viewer-title", "position"]);
+    const back = one(browser, "button.back");
+    expect(back.getAttribute("aria-label")).toBe(labels.fileBackToList);
+    expect(back.textContent).toBe("");
+    expect(back.querySelector("svg.icon-chevron-back")?.getAttribute("width")).toBe("16");
+    const badge = one(browser, ".viewer .badge");
+    expect(badge.textContent).toBe("PNG");
+    expect(badge.classList.contains("media")).toBe(true);
+    expect(one(browser, "h2.viewer-title").textContent).toBe("facade-study.png");
+    expect(one(browser, ".position").textContent).toBe("1 of 3");
+  });
+
+  it("gives the badge the class colours of UI-S-026, and none to a name without an extension", async () => {
+    const browser = await mount(
+      fixture([
+        { path: "3f9a0011.pdf", displayName: "tender.pdf", content: "%PDF" },
+        { path: "3f9a0012.csv", displayName: "levels.csv", content: "a,b" },
+        { path: "3f9a0013", displayName: "LICENCE", content: "text" },
+      ]),
+    );
+    const badgeOf = async (name: string) => {
+      await click(control(browser, name));
+      const badge = one(browser, ".viewer .badge");
+      const seen = [badge.className, badge.textContent];
+      await click(one(browser, "button.back"));
+      return seen;
+    };
+    expect(await badgeOf("tender.pdf")).toEqual(["badge document", "PDF"]);
+    expect(await badgeOf("levels.csv")).toEqual(["badge data", "CSV"]);
+    expect(await badgeOf("LICENCE")).toEqual(["badge", ""]);
+  });
+
+  it("leaves the collection out when the location names none, and never guesses one", async () => {
+    const browser = await mount(fixture());
+    await click(control(browser, "readme.txt"));
+    const collection = one(browser, ".viewer .collection");
+    expect(collection.hidden).toBe(true);
+    expect(collection.textContent).toBe("");
+    expect(deepText(one(browser, ".viewer header"))).not.toContain(labels.fileRoot);
+  });
+
+  it("names the collection the location gives, as data", async () => {
+    const browser = await mount(fixture(), {
+      location: { ...LOCATION, collection_id: "c1", collection_name: "<b>Harbour project</b>" },
+    });
+    await click(control(browser, "readme.txt"));
+    const collection = one(browser, ".viewer .collection");
+    expect(collection.hidden).toBe(false);
+    expect(collection.textContent).toBe("<b>Harbour project</b>");
+    expect(collection.querySelector("b")).toBeNull();
+  });
+
+  it("puts previous and next as round icon controls at the media's sides, named from the label table", async () => {
+    const browser = await mount(fixture());
+    await click(control(browser, "readme.txt"));
+    const stage = one(browser, ".viewer .stage");
+    const order = [...stage.children].map((child) => child.className || child.localName);
+    expect(order).toEqual(["previous step", "fs-file-preview", "next step"]);
+    const previous = one(browser, "button.previous");
+    const next = one(browser, "button.next");
+    expect(previous.getAttribute("aria-label")).toBe(labels.filePrevious);
+    expect(next.getAttribute("aria-label")).toBe(labels.fileNext);
+    expect(previous.querySelector("svg.icon-chevron-back")?.getAttribute("width")).toBe("20");
+    expect(next.querySelector("svg.icon-chevron")?.getAttribute("width")).toBe("20");
+    expect(one(browser, ".viewer header").contains(previous)).toBe(false);
+  });
+
+  it("draws no filmstrip and no zoom control beyond Fit", async () => {
+    const browser = await mount(fixture());
+    await click(control(browser, "facade-study.png"));
+    const viewer = one(browser, ".viewer");
+    expect(viewer.querySelector(".filmstrip, [data-filmstrip]")).toBeNull();
+    expect([...viewer.querySelectorAll("button")].map((b) => b.className)).toEqual([
+      "back",
+      "previous step",
+      "next step",
+    ]);
+  });
+
+  it("fills the content area while a file is shown and hides the folder's trail and toolbar", async () => {
+    const browser = await mount(fixture());
+    expect(browser.hasAttribute("viewing")).toBe(false);
+    await click(control(browser, "readme.txt"));
+    expect(browser.hasAttribute("viewing")).toBe(true);
+    const css = rootOf(browser).querySelector("style")?.textContent ?? "";
+    expect(css).toMatch(
+      /:host\(\[viewing\]\) fs-breadcrumb, :host\(\[viewing\]\) \.toolbar, :host\(\[viewing\]\) \.name-form \{ display: none; \}/,
+    );
+    await click(one(browser, "button.back"));
+    expect(browser.hasAttribute("viewing")).toBe(false);
+  });
+
+  it("styles the bar from tokens: 52 px card bar, 1 px outline line, the type of UI-S-024", async () => {
+    const browser = await mount(fixture());
+    const css = rootOf(browser).querySelector("style")?.textContent ?? "";
+    expect(css).toMatch(
+      /\.bar \{[^}]*block-size: 3\.25rem;[^}]*border-block-end: 1px solid var\(--fs-outline\);[^}]*background: var\(--fs-surface-card\)/,
+    );
+    expect(css).toMatch(
+      /\.collection \{[^}]*font-size: var\(--fs-font-size-small\);[^}]*color: var\(--fs-on-surface-variant\)/,
+    );
+    expect(css).toMatch(
+      /\.viewer-title \{[^}]*font-size: var\(--fs-font-size-ui\);[^}]*font-weight: 600;[^}]*color: var\(--fs-on-surface-heading\)/,
+    );
+    expect(css).toMatch(
+      /\.position \{[^}]*font-size: var\(--fs-font-size-small\);[^}]*color: var\(--fs-on-surface-muted\)/,
+    );
+    expect(css).toMatch(
+      /\.step \{[^}]*inline-size: 2\.5rem;[^}]*block-size: 2\.5rem;[^}]*border: 1px solid var\(--fs-outline\);[^}]*border-radius: var\(--fs-radius-pill\);[^}]*background: var\(--fs-surface-card\)/,
+    );
+  });
+});
+
 describe("<fs-file-browser> loads and objects", () => {
   it("does not report a load that was aborted by leaving the document as a failure", async () => {
     const source = fixture();

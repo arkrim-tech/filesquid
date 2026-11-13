@@ -6,7 +6,9 @@
  * 64 KiB. A file no renderer accepts gets the unsupported treatment of UI-S-031 (mockup
  * `resources/ui-mockups/v3/24-preview-unsupported.svg`): its file-type badge, `fileNoPreview`
  * as a 22 px heading, `fileNoPreviewKeep` and `fileNoPreviewOpenElsewhere`, and never a broken
- * viewer. Loading, error, offline and permission denied use `<fs-states>` with Try again.
+ * viewer. Loading, error, offline and permission denied use `<fs-states>` with Try again. An
+ * image is fitted in the media box on `--fs-surface-raised` with the 8 px `--fs-radius` corner,
+ * with the zoom chip of UI-S-031 under it (Task UI-F2.19).
  *
  * The element never fetches by itself: the {@link FileSource} it is given does. Its `data-state`
  * is `empty`, `loading`, `ready`, `unsupported`, `error`, `offline` or `denied`.
@@ -43,15 +45,28 @@ export interface FilePreviewOptions {
   online?: () => boolean;
 }
 
+/*
+ * Layout (mockup 22, Task UI-F2.19): the host fills the area it is given; a figure is a grid of
+ * the media box, a 20 px gap and the 36 px row of the zoom chip (or a text note), so the media
+ * is fitted inside the box with its aspect ratio kept and the chip sits under it.
+ */
 const STYLE = `
-  :host { display: block; min-width: 0; font-family: var(--fs-font-sans); font-size: var(--fs-font-size-ui); color: var(--fs-on-surface); }
+  :host { display: flex; flex-direction: column; justify-content: center; min-width: 0; min-height: 0; font-family: var(--fs-font-sans); font-size: var(--fs-font-size-ui); color: var(--fs-on-surface); }
   :host([hidden]) { display: none; }
-  figure { display: flex; flex-direction: column; align-items: center; gap: var(--fs-space-2); margin: 0; min-width: 0; }
-  img, video { max-inline-size: 100%; max-block-size: 70vh; border-radius: var(--fs-radius); background: var(--fs-surface-raised); }
+  figure { flex: 1 1 auto; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) 1.25rem 2.25rem; justify-items: center; align-items: center; margin: 0; min-width: 0; min-height: 0; }
+  figure > img, figure > video, figure > audio, figure > pre, figure > .media-error { grid-row: 1; grid-column: 1; min-width: 0; min-height: 0; }
+  figure > .zoom, figure > .note { grid-row: 3; }
+  img, video { max-inline-size: 100%; max-block-size: 100%; border-radius: var(--fs-radius); background: var(--fs-surface-raised); }
   audio { inline-size: 100%; }
-  pre { box-sizing: border-box; inline-size: 100%; max-block-size: 70vh; margin: 0; padding: var(--fs-space-3); overflow: auto; border: 1px solid var(--fs-outline); border-radius: var(--fs-radius); background: var(--fs-surface-raised); font-family: var(--fs-font-mono); font-size: var(--fs-font-size-small); white-space: pre-wrap; overflow-wrap: anywhere; }
+  pre { box-sizing: border-box; align-self: stretch; inline-size: 100%; max-block-size: 100%; margin: 0; padding: var(--fs-space-3); overflow: auto; border: 1px solid var(--fs-outline); border-radius: var(--fs-radius); background: var(--fs-surface-raised); font-family: var(--fs-font-mono); font-size: var(--fs-font-size-small); white-space: pre-wrap; overflow-wrap: anywhere; }
   .note { margin: 0; color: var(--fs-on-surface-variant); font-size: var(--fs-font-size-small); }
   .media-error { margin: 0; color: var(--fs-error); font-weight: 600; overflow-wrap: anywhere; }
+  .zoom { display: inline-flex; align-items: center; gap: var(--fs-space-3); box-sizing: border-box; block-size: 2.25rem; padding: 0 var(--fs-space-3); border: 1px solid var(--fs-outline); border-radius: var(--fs-radius-pill); background: var(--fs-surface-card); font-size: var(--fs-font-size-small); white-space: nowrap; }
+  .fit { font-weight: 500; color: var(--fs-on-surface); }
+  .loading { font-weight: 400; color: var(--fs-on-surface-muted); }
+  .progress { position: relative; display: block; inline-size: 5.75rem; block-size: 0.1875rem; border-radius: var(--fs-radius-pill); background: var(--fs-outline); overflow: hidden; }
+  .progress-fill { position: absolute; inset-block: 0; inset-inline-start: 0; inline-size: 60%; border-radius: var(--fs-radius-pill); background: var(--fs-primary); animation: fs-zoom-progress calc(var(--fs-motion-duration) * 8) linear infinite; }
+  @keyframes fs-zoom-progress { from { transform: translateX(-100%); } to { transform: translateX(170%); } }
   .unsupported { display: flex; flex-direction: column; align-items: center; gap: var(--fs-space-2); box-sizing: border-box; max-inline-size: 27.5rem; margin: 0 auto; padding: var(--fs-space-5) var(--fs-space-4); border: 1px solid var(--fs-outline); border-radius: var(--fs-radius-dialog); background: var(--fs-surface-card); text-align: center; }
   .unsupported .title { margin: var(--fs-space-2) 0 0; font-family: var(--fs-font-heading); font-size: var(--fs-font-size-heading); font-weight: 700; color: var(--fs-on-surface-heading); }
   .unsupported .help { margin: 0; color: var(--fs-on-surface); font-size: var(--fs-font-size-ui); }
