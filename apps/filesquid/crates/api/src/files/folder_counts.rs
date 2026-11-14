@@ -15,9 +15,10 @@ use super::drive::{FolderRow, ViewRow, MAX_VIEW_FILES};
 use super::drive_scope::{file_scope, read_bounded};
 use super::error::FileError;
 use crate::auth::Principal;
-use crate::library::{FileListing, VisibilityFilter};
+use crate::library::{FileListing, FileScope, VisibilityFilter};
 use crate::navigation::{NavigationService, NodeRef};
-use filesquid_core::FileId;
+use crate::ErrorCode;
+use filesquid_core::{FileId, LibraryId};
 
 /// The files beneath one folder row, as the catalog lists them.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -93,8 +94,10 @@ fn list_folder(
         complete: false,
     };
     let catalog = navigation.catalog().as_ref();
-    let scope = NodeRef::from_handle(handle).map(|node| file_scope(catalog, &node));
-    let Some(Ok((library_id, scope))) = scope else {
+    let Some(node) = NodeRef::from_handle(handle) else {
+        return Ok(unlisted);
+    };
+    let Some((library_id, scope)) = listable(file_scope(catalog, &node))? else {
         return Ok(unlisted);
     };
     let listing = FileListing {
@@ -123,6 +126,21 @@ fn list_folder(
     })
 }
 
+/// The library and scope of a folder row, `None` for a node that no longer exists or is no
+/// collection or virtual collection (its count is then incomplete), or the catalog failure,
+/// which fails the answer as it would any other read. Pure.
+fn listable(
+    scope: Result<(LibraryId, FileScope), FileError>,
+) -> Result<Option<(LibraryId, FileScope)>, FileError> {
+    match scope {
+        Ok(found) => Ok(Some(found)),
+        Err(err) if matches!(err.code(), ErrorCode::NotFound | ErrorCode::InvalidRequest) => {
+            Ok(None)
+        }
+        Err(err) => Err(err),
+    }
+}
+
 /// Write `count` into the folder row at `row` of `rows`; any other row is left as it is.
 /// Pure.
 pub fn apply_count(rows: &mut [ViewRow], row: usize, count: FolderCount) {
@@ -142,6 +160,22 @@ fn set_count(folder: &mut FolderRow, count: FolderCount) {
 mod tests {
     use super::*;
     use crate::files::drive::{FolderKind, FolderRow};
+
+    #[test]
+    fn a_missing_or_other_node_is_unlisted_but_a_catalog_failure_fails_the_count() {
+        let scope = || (LibraryId::new("lib").expect("id"), FileScope::Library);
+        assert!(listable(Ok(scope())).expect("ok").is_some());
+        assert!(listable(Err(FileError::not_found()))
+            .expect("unlisted")
+            .is_none());
+        assert!(listable(Err(FileError::invalid("other kind")))
+            .expect("unlisted")
+            .is_none());
+        let down = listable(Err(FileError::unavailable("catalog down"))).expect_err("fails");
+        assert_eq!(down.code(), crate::ErrorCode::Unavailable);
+        let broken = listable(Err(FileError::internal("catalog broken"))).expect_err("fails");
+        assert_eq!(broken.code(), crate::ErrorCode::Internal);
+    }
 
     #[test]
     fn only_folder_rows_are_counted_and_a_count_lands_on_its_own_row() {

@@ -131,6 +131,9 @@ pub fn view_scope(
         true => (Vec::new(), true),
         false => list_files(catalog, &listing, MAX_VIEW_FILES)?,
     };
+    // A virtual collection's members can live in collections the caller may not read: such
+    // a member is left out before its home collection's title is read.
+    let entries = readable_entries(navigation, principal, entries);
     let library = library_files(catalog, &library_id, entries, deleted_view, home)?;
     Ok(ViewScope {
         libraries: vec![library],

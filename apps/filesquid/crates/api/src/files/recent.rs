@@ -112,9 +112,10 @@ pub fn recent_scope(
     let (targets, mut complete) = targets(navigation, principal, node)?;
     let mut scope = RecentScope::default();
     for target in targets {
-        let hits = latest_actions(store, principal.actor(), target.library_id.as_str())?;
+        let (hits, read_all) =
+            latest_actions(store, principal.actor(), target.library_id.as_str())?;
         let (library, all) = recent_library(navigation, principal, &target, hits, MAX_VIEW_FILES)?;
-        complete &= all;
+        complete &= read_all && all;
         scope.libraries.push(library);
         // Keep the newest actions across the libraries read so far, so the bound never
         // prefers an earlier library's older actions to a later library's newer ones, and
@@ -210,12 +211,13 @@ fn targets(
 }
 
 /// The latest action of `actor` on each file object of `library_id`, newest first, from at
-/// most [`MAX_JOURNAL_PAGES`] pages of the actor's own succeeded entries.
+/// most [`MAX_JOURNAL_PAGES`] pages of the actor's own succeeded entries, and false when the
+/// page bound stopped the read with older entries left unread.
 fn latest_actions(
     store: &dyn JournalStore,
     actor: &str,
     library_id: &str,
-) -> Result<Vec<(String, RecentHit)>, FileError> {
+) -> Result<(Vec<(String, RecentHit)>, bool), FileError> {
     let mut query = JournalQuery {
         actor: Some(actor.to_string()),
         library_id: Some(library_id.to_string()),
@@ -226,6 +228,7 @@ fn latest_actions(
     };
     let mut seen: HashMap<String, usize> = HashMap::new();
     let mut hits: Vec<(String, RecentHit)> = Vec::new();
+    let mut read_all = false;
     for _ in 0..MAX_JOURNAL_PAGES {
         let page = store
             .query(&query)
@@ -241,11 +244,14 @@ fn latest_actions(
         }
         match page.next_cursor {
             Some(next) => query.after_id = Some(next),
-            None => break,
+            None => {
+                read_all = true;
+                break;
+            }
         }
     }
     hits.sort_by_key(|hit| std::cmp::Reverse(hit.1.time_ms));
-    Ok(hits)
+    Ok((hits, read_all))
 }
 
 /// Keep the action `operation` at `time` as the latest one on the file object `targets`

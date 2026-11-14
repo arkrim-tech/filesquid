@@ -12,10 +12,26 @@ mod drive_catalog;
 
 use axum::http::StatusCode;
 use drive_catalog::{DriveCatalog, COLLECTION, COLLECTION_TITLE, REPOSITORY, VIRTUAL_TITLE};
-use files_fixture::{encode, upload_facts, Answer, FilesRig, LIBRARY};
+use files_fixture::{encode, upload_facts, Answer, FilesRig, LIBRARY, START_MS};
+use filesquid_api::auth::Principal;
+use filesquid_api::files::drive::MAX_VIEW_FILES;
+use filesquid_api::files::folder_counts::folder_files;
 use filesquid_api::journal::{JournalEntry, JournalStore, Outcome};
-use filesquid_api::navigation::NodeRef;
-use filesquid_core::RepositoryId;
+use filesquid_api::navigation::{NavigationAccess, NodeRef};
+use filesquid_core::{CollectionId, RepositoryId};
+use std::sync::Arc;
+
+/// A collection of the library that [`NotWork`] keeps from the caller.
+const WORK: &str = "4e2f3a4b-5c6d-4e7f-8a9b-0c1d2e3f4a5b";
+
+/// Every node readable but the collection [`WORK`].
+struct NotWork;
+
+impl NavigationAccess for NotWork {
+    fn may_read(&self, _principal: &Principal, node: &NodeRef) -> bool {
+        *node != NodeRef::Collection(CollectionId::new(WORK).expect("id"))
+    }
+}
 use serde_json::{json, Value};
 
 /// A rig whose API state also has the seeded catalog's navigation service.
@@ -242,20 +258,55 @@ async fn an_unreadable_file_marks_its_folder_count_incomplete() {
 
 #[tokio::test]
 async fn a_folder_count_stopped_by_the_view_bound_says_so() {
-    let (rig, drive) = rig().await;
-    // More catalog entries than one view may count: the count stops at the bound.
+    // The count is bounded before any file is read: 10,001 catalog entries are listed, at
+    // most 10,000 are kept for the first folder, and no room is left for the next one.
+    let (_rig, drive) = rig().await;
     for n in 0..10_001 {
         drive.file_in_collection(&format!("0c0c0c0c-1111-4222-8333-{n:012}"));
     }
     drive.add_to_virtual("0c0c0c0c-1111-4222-8333-000000000000");
-    let listed = rows(&view(&rig, &drive.library_node(), "").await);
-    let collection = row(&listed, COLLECTION_TITLE);
-    assert_eq!(collection["count_complete"], false);
-    let favourites = row(&listed, VIRTUAL_TITLE);
+    let nodes = vec![(0, drive.collection_node()), (1, drive.virtual_node())];
+    let navigation = drive.navigation.clone();
+    let read = move || folder_files(&navigation, &Principal::Owner, &nodes);
+    let folders = tokio::task::spawn_blocking(read)
+        .await
+        .expect("task")
+        .expect("listed");
     assert_eq!(
-        favourites["count_complete"], false,
-        "the bound is one view's, so no room is left for the next folder"
+        folders[0].files.len(),
+        MAX_VIEW_FILES,
+        "stopped at the bound"
     );
+    assert!(!folders[0].complete, "the bound stopped the first count");
+    assert!(folders[1].files.is_empty(), "no room is left");
+    assert!(
+        !folders[1].complete,
+        "so the second count is incomplete too"
+    );
+}
+
+#[tokio::test]
+async fn a_view_leaves_out_members_whose_home_collection_the_caller_may_not_read() {
+    let rig = FilesRig::new().await;
+    let drive = DriveCatalog::with_access(LIBRARY, Arc::new(NotWork));
+    assert!(rig.state.install_navigation(drive.navigation.clone()));
+    let seen = in_collection(&rig, &drive, "seen.jpg", b"1234").await;
+    let hidden = upload(&rig, "hidden.jpg", b"12").await;
+    drive.file_in_new_collection(&hidden, WORK, "Work");
+    drive.add_to_virtual(&seen);
+    drive.add_to_virtual(&hidden);
+    let members = rows(&view(&rig, &drive.virtual_node(), "").await);
+    let names: Vec<&str> = members
+        .iter()
+        .filter_map(|row| row["display_name"].as_str())
+        .collect();
+    assert_eq!(
+        names,
+        ["seen.jpg"],
+        "a member in an unreadable collection is left out"
+    );
+    let text = format!("{members:?}");
+    assert!(!text.contains("Work") && !text.contains(WORK), "{text}");
 }
 
 // ---- Recent ----
@@ -394,6 +445,33 @@ async fn recent_is_refused_for_nodes_it_does_not_cover_and_other_views_still_wai
         all_of_repository.status,
         StatusCode::BAD_REQUEST,
         "only Recent covers the repository node"
+    );
+}
+
+#[tokio::test]
+async fn the_recent_view_says_incomplete_when_its_journal_page_bound_cut_it_off() {
+    let (rig, drive) = rig().await;
+    let old = in_collection(&rig, &drive, "old.jpg", b"1234").await;
+    rig.monitor.journal().flush();
+    // More of the caller's own newer entries than the 20 pages of 1,000 the view reads.
+    let object = format!("urn:uuid:{old}");
+    let filler: Vec<JournalEntry> = (0..20_001)
+        .map(|n| {
+            let mut entry = JournalEntry::new("files.label", Outcome::Succeeded)
+                .actor("owner")
+                .target(LIBRARY)
+                .target(object.as_str());
+            entry.time_ms = START_MS + 10_000_000 + n;
+            entry
+        })
+        .collect();
+    rig.journal.append(&filler).expect("append");
+    let page = view(&rig, &repository_node(), "&view=recent").await;
+    assert_eq!(page.status, StatusCode::OK, "{:?}", page.json());
+    assert_eq!(
+        page.json()["complete"],
+        false,
+        "the page bound left the caller's older actions unread"
     );
 }
 
