@@ -181,7 +181,7 @@ $ curl -H "Authorization: Bearer $TOKEN" "http://127.0.0.1:8083/api/v1/journal?a
 
 ## Sync Execution Report
 
-No upstream requirement changed: API-S-031, SRS-F-061 and ADR 033 already state the route. Updated in this change: the crate `plan.md` row, the root `resources/implementation-plan-checklist.md` box and MVP progress, the root `README.md` "View logs" section, the contract and the generated UI types.
+No upstream requirement changed: API-S-031, SRS-F-061 and ADR 033 already state the route. Updated in this change: the crate `plan.md` row; API-F2.27 was the last open row of global Task FS-2.4, so the Task FS-2.4 box in `resources/implementation-plan.md` and its row and module box in `resources/implementation-plan-checklist.md` are ticked, with the MVP progress redrawn; the root `README.md` "View logs" section, the contract and the generated UI types.
 
 ## Routes the UI can now call
 
