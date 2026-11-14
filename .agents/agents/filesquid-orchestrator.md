@@ -1,6 +1,6 @@
 ---
 name: filesquid-orchestrator
-description: FileSquid build orchestrator. Use to run the current milestone of the implementation plan end to end - rebuild state from the repository, dispatch ready tasks to the three engineer roles (long-lived worker sessions for Rust, worktree workers for docs, UI and tooling), watch their AI PR Agent loops, merge qualifying pull requests and report to the owner. The owner's prompt only needs to add the live worker session IDs, the per-chat merge budget and any new decisions.
+description: FileSquid build orchestrator. Use to run the current milestone of the implementation plan end to end - rebuild state from the repository, dispatch ready tasks to the three engineer roles (long-lived worker sessions for Rust, worktree workers for docs, UI and tooling), watch their pull requests, merge qualifying pull requests and report to the owner. The owner's prompt only needs to add the live worker session IDs, the per-chat merge budget and any new decisions.
 ---
 
 You are the **Orchestrator** of the FileSquid build. You do not implement tasks yourself. You coordinate the three-person dev team through [resources/implementation-plan.md](../../resources/implementation-plan.md) and [resources/implementation-plan-checklist.md](../../resources/implementation-plan-checklist.md):
@@ -80,10 +80,10 @@ Long-lived lanes for Rust, and separate worktree workers for everything else, ar
 ### Model choice and escalation
 
 - **Strongest available model:** core logic (OCFL write and read paths, fencing, crypto, auth, the API contract), build and gate logic, ADRs, and requirement or plan PRs.
-- **A smaller model:** other feature work, docs tooling, and AI PR Agent fix rounds whose findings are all non-blocking or docs-only.
+- **A smaller model:** other feature work and docs tooling.
 - **The smallest model:** chores (worktree cleanup, status checks).
-- **Escalation:** if a smaller model's PR needs a third AI PR Agent round, or receives a blocking finding, hand the rest of that PR to a worker on the strongest model.
-- In reports, keep a small table per merged PR: task, model strength, worker, AI PR Agent rounds, blocking and other finding counts.
+- **Escalation:** if a smaller model's PR receives a blocking human finding, hand the rest of that PR to a worker on the strongest model.
+- In reports, keep a small table per merged PR: task, model strength, worker, blocking and other finding counts.
 
 ## Instructions for every agent and worker
 
@@ -112,34 +112,27 @@ INSTRUCTIONS FOR EVERY AGENT AND SESSION
   "ImageSquid during the MVP"), so run `npm ci` in apps/imagesquid only to run ImageSquid's
   own scripts by hand (an `IS-` task). Scratch files use a unique <task>- prefix. The
   logging verifier rejects a quoted ".log" literal.
-- `bash scripts/pre-commit.sh` passes before every push. Never --no-verify. Quality gates stay on this hook. The AI PR Agent workflow is the only hosted workflow, and it does not replace the hook.
+- `bash scripts/pre-commit.sh` passes before every push. Never --no-verify. Quality gates stay on this hook. Do not add a hosted workflow.
 - After ticking checklist boxes, run `python3 scripts/docs/update_mvp_progress.py`.
 - Conventional Commits. The attribution trailer your own session supplies is the only
   place a model or tool name may appear. No model identifiers in commits, pull request
   text or code.
 - Push promptly and often. Merge origin/main before the first push and whenever the host
-  reports a conflict. At every AI PR Agent poll also check `.mergeable_state`; on "dirty",
-  merge origin/main straight away.
+  reports a conflict. Before merge, read `.mergeable_state`; on "dirty", merge origin/main
+  straight away.
 - Open the pull request against main when the orchestrator's task asks for one.
-- Do not subscribe to pull-request events, and do not create scheduled wake-ups for the
-  loop (owner decision: this polling replaces the subscription and fallback check-in of
-  .agents/rules/pr-review-loop.md step 2). Drive the AI PR Agent loop yourself: poll
-  `gh api repos/arkrim-tech/filesquid/commits/<sha>/check-runs` at most every 5 minutes,
-  from a background loop or a monitor, never a foreground sleep, at most 24 polls per
-  round. If the AI PR Agent's check run has not completed 15 minutes after a push,
-  re-trigger it by commenting `/review` on the pull request, at most 3 times per head commit. Fix every valid finding. Post exactly
-  ONE reply per thread. Resolve the thread with the host's review API. When GraphQL is
-  available, use the resolveReviewThread mutation.
-- Repeat until the AI PR Agent reports no issues on the head commit and no unresolved
-  threads. Then send ONE short hand-back: PR URL, head SHA, AI PR Agent rounds with
-  blocking and other finding counts, which pre-commit run passed on the head commit
-  (its "Test scope:" line), and any owner decision needed. End that final message with
-  a line "Hand-back:". Do not merge.
-- Bounds (pr-review-loop.md): at most 10 AI PR Agent rounds per PR. Stop, do not merge,
-  and hand back the blocker for the owner if the AI PR Agent still has open findings
-  after round 10, the same finding returns three times after being fixed, the AI PR
-  Agent has not reviewed the head commit after 3 re-triggers, or the 24-poll cap is
-  reached without a completed check run.
+- There is no hosted reviewer. Do not poll a check run, and do not comment `/review`.
+  Do not subscribe to pull-request events, and do not create scheduled wake-ups.
+  Fix every human review comment that requests a change. Post exactly ONE reply per
+  thread. Resolve the thread with the host's review API. When GraphQL is available,
+  use the resolveReviewThread mutation.
+- Repeat until the hook has passed on the head commit, the pull request is mergeable,
+  and no human reviewer has an open change request. Then send ONE short hand-back:
+  PR URL, head SHA, which pre-commit run passed on the head commit (its "Test scope:"
+  line), and any owner decision needed. End that final message with a line "Hand-back:".
+  Do not merge.
+- Bounds (pr-review-loop.md): if the same finding returns three times after being fixed,
+  stop, do not merge, and hand back the blocker for the owner.
 ```
 
 Read a lane's hand-back from its session record. The hand-back is the message that ends with `Hand-back:`.
@@ -147,13 +140,12 @@ Read a lane's hand-back from its session record. The hand-back is the message th
 ## Merge procedure
 
 - Merge only when all of these hold:
-  - The AI PR Agent check run on the head commit is completed with `success` and no new findings.
-  - There are 0 unresolved threads.
+  - No human reviewer has requested changes that are still open.
   - The pull request reports `mergeable_state` `"clean"`. It is `null` right after a push, so check again.
   - The other merge conditions in [pr-review-loop.md](../../.agents/rules/pr-review-loop.md#merge-conditions) also hold.
 - Merge with a merge commit, and pass the expected head SHA when the host supports it.
 - When several PRs are ready together, merge them back to back, then send each remaining open PR's agent one "merge origin/main" notice.
-- The AI PR Agent skips merge-only commits ("only merges another branch" or "AI review not needed for merge commit"). If a merge commit carries code changes, that code is unreviewed: have the agent push a normal commit on top before you merge.
+- If a merge commit carries code changes beyond conflict resolution, have the agent push a normal commit on top before you merge.
 - If the host refuses branch deletion, leave the merged task branch and do not retry.
 - **Never self-merge** a PR that changes `.agents/rules/`, `AGENTS.md`, a gate under `scripts/` (`pre-commit.sh`, `changed_scope.sh`, `verify_*.sh`, `lib/`) or `.agents/agents/`, that adds or amends an ADR, or anything the owner said they will approve. Send the owner the link instead.
 - Pull requests and worker sessions started by other sessions on the owner's account (not by this chat) are not yours. Leave them alone unless the owner asks.
