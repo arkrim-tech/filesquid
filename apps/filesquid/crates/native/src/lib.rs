@@ -45,6 +45,8 @@
 pub mod catalog;
 pub mod files;
 pub mod findings_sqlite;
+#[cfg(feature = "desktop")]
+pub mod folder_names;
 pub mod host_checks;
 pub mod host_monitor;
 #[cfg(feature = "desktop")]

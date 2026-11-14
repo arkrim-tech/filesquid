@@ -64,9 +64,10 @@ mod transfer;
 pub use commands::{LibraryCommands, MAX_OPEN_LIBRARIES};
 pub use error::LocalLibraryError;
 pub use facts::{
-    check_name, FreeBytesReason, FreeSpace, LibraryFacts, LibraryRegistry, MemoryLibraryRegistry,
-    RecentLibraries, RecentLibrary, RegistryBook, RegistryEntry, RenameLibraryRequest,
-    MAX_LIBRARY_NAME_BYTES, MAX_RECENT_LIBRARIES, MAX_REMEMBERED_LIBRARIES, UNTITLED_LIBRARY,
+    check_name, FactsReading, FolderNames, FreeBytesReason, FreeSpace, LibraryFacts,
+    LibraryRegistry, MemoryLibraryRegistry, RecentLibraries, RecentLibrary, RegistryBook,
+    RegistryEntry, RenameLibraryRequest, MAX_LIBRARY_NAME_BYTES, MAX_RECENT_LIBRARIES,
+    MAX_REMEMBERED_LIBRARIES, UNTITLED_LIBRARY,
 };
 pub use journal_rebuild::{JournalRebuild, JournalRestore, MAX_RESTORED_ENTRIES, RESTORE_BATCH};
 pub use ledger::{LedgerError, MemoryRepairLedger, RecordedRepair, RepairLedger, RepairRecord};

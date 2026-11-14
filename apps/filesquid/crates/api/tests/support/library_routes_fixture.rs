@@ -16,7 +16,7 @@ use filesquid_api::auth::{Authoriser, LaunchToken};
 use filesquid_api::jobs::{Jobs, MemoryJobStore};
 use filesquid_api::journal::{JournalEntry, JournalQuery, JournalStore, MemoryJournal, MAX_PAGE};
 use filesquid_api::local_library::{
-    FreeSpace, LibraryCommands, LibraryLocations, LibraryRoot, LocalLibraryService,
+    FolderNames, FreeSpace, LibraryCommands, LibraryLocations, LibraryRoot, LocalLibraryService,
     MemoryLibraryRegistry, MemoryRepairLedger, RebuildRunner, CONSENT_STATEMENT_ID,
     REBUILD_JOB_KIND,
 };
@@ -253,6 +253,10 @@ pub struct LibraryRig {
     pub registry: Arc<MemoryLibraryRegistry>,
     /// The free space each location reports; 1,000,000 bytes when not set.
     pub free: Arc<Mutex<HashMap<String, FreeSpace>>>,
+    /// The folder and volume names each location reports on the desktop mount (API-S-034);
+    /// none when not set. The server mount's registry reads no names, as every host but the
+    /// desktop.
+    pub names: Arc<Mutex<HashMap<String, FolderNames>>>,
     /// The API state the router serves.
     pub state: ApiState,
     /// The caller's token.
@@ -343,13 +347,22 @@ impl LibraryRig {
             .with_clock(Arc::new(move || now.now()));
         let free: Arc<Mutex<HashMap<String, FreeSpace>>> = Arc::default();
         let reported = free.clone();
-        let registry = Arc::new(MemoryLibraryRegistry::new(move |location: &str| {
+        let registry = MemoryLibraryRegistry::new(move |location: &str| {
             let reported = reported.lock().expect("free space");
             reported
                 .get(location)
                 .cloned()
                 .unwrap_or(FreeSpace::Bytes(1_000_000))
-        }));
+        });
+        let names: Arc<Mutex<HashMap<String, FolderNames>>> = Arc::default();
+        let read = names.clone();
+        let registry = Arc::new(match mount {
+            Mount::Desktop => registry.with_folder_names(move |location: &str| {
+                let read = read.lock().expect("names");
+                read.get(location).cloned().unwrap_or_default()
+            }),
+            Mount::Server => registry,
+        });
         let commands = LibraryCommands::new(service, locations.clone());
         let commands = Arc::new(match with_registry {
             true => commands.with_registry(registry.clone()),
@@ -371,6 +384,7 @@ impl LibraryRig {
             commands,
             registry,
             free,
+            names,
             state,
             token,
             journal,
