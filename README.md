@@ -158,7 +158,7 @@ Both produce `apps/filesquid/target/debug/filesquid-desktop`, branded by the ove
 
 ## Run tests
 
-Lint and tests do not run on GitHub Actions. The gate before every push is the local pre-commit hook. There is no hosted pull-request reviewer. On every commit it runs the fast verifiers under `scripts/`: branch protection and the `<type>/<slug>` branch-name prefix, ports, document sync, traceability, links, workspace boundaries, logging, formatting, documentation checks, and the change-scope helper's own tests. Then it runs Clippy, Cargo and UI tests **for what changed**. Run it by hand from the repository root, or install it once as the git hook:
+Lint and tests do not run on GitHub Actions. The gate before every push is the local pre-commit hook. CodeRabbit reviews pull requests as a GitHub App installed on the repository; it needs no workflow file and no repository secret, and it does not replace this hook. On every commit it runs the fast verifiers under `scripts/`: branch protection and the `<type>/<slug>` branch-name prefix, ports, document sync, traceability, links, workspace boundaries, logging, formatting, documentation checks, and the change-scope helper's own tests. Then it runs Clippy, Cargo and UI tests **for what changed**. Run it by hand from the repository root, or install it once as the git hook:
 
 ```sh
 bash scripts/pre-commit.sh                     # change-aware run (the normal commit gate)

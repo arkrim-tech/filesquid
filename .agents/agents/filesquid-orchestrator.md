@@ -118,21 +118,34 @@ INSTRUCTIONS FOR EVERY AGENT AND SESSION
   place a model or tool name may appear. No model identifiers in commits, pull request
   text or code.
 - Push promptly and often. Merge origin/main before the first push and whenever the host
-  reports a conflict. Before merge, read `.mergeable_state`; on "dirty", merge origin/main
-  straight away.
+  reports a conflict. At every CodeRabbit poll also check `.mergeable_state`; on "dirty",
+  merge origin/main straight away.
 - Open the pull request against main when the orchestrator's task asks for one.
-- There is no hosted reviewer. Do not poll a check run, and do not comment `/review`.
-  Do not subscribe to pull-request events, and do not create scheduled wake-ups.
-  Fix every human review comment that requests a change. Post exactly ONE reply per
-  thread. Resolve the thread with the host's review API. When GraphQL is available,
-  use the resolveReviewThread mutation.
-- Repeat until the hook has passed on the head commit, the pull request is mergeable,
-  and no human reviewer has an open change request. Then send ONE short hand-back:
-  PR URL, head SHA, which pre-commit run passed on the head commit (its "Test scope:"
-  line), and any owner decision needed. End that final message with a line "Hand-back:".
-  Do not merge.
-- Bounds (pr-review-loop.md): if the same finding returns three times after being fixed,
-  stop, do not merge, and hand back the blocker for the owner.
+- The reviewer is CodeRabbit, a GitHub App (.agents/rules/pr-review-loop.md). Do not
+  subscribe to pull-request events, and do not create scheduled wake-ups. Drive the
+  CodeRabbit loop yourself: poll
+  `gh api repos/arkrim-tech/filesquid/commits/<sha>/check-runs` for the check run named
+  `CodeRabbit`, at most every 5 minutes, from a background loop or a monitor, never a
+  foreground sleep, at most 24 polls per round. A completed check run counts only when
+  its conclusion is `success` and CodeRabbit does not report the review as skipped, rate
+  limited, paused or failed, or a changed file as left out. If it has not completed 15
+  minutes after a push, or completed without a review, re-trigger it by commenting
+  `@coderabbitai review`, at most 3 times per head commit. Never comment
+  `@coderabbitai resolve`, `approve`, `pause` or `ignore`, and never edit
+  `.coderabbit.yaml` to narrow the review. Fix every valid CodeRabbit finding and every
+  human review comment that requests a change. Post exactly ONE reply per thread.
+  Resolve the thread with the host's review API. When GraphQL is available, use the
+  resolveReviewThread mutation.
+- Repeat until CodeRabbit has reviewed the head commit, there are 0 unresolved
+  CodeRabbit threads, the hook has passed on the head commit, the pull request is
+  mergeable, and no human reviewer has an open change request. Then send ONE short
+  hand-back: PR URL, head SHA, CodeRabbit rounds with finding counts, which pre-commit
+  run passed on the head commit (its "Test scope:" line), and any owner decision
+  needed. End that final message with a line "Hand-back:". Do not merge.
+- Bounds (pr-review-loop.md): stop, do not merge, and hand back the blocker for the
+  owner if CodeRabbit still has open threads after round 10, the same finding returns
+  three times after being fixed, CodeRabbit has not reviewed the head commit after 3
+  re-triggers, or the 24-poll cap is reached without a review of the head commit.
 ```
 
 Read a lane's hand-back from its session record. The hand-back is the message that ends with `Hand-back:`.
@@ -140,6 +153,8 @@ Read a lane's hand-back from its session record. The hand-back is the message th
 ## Merge procedure
 
 - Merge only when all of these hold:
+  - CodeRabbit has reviewed the head commit: its `CodeRabbit` check run on that commit is completed with `success`, and it reports no skipped, rate-limited, paused or failed review and no changed file left out.
+  - There are 0 unresolved CodeRabbit threads.
   - No human reviewer has requested changes that are still open.
   - The pull request reports `mergeable_state` `"clean"`. It is `null` right after a push, so check again.
   - The other merge conditions in [pr-review-loop.md](../../.agents/rules/pr-review-loop.md#merge-conditions) also hold.
