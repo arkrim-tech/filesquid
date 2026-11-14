@@ -10,7 +10,7 @@ Task row: [API-F2.27](../plan.md). Global task: Task FS-2.4 ([implementation pla
 - **No admin route.** The admin routes keep `monitor.read`. A caller the policy does not grant it is still refused there (`forbidden`, `not_permitted`), and the refusal is journaled as `api.auth.denied`.
 - **Names.** Display names are resolved at read time through the host's `JournalNames` lookup for the caller, so a file the caller may not read carries no name. Names are never stored.
 - **Nothing new is journaled.** A successful read writes no journal entry (API-S-017), so the route adds no journal event type.
-- **Contract.** `openapi.json` 0.37.0 documents the path (`getOwnJournal`, `x-filesquid-action: journal.read_own`, the admin route's parameters without `actor`). `ui/src/api/schema.d.ts` and `ui/src/api/contract-version.ts` are regenerated with `npm run contract:types`; nothing else under `apps/filesquid/ui` changed.
+- **Contract.** `openapi.json` 0.38.0 documents the path (`getOwnJournal`, `x-filesquid-action: journal.read_own`, the admin route's parameters without `actor`). `ui/src/api/schema.d.ts` and `ui/src/api/contract-version.ts` are regenerated with `npm run contract:types`; nothing else under `apps/filesquid/ui` changed.
 - **Docs.** The root README "View logs" section shows the route and says what it answers.
 
 A caller who is not an administrator: server accounts arrive with API-F1.9, so the tests build that caller from the authoriser's other principal. "ana" is the owner principal under a policy that grants that principal nothing, and "ben" is the administrator (`tests/support/own_journal_fixture.rs`). The journal names each by its principal's actor.
