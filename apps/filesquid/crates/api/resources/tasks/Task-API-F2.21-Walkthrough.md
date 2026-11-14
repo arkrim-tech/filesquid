@@ -1,6 +1,6 @@
 # Task API-F2.21 Walkthrough: View and search row facts, the Recent view and destination identifiers
 
-Task row: [API-F2.21](../plan.md). Global task: Task FS-2.5 ([implementation plan](../../../../../../resources/implementation-plan.md)). Owner decisions of 2026-10-31, verbatim: "accept recommendations" (recommendations 2 and 14) and "well do a" (history bytes, option (a)). Contract: 0.37.0.
+Task row: [API-F2.21](../plan.md). Global task: Task FS-2.5 ([implementation plan](../../../../../../resources/implementation-plan.md)). Owner decisions of 2026-10-31, verbatim: "accept recommendations" (recommendations 2 and 14) and "well do a" (history bytes, option (a)). Contract: 0.39.0 (0.37.0 went to API-F2.30, PR #180, and 0.38.0 to API-F2.27, PR #186).
 
 ## Summary of changes
 
@@ -16,7 +16,7 @@ Task row: [API-F2.21](../plan.md). Global task: Task FS-2.5 ([implementation pla
 
 ## Readings made where the row left a choice
 
-Each is recorded in [API-S-011](../srs.md) as the implementer's reading for the owner to confirm.
+Each is recorded in [API-S-011](../srs.md). Owner decision 2026-11-14, verbatim: "Accept all three (Recommended)", the option "Merge as recorded. UI-F2.20 and UI-F2.17 build on these names next."
 
 1. **Which rows are folder rows.** The view lists a library, collection or virtual-collection node, and its folder rows are collections and virtual collections. Folders inside a collection are navigation nodes, not view rows. So the counts are on collection and virtual-collection rows, and the feature file's scenario was reworded from a folder "Trips" inside the collection to the collection's own row.
 2. **Which nodes Recent takes.** The repository (the sidebar's Recent), a library and a collection.
@@ -62,7 +62,7 @@ None.
 
 ## Sync Execution Report
 
-- `crates/api/openapi.json` 0.37.0 and `ui/src/api/schema.d.ts`, `ui/src/api/contract-version.ts`.
+- `crates/api/openapi.json` 0.39.0 and `ui/src/api/schema.d.ts`, `ui/src/api/contract-version.ts`.
 - `crates/api/resources/srs.md`: API-S-011 names the wire members and records the three readings.
 - `crates/api/resources/plan.md`, `resources/implementation-plan-checklist.md` and the MVP progress bar: API-F2.21 ticked.
 - No PRD, ADR or README change: no new environment variable, service, command or dependency.
