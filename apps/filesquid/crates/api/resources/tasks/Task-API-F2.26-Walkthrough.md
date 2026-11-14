@@ -10,7 +10,7 @@ Branch `feat/api-f2.26-streamed-copies`, module `filesquid-api` ([plan row](../p
 | [NFR-003](../../../../../../resources/prd.md#nfr-003-bounded-processing-and-migration-endurance) Bounded processing and migration endurance | `a_copy_above_512_mib_keeps_its_memory_bounded` (peak resident memory grows by at most 256 MiB while 600 MiB are copied), `a_copy_above_64_mib_streams_in_bounded_reads_and_writes` (no read above 8 MiB, no write above 64 MiB) |
 | [OCFL-S-026](../../../ocfl/resources/srs.md) Streamed stage of one logical file from a backend | used unchanged through `ChangeModel::stage_file`; the `ocfl` crate is not edited |
 | [API-S-026](../srs.md) FileSquid OCFL application profile: the copy's record cites the content its version holds | `a_copy_record_keeps_what_the_owner_sees_and_is_bound_to_the_new_object`, `a_small_copy_is_streamed_too_and_cites_its_content` |
-| [API-S-002](../srs.md) Versioned API contract owned by this crate | `unit_contract` (`API_VERSION` 0.38.0), the UI contract drift test in the hook |
+| [API-S-002](../srs.md) Versioned API contract owned by this crate | `unit_contract` (`API_VERSION` 0.40.0), the UI contract drift test in the hook |
 
 ## What changed
 
@@ -19,7 +19,7 @@ Branch `feat/api-f2.26-streamed-copies`, module `filesquid-api` ([plan row](../p
 - **Failures.** Any failure clears the new object's staging area. A stored original that changes between the stage's reads, or between the size read before and after the stage, is `409 conflict` with `source_changed` in the message; one that cannot be read is `409 conflict` with `source_unreadable`. Storage errors are logged, never answered, since they name a storage key.
 - **Record (`src/canonical/copy.rs`).** `copy_record` takes the content's SHA-256 and size (from the stage) and not the bytes.
 - **Hosts.** No host change. The copy lives in `filesquid-api`, so every host that mounts the router serves it. The desktop opens each library with a staging backend on disk under its data directory (`filesquid_native::open_fs_library_root`), so the staged bytes go there; `filesquid-server` mounts the same router and opens no file library yet (its file routes answer `not_found` until its library tasks open one with `filesquid_native::open_fs_library`, which also stages on disk), so on the server the copy is exercised through the router tests of this crate. An in-memory staging backend holds what it stages, as OCFL-S-026 documents.
-- **Contract 0.38.0.** The `copyFile` description states the streaming, the lock and the refusals; no schema changed. `ui/src/api/schema.d.ts` and `contract-version.ts` are regenerated.
+- **Contract 0.40.0.** The `copyFile` description states the streaming, the lock and the refusals; no schema changed. `ui/src/api/schema.d.ts` and `contract-version.ts` are regenerated.
 - **Docs.** API-S-011 states the stage, the lock and the failure rules; the README's "Run tests" names the new tests and their disk need; the plan row and the root checklist are ticked.
 - **Test fixtures.** `tests/support/files_fixture.rs`: the counting backend also records its largest read, largest write, bytes written and reads of at least 1 MiB, the service under test stages through it, and a read hook now runs outside the hook lock. `tests/integration/recently_deleted.rs` opens its second library on that staging backend (one line, a type change only). `tests/support/copy_fixture.rs` is new. The desktop `ImportRig` gains `command` and `install_home_collections`.
 
