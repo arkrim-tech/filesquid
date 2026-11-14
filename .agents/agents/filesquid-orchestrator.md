@@ -135,8 +135,9 @@ INSTRUCTIONS FOR EVERY AGENT AND SESSION
   first review.
 - Fix every CodeRabbit comment (actionable, nitpick and outside-diff alike) and every
   human review comment, or answer it with reasoning and evidence. Post exactly ONE reply
-  per thread, then resolve it with the host's review API (the GraphQL
-  resolveReviewThread mutation when GraphQL is available, else its REST route). Answer
+  per thread, then resolve it (the GraphQL resolveReviewThread mutation when GraphQL is
+  available, else the resolution route your environment provides, else ask the owner;
+  check `isResolved`, not the reply). Answer
   findings that have no thread in one PR comment per review. Leave a security finding you
   disagree with open for the owner. Push the fixes after the hook passes.
 - Repeat, as many rounds as needed, until CodeRabbit's latest review is of the head

@@ -41,7 +41,7 @@ Only the owner edits this section. It is updated after the owner's manual testin
    - `gh api --paginate repos/<owner>/<repo>/pulls/<n>/comments`: CodeRabbit's inline comments and its replies on threads.
    - `gh api --paginate repos/<owner>/<repo>/issues/<n>/comments`: CodeRabbit's summary comment and status notes.
 
-   These list endpoints return 30 items per page by default, so always pass `--paginate`.
+   These list endpoints return 30 items per page by default, so always pass `--paginate`. They do not show whether a review thread is resolved: read each thread's `isResolved` from the paginated GraphQL `reviewThreads` of the pull request when GraphQL is available, or from the thread listing the agent's environment provides where GraphQL is refused. A reply on a thread is not proof that it is resolved.
    - `gh api repos/<owner>/<repo>/pulls/<n>`: `mergeable_state`. When it is `dirty`, merge `main` into the branch straight away; that is a push, so the round starts again.
 
    Poll at most once every 5 minutes and at most 24 polls per round, from a background loop or a monitor tool, never a foreground `sleep`. Agents MUST NOT subscribe to PR activity or create scheduled triggers, wake-ups or check-ins for the loop (owner decision, 2026-10-18).
@@ -50,12 +50,12 @@ Only the owner edits this section. It is updated after the owner's manual testin
 3. **Fix every CodeRabbit comment.** Every finding counts: actionable inline comments, nitpicks and outside-diff comments (the last two sit in the review body, not in threads), and any CodeRabbit reply on a thread that asks for more. For each:
    - Fix it in code or documentation, following every other rule in `.agents/rules/` (TDD, lint, docs, links).
    - If the finding is wrong, answer it with the reasoning and evidence. Never dismiss a finding silently.
-   - Each thread gets exactly one reply: the fix commit or the reasoning. Then resolve the thread with the host's review API. When GraphQL is available, use the `resolveReviewThread` mutation; where it is refused, use the host's REST route for resolving a review thread. If the reviewer answers that reply with a new request or question, that is a new finding and gets one reply of its own.
+   - Each thread gets exactly one reply: the fix commit or the reasoning. Then resolve the thread with the host's review API. When GraphQL is available, use the `resolveReviewThread` mutation. GitHub documents no REST route for this, so where GraphQL is refused use the thread-resolution route or tool the agent's environment provides; if it provides none, ask the owner to resolve the thread in the GitHub UI. If the reviewer answers that reply with a new request or question, that is a new finding and gets one reply of its own.
    - Findings with no thread (nitpick and outside-diff comments) get one PR comment per review that answers each of them by name, with the fix commit or the reasoning.
    - If you disagree with a security finding, leave its thread open and ask the owner.
 
    Human review comments are handled the same way.
-4. **Push the fixes.** Rerun `bash scripts/pre-commit.sh` (its change-aware scope is enough for a fix commit), commit with Conventional Commits, and push to the same branch. Then reply on each thread you fixed, naming the commit, and resolve it.
+4. **Push the fixes.** Rerun `bash scripts/pre-commit.sh` (its change-aware scope is enough for a fix commit), commit with Conventional Commits, and push to the same branch. Push a round's fixes together: CodeRabbit reviews each push, and its review allowance per hour is limited (each review body states how many remain). Then reply on each thread you fixed, naming the commit, and resolve it.
 5. **Repeat** steps 2 to 4, as many rounds as needed, until CodeRabbit's latest review is of the head commit, it has no further comments, and no CodeRabbit thread is unresolved. The PR is then ready for human review to merge.
 
 CodeRabbit **has no further comments** when no finding from its review of the head commit, or from its replies since, is still open. A finding is closed when it was answered with reasoning in one reply (or, for a finding with no thread, in the PR comment of step 3) and its thread, if any, is resolved. A finding fixed in code needs a new commit, so a new head and a new CodeRabbit review. A finding answered without a code change needs no further commit or review.
