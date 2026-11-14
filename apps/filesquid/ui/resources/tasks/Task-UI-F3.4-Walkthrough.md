@@ -35,6 +35,15 @@ The holistic review came first ([holistic-ui.md](../../../../../.agents/rules/ho
 - The known gap is removed. `treeGap` is gone from `known-gap.ts`, `report.ts`, `20-browse.perf.spec.ts`, `70-load.perf.spec.ts` and `perf-known-gap.test.ts`, which now fails if any spec declares a gap. The KNOWN GAP comment is gone from the performance feature file, and the README paragraph and UI-S-035 say that no gap is declared.
 - `40-resources.perf.spec.ts` gains the tree's DOM bound on the Large catalog.
 
+## Decisions
+
+Two design changes come with the window, and both are owner decisions (2026-11-14, verbatim: "Accept both (Recommended)", the option "Fixed one-line rows and the flat ARIA tree are what let it draw only its window; the worker recorded both in UI-S-035."):
+
+- **Fixed one-line rows.** Every row is 1.875 rem (30 px at the default text size), so a scroll position names the rows in view by arithmetic. A name too long for the sidebar ends in an ellipsis, and its full text is the row's tooltip. Before this task a long name wrapped onto more lines.
+- **Flat ARIA tree.** A section's tree is one `ul[role=tree]`. Each item states its `aria-level`, `aria-setsize` and `aria-posinset`, and there is no nested `ul[role=group]` or `aria-owns`, because a window cannot hold a group whose parent is not drawn.
+
+Both are recorded in [UI-S-035](../srs.md).
+
 ## Tests
 
 ### Failing first
