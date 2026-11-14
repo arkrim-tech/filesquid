@@ -7,7 +7,7 @@ license: CC-BY
 
 # Local Verification
 
-**Purpose:** This rule enforces the "Local Verification" principle in `AGENTS.md`. FileSquid runs every quality gate on the developer's machine through `scripts/pre-commit.sh`. Hosted runners are slow and unreliable for those gates, so lint and tests stay local (owner decision, 2026-11-02, amending the 2026-10-17 ban on hosted CI). There is no hosted workflow (owner decision, 2026-11-14: the pull-request reviewer workflow was removed).
+**Purpose:** This rule enforces the "Local Verification" principle in `AGENTS.md`. FileSquid runs every quality gate on the developer's machine through `scripts/pre-commit.sh`. Hosted runners are slow and unreliable for those gates, so lint and tests stay local (owner decision, 2026-11-02, amending the 2026-10-17 ban on hosted CI). There is no hosted workflow (owner decision, 2026-11-14: the pull-request reviewer workflow was removed). The pull-request reviewer is now CodeRabbit, a GitHub App with no workflow file ([pr-review-loop.md](./pr-review-loop.md)).
 
 ## MUST NOT
 

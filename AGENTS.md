@@ -19,7 +19,7 @@
 - **Walkthrough Documentation:** When executing tests, the agent MUST copy the raw CLI output of the test runs into a permanent `apps/[Module Name]/resources/tasks/Task-[Task ID]-Walkthrough.md` file to provide immediate visual proof of passing tests, in addition to generating the structured test reports.
 - **Unit Test Traceability:** When code changes make a unit test obsolete or require modifications to the underlying implementation, the agent MUST explicitly update, refactor, or remove the corresponding unit tests to remain in sync with the source code.
 - **Strict Artifact Isolation:** This principle is tactically enforced on all AI agents via the instructions in `[artifact-isolation.md](./.agents/rules/artifact-isolation.md)`.
-- **PR Review Mandate:** Pull requests are opened against `main` and merged through [`pr-review-loop.md`](./.agents/rules/pr-review-loop.md). There is no hosted reviewer (owner decision, 2026-11-14: the AI PR Agent workflow was removed). Agents do not poll a check run and do not wait for a bot comment. Fix any human review comment that requests a change. For tasks inside the current milestone, agents MAY then merge their own PR into the main branch, and they stop for the owner's manual testing review once the milestone's gate task is merged. The owner sets each milestone in the "Current milestone" section of the rule.
+- **PR Review Mandate:** Pull requests are opened against `main` and merged through [`pr-review-loop.md`](./.agents/rules/pr-review-loop.md). Pull requests are reviewed by CodeRabbit, a GitHub App rather than a hosted workflow (owner decision, 2026-11-14). Agents fix or answer every CodeRabbit and human review comment, and the loop in that rule repeats until CodeRabbit has no further comments. For tasks inside the current milestone, agents MAY then merge their own PR into the main branch, and they stop for the owner's manual testing review once the milestone's gate task is merged. The owner sets each milestone in the "Current milestone" section of the rule.
 
 ## 2. Branch-Per-Task
 
@@ -43,7 +43,7 @@
 
 **Purpose:** Keep every quality gate fast, deterministic and under the developer's control. Lint and tests run locally through the repository's pre-commit hook before a push. GitHub Actions is slow and unreliable for those gates, so they stay local. There is no hosted workflow.
 
-- **Quality gates stay local:** Agents MUST NOT move lint, tests, or any other quality gate into GitHub Actions or any other hosted CI. A pull request needs the local hook, and human review where the review loop requires it.
+- **Quality gates stay local:** Agents MUST NOT move lint, tests, or any other quality gate into GitHub Actions or any other hosted CI. A pull request needs the local hook, the CodeRabbit review loop, and human review where the review loop requires it.
 - **No hosted workflow:** Do not add a GitHub Actions workflow or `.gitlab-ci.yml`. The pull-request reviewer workflow was removed on 2026-11-14. If a workflow appears, remove it.
 - **Pre-commit is the gate:** `scripts/pre-commit.sh` runs the branch, port, document-sync, traceability, link, workspace-boundary, logging, formatting, documentation and lint/test verifiers. A commit that fails the hook MUST NOT be pushed.
 - **Active Enforcement:** This principle is tactically enforced on all AI agents via the instructions in `[local-verification.md](./.agents/rules/local-verification.md)`.

@@ -44,7 +44,7 @@ Follow `.agents/rules/task-workflow.md` and the Shared agent prompt contract in 
 4. TSDoc (`/** ... */` with `@param`, `@returns`, `@throws`) on every exported module, custom element, client, adapter, loader and utility. Keep functions under 60 lines, flat, one job each; never swallow an error.
 5. Inside the package: `npx prettier --write .`, `npx eslint . --fix`, `npx tsc --noEmit`, `npm test`, and Playwright with `FILESQUID_E2E=1`. Reports go to `<package>/tests/`. Fix until all pass.
 6. Write `Task-<ID>-Walkthrough.md` with the SRS ID and full title at heading 2 and the raw test output. Delete the Plan and ToDos. Check the box in the package `plan.md` and the matching box in the repository-root `resources/implementation-plan-checklist.md` for a FileSquid `UI-` task (ImageSquid `IS-` rows are not listed there). When this task completes its global task, also check the global box in `resources/implementation-plan.md` and the matching global box in `resources/implementation-plan-checklist.md`.
-7. Update docs as `.agents/rules/pr-documentation-update.md` requires. Run `bash scripts/pre-commit.sh` from the repo root, commit with Conventional Commits, and push the branch. Do not open a pull request unless asked.
+7. Update docs as `.agents/rules/pr-documentation-update.md` requires. Run `bash scripts/pre-commit.sh` from the repo root, commit with Conventional Commits, and push the branch. Do not open a pull request unless asked; when asked, open it and run the CodeRabbit review loop in `.agents/rules/pr-review-loop.md` until CodeRabbit has no further comments.
 
 ## Rust builds
 
