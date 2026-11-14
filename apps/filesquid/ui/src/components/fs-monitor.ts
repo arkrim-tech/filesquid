@@ -13,6 +13,12 @@
  * 13 px 500 in `--fs-on-surface-variant`; a stalled or failed process's state in `--fs-error`
  * (warnings use the error colour too, owner answer 14); journal rows in mono.
  *
+ * By role (UI-F2.21, UI-S-032): given the page's {@link AdminAccessStore}, the dashboard waits for
+ * the shell's admin role probe before its first admin read; for a caller the admin routes refused
+ * it shows the permission state of UI-S-026 (`stateDenied`) and calls no admin route, and a role
+ * refusal of its own read or poll is recorded in the store (hiding the header's Monitor button)
+ * and shows the same state instead of the sign-in form.
+ *
  * Accessibility (UI-S-016): each table is named by its section heading and sits in a named,
  * focusable scroll region, so narrow windows scroll the table rather than the page; when a
  * re-render removes the focused element, focus moves to the token field, the alert or the first
@@ -35,6 +41,8 @@ import type { FsOcflFindings } from "./fs-ocfl-findings";
 import { A11Y_STYLE } from "./a11y-style";
 import { CONTROL_STYLE } from "./control-style";
 import { replaceKeepingFocus } from "../a11y/focus";
+import { accessAfter, type AdminAccessStore } from "./admin-access";
+import type { FsStates } from "./fs-states";
 
 /** The part of the API client the Monitor needs (injectable in tests). */
 export type MonitorClient = Pick<
@@ -79,6 +87,11 @@ export interface MonitorOptions {
    * section links its W010 note there; without it the note has no link.
    */
   repairHref?: (libraryId: string) => string;
+  /**
+   * The caller's admin role (UI-F2.21, UI-S-032). With it the Monitor waits for the role probe
+   * and shows `stateDenied` with no admin call for a caller the admin routes refused.
+   */
+  access?: AdminAccessStore;
 }
 
 /** Everything the dashboard shows after a full load. */
@@ -186,6 +199,7 @@ export class FsMonitor extends HTMLElement {
     if (!options) return;
     this.stop();
     const generation = this.generation;
+    if (await this.refusedByRole(options, generation)) return;
     let buffered: JournalEntry[] | undefined = [];
     let snapshot: Snapshot;
     try {
@@ -207,6 +221,37 @@ export class FsMonitor extends HTMLElement {
     early.forEach((entry) => this.addJournalEntry(entry));
     const pollMs = options.pollMs ?? 5000;
     if (pollMs > 0) this.timer = setInterval(() => void this.refresh(), pollMs);
+  }
+
+  /**
+   * Wait for the role probe in flight, if any, and show the permission state when the caller
+   * was refused the admin routes. Sends no request itself.
+   *
+   * @returns True when the load must not go on (refused, or a newer start took over).
+   */
+  private async refusedByRole(options: MonitorOptions, generation: number): Promise<boolean> {
+    const access = await options.access?.settled();
+    if (generation !== this.generation) return true;
+    if (access !== "denied") return false;
+    this.showDenied();
+    return true;
+  }
+
+  /**
+   * Show the permission state of UI-S-026 (`stateDenied`, not permitted) in place of the
+   * dashboard, with polling and the event subscription stopped. When this removed the focused
+   * element, focus moves to the state.
+   */
+  private showDenied(): void {
+    this.stop();
+    this.findings = undefined;
+    const root = this.shadowRoot;
+    const labels = this.options?.labels;
+    if (!root || !labels) return;
+    const states = document.createElement("fs-states") as FsStates;
+    states.configure({ labels });
+    states.state = { kind: "denied", reason: "not_permitted" };
+    replaceKeepingFocus(root, [style(), states], () => states);
   }
 
   /** Fetch health, processes, metrics and the newest journal page. Network I/O. */
@@ -308,10 +353,16 @@ export class FsMonitor extends HTMLElement {
    * Show the sign-in form, with the denial reason when there is one, when a token store exists
    * and the error is a 401/403 or carries a denial reason (including a token the client
    * refused to send, status 0). Otherwise show an alert naming the reason, or the error
-   * message for other failures. When this removed the focused element, focus moves to the
-   * token field or the alert.
+   * message for other failures. With an access store, a role refusal (UI-S-032) is recorded
+   * there and shows the permission state instead. When this removed the focused element, focus
+   * moves to the token field or the alert.
    */
   private showError(error: unknown): void {
+    const access = this.options?.access;
+    if (access && accessAfter(error) === "denied") {
+      access.deny();
+      return this.showDenied();
+    }
     this.stop();
     this.findings = undefined;
     const root = this.shadowRoot;
