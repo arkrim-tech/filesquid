@@ -464,16 +464,38 @@ where
             std::mem::take(&mut self.root),
             std::mem::take(&mut self.object_id),
         );
-        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
-            tracing::warn!("a dropped copy's staging area could not be cleared: no runtime");
-            return;
-        };
-        runtime.spawn(async move { clear_abandoned(&library, &root, &object_id).await });
+        spawn_clear(library, root, object_id);
     }
+}
+
+/// Hand the clearing of the staging area of `object_id` at `root` of `library`, which a
+/// dropped copy left, to a task on the current Tokio runtime; without a runtime the failure is
+/// logged and the stage stays for the next attempt of its file ID. Spawns a task.
+#[cfg(not(target_arch = "wasm32"))]
+fn spawn_clear<B, R, S>(library: Arc<Library<B, R, S>>, root: String, object_id: String)
+where
+    B: StorageBackend + 'static,
+    R: VersionReservations + 'static,
+    S: StorageBackend + 'static,
+{
+    let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+        tracing::warn!("a dropped copy's staging area could not be cleared: no runtime");
+        return;
+    };
+    runtime.spawn(async move { clear_abandoned(&library, &root, &object_id).await });
+}
+
+/// On `wasm32` the storage backends need not be `Send` (API-S-010), so a dropped copy's
+/// staging area is not cleared from a task: the stage stays, and the warning is logged
+/// (best-effort, as [`FileService::copy`] documents). Pure but for the log.
+#[cfg(target_arch = "wasm32")]
+fn spawn_clear<B, R, S>(_library: Arc<Library<B, R, S>>, _root: String, _object_id: String) {
+    tracing::warn!("a dropped copy's staging area is not cleared on this target");
 }
 
 /// Clear the staging area of `object_id` at `root` of `library`, which a dropped copy left;
 /// a failure is logged. Storage I/O.
+#[cfg(not(target_arch = "wasm32"))]
 async fn clear_abandoned<B, R, S>(library: &Library<B, R, S>, root: &str, object_id: &str)
 where
     B: StorageBackend,
