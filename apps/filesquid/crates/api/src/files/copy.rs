@@ -157,6 +157,12 @@ where
     ///
     /// `expected` is the source file object's head the caller read; any other, before the
     /// stage or at the commit, is a `conflict`, and nothing is copied.
+    ///
+    /// The stage uses the new object's own staging area, named by its file ID: a fresh ID is
+    /// minted for each copy, and a reserved one (`request.reserved_file_id`) belongs to one
+    /// operation ID, whose second run the route refuses while the first is in flight
+    /// ([`super::command`]). A caller that passes the same reserved ID to two concurrent
+    /// copies breaks that rule and may see one attempt clear the other's stage.
     pub async fn copy(
         &self,
         request: CopyRequest,

@@ -6,7 +6,7 @@ Branch `feat/api-f2.26-streamed-copies`, module `filesquid-api` ([plan row](../p
 
 | SRS ID and title | Covered by |
 |---|---|
-| [API-S-011](../srs.md) View operation, sort keys, storage use, copy, move and ZIP download: a copy of a file version of any size MUST stream through bounded ranged reads and writes and MUST NOT hold the file in memory, on every host, the desktop included | `integration_streamed_copies` (6 tests, an empty file among them), `integration_streamed_copy_large` (600 MiB), the scenario outline "A copy of any size streams with bounded memory on a disk-backed staging area" (1, 65 and 600 MiB) and the scenario "A source that changes during a streamed copy fails with nothing left staged" of [`copy_provenance_and_streamed_copies_API-S-011.feature`](../../tests/features/copy_provenance_and_streamed_copies_API-S-011.feature), and `filesquid-desktop`'s `integration_streamed_copy` through the `filesquid://` scheme |
+| [API-S-011](../srs.md) View operation, sort keys, storage use, copy, move and ZIP download: a copy of a file version of any size MUST stream through bounded ranged reads and writes and MUST NOT hold the file in memory, on every host, the desktop included | `integration_streamed_copies` (7 tests, an empty file and a retry sent while the copy stages among them), `integration_streamed_copy_large` (600 MiB), the scenario outline "A copy of any size streams with bounded memory on a disk-backed staging area" (1, 65 and 600 MiB) and the scenario "A source that changes during a streamed copy fails with nothing left staged" of [`copy_provenance_and_streamed_copies_API-S-011.feature`](../../tests/features/copy_provenance_and_streamed_copies_API-S-011.feature), and `filesquid-desktop`'s `integration_streamed_copy` through the `filesquid://` scheme |
 | [NFR-003](../../../../../../resources/prd.md#nfr-003-bounded-processing-and-migration-endurance) Bounded processing and migration endurance | `a_copy_above_512_mib_keeps_its_memory_bounded` (peak resident memory grows by at most 256 MiB while 600 MiB are copied), `a_copy_above_64_mib_streams_in_bounded_reads_and_writes` (no read above 8 MiB, no write above 64 MiB) |
 | [OCFL-S-026](../../../ocfl/resources/srs.md) Streamed stage of one logical file from a backend | used unchanged through `ChangeModel::stage_file`; the `ocfl` crate is not edited |
 | [API-S-026](../srs.md) FileSquid OCFL application profile: the copy's record cites the content its version holds | `a_copy_record_keeps_what_the_owner_sees_and_is_bound_to_the_new_object`, `a_small_copy_is_streamed_too_and_cites_its_content` |
@@ -58,6 +58,7 @@ After the change, `cargo test -p filesquid-api --locked --test integration_strea
 running 5 tests
 test a_small_copy_is_streamed_too_and_cites_its_content ... ok
 test an_empty_file_is_copied_too ... ok
+test a_retry_while_the_copy_stages_is_refused_and_leaves_its_stage_alone ... ok
 test a_source_that_changes_while_it_is_read_fails_with_nothing_staged ... ok
 test a_source_that_cannot_be_read_fails_with_nothing_staged ... ok
 test another_write_completes_while_a_copy_stages_and_the_stale_copy_is_refused ... ok

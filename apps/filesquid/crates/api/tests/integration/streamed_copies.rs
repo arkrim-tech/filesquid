@@ -13,12 +13,12 @@ mod files_fixture;
 #[path = "../support/copy_fixture.rs"]
 mod copy_fixture;
 
-use axum::http::StatusCode;
+use axum::http::{Method, StatusCode};
 use copy_fixture::{
-    content_file, copy, import_source, object_count, staged_files, stored, Fill, MAX_READ,
-    MAX_WRITE, MIB,
+    content_file, copy, copy_input, import_source, object_count, staged_files, stored, Fill,
+    MAX_READ, MAX_WRITE, MIB,
 };
-use files_fixture::{digest, pattern, Answer, FilesRig, LIBRARY};
+use files_fixture::{command_body, digest, operation_id, pattern, Answer, FilesRig, LIBRARY};
 use filesquid_api::journal::Outcome;
 use serde_json::json;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -206,4 +206,56 @@ async fn a_source_that_cannot_be_read_fails_with_nothing_staged() {
     let message = refused.json()["message"].to_string();
     assert!(message.contains("source_unreadable"), "{message}");
     assert_nothing_copied(&rig, objects);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_retry_while_the_copy_stages_is_refused_and_leaves_its_stage_alone() {
+    let rig = Arc::new(FilesRig::new().await);
+    let source = import_source(&rig, "film.mov", TWO_READS, Fill::Pattern).await;
+    let input = copy_input(&source.file_id);
+    let revision = rig.revision_of(&input).await;
+    let body = command_body(&input, &operation_id(), &revision);
+    let (staging, staging_seen) = mpsc::channel::<()>();
+    let (retried, retried_seen) = mpsc::channel::<()>();
+    let hand_over = Mutex::new((staging, retried_seen));
+    at_first_chunk(&rig, move || {
+        let (staging, retried_seen) = &*hand_over.lock().expect("hand-over");
+        staging.send(()).expect("the test waits for the stage");
+        retried_seen
+            .recv_timeout(HAND_OVER)
+            .expect("the retry is answered while the copy is staging");
+    });
+    let first = {
+        let (rig, body) = (rig.clone(), body.clone());
+        tokio::spawn(async move {
+            rig.send_command(Method::POST, "/api/v1/files/copies", &body)
+                .await
+        })
+    };
+    let waiting = tokio::task::spawn_blocking(move || staging_seen.recv_timeout(HAND_OVER));
+    waiting
+        .await
+        .expect("joined")
+        .expect("the copy reached its stage");
+    let retry = rig.send_command(Method::POST, "/api/v1/files/copies", &body);
+    let retry = tokio::time::timeout(HAND_OVER, retry)
+        .await
+        .expect("the retry is answered at once");
+    assert_error(&retry, 409, "conflict");
+    let message = retry.json()["message"].to_string();
+    assert!(message.contains("still running"), "{message}");
+    retried.send(()).expect("the copy waits for the retry");
+    let answer = first.await.expect("joined");
+    assert_eq!(answer.status, StatusCode::OK, "{:?}", answer.json());
+    let copy_id = answer.result()["file_id"].as_str().expect("id").to_string();
+    assert_eq!(stored(&rig, &copy_id).await.sha256, source.sha256);
+    assert_eq!(staged_files(&rig), Vec::<std::path::PathBuf>::new());
+    let replay = rig
+        .send_command(Method::POST, "/api/v1/files/copies", &body)
+        .await;
+    assert_eq!(
+        replay.result()["file_id"],
+        copy_id.as_str(),
+        "the same copy once"
+    );
 }
