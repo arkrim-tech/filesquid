@@ -124,6 +124,8 @@ mod drive_steps;
 
 #[path = "support/drive_catalog.rs"]
 mod drive_catalog;
+#[path = "support/expiry_interval_steps.rs"]
+mod expiry_interval_steps;
 #[path = "support/journal_steps.rs"]
 mod journal_steps;
 #[path = "support/metadata_steps.rs"]
@@ -223,6 +225,7 @@ struct MonitorWorld {
     view: view_steps::ViewWorld,
     search: search_steps::SearchWorld,
     journal: journal_steps::JournalWorld,
+    expiry_interval: expiry_interval_steps::ExpiryIntervalWorld,
     seal: seal_steps::SealWorld,
     jobs: job_steps::JobWorld,
     commands: command_steps::CommandWorld,

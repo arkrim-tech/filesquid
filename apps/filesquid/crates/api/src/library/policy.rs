@@ -28,6 +28,22 @@ pub fn is_retention(days: u32) -> bool {
     (MIN_RETENTION_DAYS..=MAX_RETENTION_DAYS).contains(&days)
 }
 
+/// Minutes between two expiry runs unless the admin chose another interval: one hour
+/// (API-S-019 **Routes and expiry runs**; owner decision 2026-11-02).
+pub const DEFAULT_EXPIRY_INTERVAL_MINUTES: u32 = 60;
+
+/// Shortest expiry interval, in minutes (proposed bound, owner to confirm).
+pub const MIN_EXPIRY_INTERVAL_MINUTES: u32 = 5;
+
+/// Longest expiry interval, in minutes: 24 hours (proposed bound, owner to confirm).
+pub const MAX_EXPIRY_INTERVAL_MINUTES: u32 = 1_440;
+
+/// Whether `minutes` is an expiry interval FileSquid accepts: a whole number of minutes from
+/// [`MIN_EXPIRY_INTERVAL_MINUTES`] to [`MAX_EXPIRY_INTERVAL_MINUTES`]. Pure.
+pub fn is_expiry_interval(minutes: u32) -> bool {
+    (MIN_EXPIRY_INTERVAL_MINUTES..=MAX_EXPIRY_INTERVAL_MINUTES).contains(&minutes)
+}
+
 /// Milliseconds in one day.
 const DAY_MS: i64 = 86_400_000;
 

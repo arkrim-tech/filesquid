@@ -6,9 +6,10 @@
 # its expiry monitor takes a changed interval for the next run.
 # Owner decision 2026-11-02, verbatim: "RE: DE-S-014 - "at launch and then every hour" is the
 # default, this should be a configurable setting".
-# Scenarios only; Task API-F2.30 adds their step definitions (unmatched steps are reported as
-# skipped). The desktop harness fails on skipped steps, so the desktop monitor's scenarios go there
-# with their step definitions in the same task.
+# Bound by Task API-F2.30 (support/expiry_interval_steps.rs): the settings routes run against the
+# in-memory settings store and the timing scenarios against the schedule every host's expiry monitor
+# asks. The desktop monitor over its SQLite operational store is bound in the desktop harness
+# (crates/desktop/tests/features/desktop_expiry_interval_F-008.feature).
 Feature: Configurable expiry interval for Recently deleted
   As the admin of an installation (on the desktop, the owner)
   I want to choose how often FileSquid checks for expired deleted files
@@ -30,7 +31,7 @@ Feature: Configurable expiry interval for Recently deleted
     Examples:
       | minutes |
       | 5       |
-      | 60      |
+      | 720     |
       | 1440    |
 
   Scenario: A changed interval takes effect for the next run without a restart
