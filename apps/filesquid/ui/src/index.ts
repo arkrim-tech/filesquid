@@ -61,6 +61,15 @@ export {
 } from "./host/descriptor";
 export { FsMonitor, formatGiB, processCells } from "./components/fs-monitor";
 export {
+  ADMIN_ACCESS_EVENT,
+  AdminAccessStore,
+  accessAfter,
+  offersLogs,
+  offersMonitor,
+  type AdminAccess,
+  type AdminProbeClient,
+} from "./components/admin-access";
+export {
   FsOcflFindings,
   type FindingsClient,
   type FindingsOptions,
