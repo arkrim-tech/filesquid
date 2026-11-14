@@ -141,7 +141,7 @@ INSTRUCTIONS FOR EVERY AGENT AND SESSION
   thread is a new finding and gets one reply of its own. Answer
   findings that have no thread in one PR comment per review. Leave a security finding you
   disagree with open for the owner. Push the fixes after the hook passes.
-- Repeat, as many rounds as needed, until CodeRabbit's latest review is of the head
+- Repeat, for at most 10 CodeRabbit review rounds, until CodeRabbit's latest review is of the head
   commit with no further comments, no CodeRabbit thread is unresolved, the hook has
   passed on the head commit, and no human reviewer has an open change request. Then send
   ONE short hand-back: PR URL, head SHA, which pre-commit run passed on the head commit
@@ -149,8 +149,9 @@ INSTRUCTIONS FOR EVERY AGENT AND SESSION
   commit CodeRabbit's latest review names, `mergeable_state`, and any owner decision
   needed. End that final message with a line "Hand-back:". Do not merge.
 - Bounds (pr-review-loop.md): stop, do not merge, and hand back the blocker for the owner
-  if the same finding returns three times after being fixed, or if CodeRabbit has not
-  reviewed the head commit 60 minutes after a push. A PR opened before 2026-11-14 waits
+  if CodeRabbit still has an open finding after its tenth review of the PR, if the same
+  finding returns three times after being fixed, or if CodeRabbit has not reviewed the
+  head commit 60 minutes after a push. A PR opened before 2026-11-14 waits
   for the owner to start its first CodeRabbit review; report it as waiting.
 ```
 

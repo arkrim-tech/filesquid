@@ -56,7 +56,7 @@ Only the owner edits this section. It is updated after the owner's manual testin
 
    Human review comments are handled the same way.
 4. **Push the fixes.** Rerun `bash scripts/pre-commit.sh` (its change-aware scope is enough for a fix commit; the merge conditions below still require the scope's head-commit run, `FULL=1` for a `full` or `rust:` scope, before merge), commit with Conventional Commits, and push to the same branch. Push a round's fixes together: CodeRabbit reviews each push, and its review allowance per hour is limited (each review body states how many remain). Then reply on each thread you fixed, naming the commit, and resolve it.
-5. **Repeat** steps 2 to 4, as many rounds as needed, until CodeRabbit's latest review is of the head commit, it has no further comments, and no CodeRabbit thread is unresolved. The PR is then ready for human review to merge.
+5. **Repeat** steps 2 to 4, for at most 10 CodeRabbit review rounds ([Bound](#bound)), until CodeRabbit's latest review is of the head commit, it has no further comments, and no CodeRabbit thread is unresolved. The PR is then ready for human review to merge.
 
 CodeRabbit **has no further comments** when no finding from its review of the head commit, or from its replies since, is still open. A finding is closed when it was answered with reasoning in one reply (or, for a finding with no thread, in the PR comment of step 3) and its thread, if any, is resolved. A disputed security finding stays open until the owner settles it, with or without a thread. A finding fixed in code needs a new commit, so a new head and a new CodeRabbit review. A finding answered without a code change needs no further commit or review.
 
@@ -75,8 +75,9 @@ Use a merge commit (the repository's existing convention), then delete the task 
 
 ## Bound
 
-The loop has no fixed round limit; it runs until CodeRabbit has no further comments. It stops early (`AGENTS.md` §22) in these cases. Do not merge; report to the owner what is still open and why.
+The loop is capped at **10 CodeRabbit review rounds** per PR (`AGENTS.md` §22). Owner decision, 2026-11-14, verbatim: "add back your 10 review loop maximum rather than my "as many times as necessary"". It amends "as many times as necessary" in the decision quoted above. A round is one CodeRabbit review with a non-empty body and the agent's fixes or answers to it. The loop stops in these cases. Do not merge; report to the owner what is still open and why.
 
+- CodeRabbit still has an open finding after its tenth review of the PR.
 - The same finding returns three times after being fixed.
 - CodeRabbit has not reviewed the head commit 60 minutes after a push, the one `@coderabbitai review` request included. This does not apply to a PR opened before 2026-11-14 that is still waiting for the owner to start its first CodeRabbit review; report that PR as waiting.
 - The 24-poll cap of a round is reached without a CodeRabbit review of the head commit.
