@@ -16,8 +16,8 @@
 //! live in the library's staging backend, which a host keeps on disk; an in-memory staging
 //! backend holds what it stages. The stage runs outside the library's write lock, which is
 //! taken for the commit only; under it the copy rechecks that no earlier run of its operation
-//! committed and that the source is still at the revision the caller read. Whatever a failed
-//! attempt staged is cleared.
+//! committed and that the source is still at the revision the caller read. What a failed or
+//! dropped attempt staged is cleared on a best-effort basis (see [`FileService::copy`]).
 
 use super::error::FileError;
 use super::provenance::{label_of, Caller, Committed, Write};
@@ -40,6 +40,7 @@ use filesquid_ocfl::storage::{StorageBackend, StorageError, StorageKey};
 use filesquid_ocfl::write::VersionReservations;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 /// Body of `POST /api/v1/files/copies`.
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -121,9 +122,9 @@ struct Attempt<'a> {
 
 impl<B, R, S> FileService<B, R, S>
 where
-    B: StorageBackend,
-    R: VersionReservations,
-    S: StorageBackend,
+    B: StorageBackend + 'static,
+    R: VersionReservations + 'static,
+    S: StorageBackend + 'static,
 {
     /// The display name a copy of the file `file_id` of `library_id` takes: its head
     /// record's. Storage I/O.
@@ -152,8 +153,11 @@ where
     /// `invalid_request` for a malformed file ID or message; `not_found` for an unknown
     /// library or file; `conflict` with `source_changed` in its message when the stored
     /// original changed while it was read, or `source_unreadable` when it could not be read;
-    /// a storage failure otherwise. Nothing is published on any error, whatever the attempt
-    /// staged is cleared, and the source never changes.
+    /// a storage failure otherwise. Nothing is published on any error, and the source never
+    /// changes. What the attempt staged is cleared on a best-effort basis: after a failure, and
+    /// through a drop guard when the copy is dropped before it settles. A failure to clear is
+    /// logged, and a copy dropped while the OCFL stage streams its source may leave that
+    /// stage's unfinished multipart upload behind.
     ///
     /// `expected` is the source file object's head the caller read; any other, before the
     /// stage or at the commit, is a `conflict`, and nothing is copied.
@@ -194,11 +198,13 @@ where
             expected,
             started: self.created(),
         };
+        let guard = StageGuard::new(&library, &root, &object_id);
         let copied = self.stage_and_commit(&library, &model, &attempt).await;
         match &copied {
             Ok(_) => library.remember(&object_id, &root),
             Err(_) => clear_staged(&model).await,
         }
+        guard.disarm();
         copied
     }
 
@@ -398,6 +404,87 @@ where
             size: before.size,
         }),
         false => Err(source_changed()),
+    }
+}
+
+/// The cleanup of one copy's staging area when the copy is dropped before it settles: a
+/// request cancelled while its source is staged, or while it waits for the library's write
+/// lock or its commit, drops the copy's future, so the cleanup that follows the attempt never
+/// runs. Dropped while armed, the guard hands the cleanup to a task on the current Tokio
+/// runtime, since clearing a staging area is asynchronous. The copy disarms it once the
+/// attempt settled (committed, or failed and cleared).
+///
+/// A multipart upload the OCFL module's stage had open when the copy was dropped is the
+/// module's own and is not cleared here.
+struct StageGuard<B, R, S>
+where
+    B: StorageBackend + 'static,
+    R: VersionReservations + 'static,
+    S: StorageBackend + 'static,
+{
+    library: Option<Arc<Library<B, R, S>>>,
+    root: String,
+    object_id: String,
+}
+
+impl<B, R, S> StageGuard<B, R, S>
+where
+    B: StorageBackend + 'static,
+    R: VersionReservations + 'static,
+    S: StorageBackend + 'static,
+{
+    /// An armed guard of the staging area of `object_id` at `root` of `library`. Pure.
+    fn new(library: &Arc<Library<B, R, S>>, root: &str, object_id: &str) -> Self {
+        Self {
+            library: Some(library.clone()),
+            root: root.to_string(),
+            object_id: object_id.to_string(),
+        }
+    }
+
+    /// The attempt settled; nothing is left for the guard to clear. Pure.
+    fn disarm(mut self) {
+        self.library = None;
+    }
+}
+
+impl<B, R, S> Drop for StageGuard<B, R, S>
+where
+    B: StorageBackend + 'static,
+    R: VersionReservations + 'static,
+    S: StorageBackend + 'static,
+{
+    /// Spawn the clearing of a copy that was dropped before it settled; without a Tokio
+    /// runtime the failure is logged and the stage stays for the next attempt of its file ID.
+    fn drop(&mut self) {
+        let Some(library) = self.library.take() else {
+            return;
+        };
+        let (root, object_id) = (
+            std::mem::take(&mut self.root),
+            std::mem::take(&mut self.object_id),
+        );
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            tracing::warn!("a dropped copy's staging area could not be cleared: no runtime");
+            return;
+        };
+        runtime.spawn(async move { clear_abandoned(&library, &root, &object_id).await });
+    }
+}
+
+/// Clear the staging area of `object_id` at `root` of `library`, which a dropped copy left;
+/// a failure is logged. Storage I/O.
+async fn clear_abandoned<B, R, S>(library: &Library<B, R, S>, root: &str, object_id: &str)
+where
+    B: StorageBackend,
+    R: VersionReservations,
+    S: StorageBackend,
+{
+    match library.staging(object_id) {
+        Ok(staging) => clear_staged(&change_model(library, root, object_id, staging)).await,
+        Err(err) => {
+            tracing::warn!(error = ?err, "a dropped copy's staging area could not be opened")
+        }
     }
 }
 

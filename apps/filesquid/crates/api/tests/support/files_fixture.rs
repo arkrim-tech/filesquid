@@ -126,7 +126,9 @@ pub type ReadHook = Box<dyn Fn() + Send + Sync>;
 /// answer read no file, or no file content. It also keeps the largest ranged read it answered,
 /// how many reads answered at least 1 MiB,
 /// the largest single write it took (`put`, `put_if` or one multipart part) and the bytes
-/// written in all, so a test can prove that a transfer was streamed in bounded pieces.
+/// written in all, so a test can prove that a transfer was streamed in bounded pieces. Each
+/// ranged read and each `head` yields to the runtime once, so a task dropped while it reads
+/// is dropped there.
 pub struct CountedFs {
     inner: FsBackend,
     reads: AtomicU64,
@@ -246,6 +248,8 @@ impl StorageBackend for CountedFs {
             self.content_reads.fetch_add(1, Ordering::SeqCst);
         }
         self.read();
+        // Yield once, as a backend over the network or a thread pool does.
+        tokio::task::yield_now().await;
         bytes
     }
 
@@ -258,6 +262,7 @@ impl StorageBackend for CountedFs {
             self.content_heads.fetch_add(1, Ordering::SeqCst);
         }
         self.read();
+        tokio::task::yield_now().await;
         self.inner.head(key).await
     }
 

@@ -21,7 +21,7 @@ use copy_fixture::{
 use files_fixture::{command_body, digest, operation_id, pattern, Answer, FilesRig, LIBRARY};
 use filesquid_api::journal::Outcome;
 use serde_json::json;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -258,4 +258,71 @@ async fn a_retry_while_the_copy_stages_is_refused_and_leaves_its_stage_alone() {
         copy_id.as_str(),
         "the same copy once"
     );
+}
+
+/// The most polls [`wait_until_unstaged`] makes, 50 ms apart (AGENTS.md §22).
+const MAX_UNSTAGED_POLLS: usize = 200;
+
+/// Wait (at most [`MAX_UNSTAGED_POLLS`] polls) until `rig`'s staging area on disk holds no
+/// staged file, and answer what it still holds.
+async fn wait_until_unstaged(rig: &FilesRig) -> Vec<std::path::PathBuf> {
+    for _ in 0..MAX_UNSTAGED_POLLS {
+        if staged_files(rig).is_empty() {
+            return Vec::new();
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    staged_files(rig)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_copy_dropped_after_its_stage_leaves_nothing_staged() {
+    let rig = Arc::new(FilesRig::new().await);
+    let source = import_source(&rig, "film.mov", TWO_READS, Fill::Pattern).await;
+    let objects = object_count(&rig);
+    let root = rig.root.clone();
+    let chunks = root.chunk_reads();
+    let (staged, staged_seen) = mpsc::channel::<()>();
+    let (dropped, dropped_seen) = mpsc::channel::<()>();
+    let hand_over = Mutex::new((staged, dropped_seen));
+    let fired = AtomicBool::new(false);
+    let mark = AtomicU64::new(u64::MAX);
+    // Two passes of two chunks each; the first head read after the last chunk is the size
+    // check that follows the stage.
+    rig.root.on_read(Box::new(move || {
+        let last_chunk = root.chunk_reads() >= chunks + 4;
+        let now = root.content_heads();
+        if last_chunk && mark.load(Ordering::SeqCst) == u64::MAX {
+            mark.store(now, Ordering::SeqCst);
+        }
+        let after_stage = last_chunk && now > mark.load(Ordering::SeqCst);
+        if after_stage && !fired.swap(true, Ordering::SeqCst) {
+            let (staged, dropped_seen) = &*hand_over.lock().expect("hand-over");
+            staged.send(()).expect("the test waits for the stage");
+            dropped_seen
+                .recv_timeout(HAND_OVER)
+                .expect("the test drops the copy");
+        }
+    }));
+    let copying = {
+        let (rig, file_id) = (rig.clone(), source.file_id.clone());
+        tokio::spawn(async move { copy(&rig, &file_id).await })
+    };
+    let waiting = tokio::task::spawn_blocking(move || staged_seen.recv_timeout(HAND_OVER));
+    waiting
+        .await
+        .expect("joined")
+        .expect("the copy staged its source");
+    assert!(
+        !staged_files(&rig).is_empty(),
+        "the copy had staged its bytes"
+    );
+    copying.abort();
+    dropped.send(()).expect("the copy waits to be dropped");
+    assert!(copying.await.expect_err("dropped").is_cancelled());
+    assert_eq!(
+        wait_until_unstaged(&rig).await,
+        Vec::<std::path::PathBuf>::new()
+    );
+    assert_eq!(object_count(&rig), objects, "no object was committed");
 }

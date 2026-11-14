@@ -2,7 +2,7 @@
 //! 64 MiB copy bound, imported by the native worker, is copied through the `filesquid://`
 //! scheme with the per-launch token. The copy is a new file with its source's SHA-256 and
 //! size, and the staged bytes go to the library's staging area on disk, under the data
-//! directory, which holds no staged file afterwards.
+//! directory, which holds no staged file of any size afterwards.
 
 #[path = "../support/journal.rs"]
 #[allow(dead_code)]
@@ -39,7 +39,8 @@ fn handle(node: &NodeRef) -> String {
     node.to_handle().expect("handle")
 }
 
-/// Every regular file under `dir`, by a bounded walk; none when `dir` does not exist.
+/// Every regular file under `dir`, by a bounded walk; none when `dir` does not exist. A
+/// directory or entry that cannot be read fails the test.
 fn files_under(dir: &Path) -> Vec<PathBuf> {
     let mut found = Vec::new();
     let mut pending = vec![dir.to_path_buf()];
@@ -47,18 +48,42 @@ fn files_under(dir: &Path) -> Vec<PathBuf> {
         let Some(next) = pending.pop() else {
             return found;
         };
-        let Ok(entries) = std::fs::read_dir(&next) else {
-            continue;
+        let entries = match std::fs::read_dir(&next) {
+            Ok(entries) => entries,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(err) => panic!("{next:?} cannot be read: {err}"),
         };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            match path.is_dir() {
+        for entry in entries {
+            let path = entry.expect("a readable entry").path();
+            let kind = std::fs::symlink_metadata(&path)
+                .expect("its metadata")
+                .file_type();
+            match kind.is_dir() {
                 true => pending.push(path),
                 false => found.push(path),
             }
         }
     }
     panic!("more than {MAX_DIRECTORIES} directories under {dir:?}");
+}
+
+/// The files the library's staging areas under the data directory `data` hold: every file
+/// below a `staging` folder of `data/files`, the backend's empty key locks (under `locks`)
+/// left out. The journal and catalog databases elsewhere under `data` are not staging.
+fn staged_files(data: &Path) -> Vec<PathBuf> {
+    files_under(&data.join("files"))
+        .into_iter()
+        .filter(|path| {
+            let parts: Vec<_> = path
+                .components()
+                .map(|c| c.as_os_str().to_owned())
+                .collect();
+            parts
+                .iter()
+                .any(|part| part == "staging" || part == "staging-parts")
+                && !parts.iter().any(|part| part == "locks")
+        })
+        .collect()
 }
 
 /// The files of [`FILE_BYTES`] under `dir`: the stored original, its copy, or a staged blob.
@@ -145,5 +170,5 @@ fn a_copy_above_64_mib_streams_through_the_scheme() {
         2,
         "the source and its copy"
     );
-    assert_eq!(film_sized(&rig.dir.join("data")), 0, "nothing left staged");
+    assert_eq!(staged_files(&rig.dir.join("data")), Vec::<PathBuf>::new());
 }
