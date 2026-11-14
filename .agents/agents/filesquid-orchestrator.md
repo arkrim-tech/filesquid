@@ -125,12 +125,14 @@ INSTRUCTIONS FOR EVERY AGENT AND SESSION
 - Open the pull request against main when the orchestrator's task asks for one.
 - The reviewer is CodeRabbit, a GitHub App (`coderabbitai[bot]`); run the loop in
   .agents/rules/pr-review-loop.md. After each push, poll the PR's reviews, review comments
-  and issue comments with `gh api` (REST) at most every 5 minutes, from a background loop
+  and issue comments with `gh api --paginate` (REST) at most every 5 minutes, from a background loop
   or a monitor, never a foreground sleep, at most 24 polls per round. At every poll also
   read `.mergeable_state`; on "dirty", merge origin/main straight away. Do not subscribe
   to pull-request events, and do not create scheduled wake-ups. If CodeRabbit has not
   reviewed the head commit 15 minutes after a push, comment `@coderabbitai review`
-  (alone on its line) once per head commit.
+  (alone on its line) once per head commit, unless the PR was opened before 2026-11-14
+  and CodeRabbit has not yet reviewed it: such a PR waits for the owner to start its
+  first review.
 - Fix every CodeRabbit comment (actionable, nitpick and outside-diff alike) and every
   human review comment, or answer it with reasoning and evidence. Post exactly ONE reply
   per thread, then resolve it with the GraphQL resolveReviewThread mutation. Answer
