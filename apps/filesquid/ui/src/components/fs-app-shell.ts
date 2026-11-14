@@ -7,10 +7,11 @@
  *   views, the navigation slot (`<fs-nav-tree slot="navigation">`; the static vocabulary of the
  *   main destinations until one is slotted), then, after a 1 px divider, the single Recently
  *   deleted row as the tree's final row (UI-S-017, owner answer 2; its count once a view sets
- *   `deletedCount`), the storage block, and the library, Settings and Logs rows (Logs on the
- *   desktop host only, UI-S-021);
+ *   `deletedCount`), the storage block, and the library, Settings and Logs rows (Logs for the
+ *   desktop owner only, UI-S-021);
  * - a 60 px header with the search slot, the host badge (`<fs-host-indicator>`, UI-S-018), the
- *   `jobs` slot (the Jobs button of `<fs-jobs-panel>`, UI-1.2) and the Monitor button, and nothing else: no theme control (it lives in Settings, Appearance,
+ *   `jobs` slot (the Jobs button of `<fs-jobs-panel>`, UI-1.2) and the Monitor button (offered
+ *   only to a caller the API grants the admin routes, UI-S-032), and nothing else: no theme control (it lives in Settings, Appearance,
  *   owner answer 7), no API status (Settings, About only, owner answer 12) and no permanent
  *   privacy text (UI-S-004);
  * - `main` with the default slot; a 40 px footer with the `summary` and `commit-state` slots;
@@ -47,6 +48,12 @@ import { A11Y_STYLE, releaseDocumentA11yStyle, retainDocumentA11yStyle } from ".
 import { CONTROL_STYLE } from "./control-style";
 import { focusElement, recoverFocus } from "../a11y/focus";
 import { HOST_EVENT, type FsHostIndicator, type HostClient } from "./fs-host-indicator";
+import {
+  ADMIN_ACCESS_EVENT,
+  offersLogs,
+  offersMonitor,
+  type AdminAccessStore,
+} from "./admin-access";
 import type { FsSettings } from "./fs-settings";
 import { icon, type IconName } from "./icons";
 import { PANEL_WIDE } from "./panel-slot";
@@ -62,6 +69,11 @@ export interface ShellOptions {
   client: ShellClient;
   /** Shared theme state, already started; the logo follows the resolved theme. */
   theme: ThemeStore;
+  /**
+   * The caller's admin role (UI-F2.21, UI-S-032): the Monitor button and the Logs row are hidden
+   * for a caller the admin routes refused. Without it both are offered as before.
+   */
+  access?: AdminAccessStore;
 }
 
 /** The storage block's facts (API-S-038): bytes used, of which history, and free on the disk. */
@@ -175,6 +187,10 @@ export class FsAppShell extends HTMLElement {
   private deleted?: number;
   private uploading?: string;
   private readonly onThemeChange = () => this.showLogo();
+  private readonly onAccessChange = () => this.showAdminViews();
+  private access?: AdminAccessStore;
+  /** The host type the header badge last announced, or undefined while none is known. */
+  private hostType?: string;
   private readonly onHashChange = () => this.syncCurrent();
   /** The document holding this shell's reference to the document-level rules, while connected. */
   private styledDocument?: Document;
@@ -195,6 +211,8 @@ export class FsAppShell extends HTMLElement {
    */
   configure(options: ShellOptions): void {
     this.theme?.removeEventListener("change", this.onThemeChange);
+    this.access?.removeEventListener(ADMIN_ACCESS_EVENT, this.onAccessChange);
+    this.access = options.access;
     this.distribution = options.distribution;
     this.client = options.client;
     this.theme = options.theme;
@@ -264,15 +282,17 @@ export class FsAppShell extends HTMLElement {
    */
   disconnectedCallback(): void {
     this.theme?.removeEventListener("change", this.onThemeChange);
+    this.access?.removeEventListener(ADMIN_ACCESS_EVENT, this.onAccessChange);
     window.removeEventListener("hashchange", this.onHashChange);
     this.panelObserver?.disconnect();
     if (this.styledDocument) releaseDocumentA11yStyle(this.styledDocument);
     this.styledDocument = undefined;
   }
 
-  /** Subscribe to the theme store and render. */
+  /** Subscribe to the theme store and the admin role, and render. */
   private connect(): void {
     this.theme?.addEventListener("change", this.onThemeChange);
+    this.access?.addEventListener(ADMIN_ACCESS_EVENT, this.onAccessChange);
     this.render();
   }
 
@@ -318,6 +338,7 @@ export class FsAppShell extends HTMLElement {
     this.showStorage();
     this.showDeletedCount();
     this.showUploadStatus();
+    this.showAdminViews();
     this.syncCurrent();
     recoverFocus(root, hadFocus, () => root.querySelector("main"));
   }
@@ -521,10 +542,23 @@ export class FsAppShell extends HTMLElement {
     }
   }
 
-  /** Show the Logs row on the desktop host only (UI-S-021). */
+  /** Keep the host type the badge announced and show the admin rows for it (UI-S-021). */
   private onHost(event: CustomEvent<{ hostType?: string }>): void {
-    const logs = this.shadowRoot?.querySelector<HTMLElement>("li.logs");
-    if (logs) logs.hidden = event.detail?.hostType !== "desktop";
+    this.hostType = event.detail?.hostType;
+    this.showAdminViews();
+  }
+
+  /**
+   * Show the Monitor button and the Logs row only to a caller they are offered to: one role
+   * check for both (UI-S-032, UI-S-021); the Logs row also waits for the desktop host.
+   */
+  private showAdminViews(): void {
+    const root = this.shadowRoot;
+    const access = this.access?.state ?? "unknown";
+    const monitor = root?.querySelector<HTMLElement>("header .monitor");
+    if (monitor) monitor.hidden = !offersMonitor(access);
+    const logs = root?.querySelector<HTMLElement>("li.logs");
+    if (logs) logs.hidden = !offersLogs(this.hostType, access);
   }
 }
 

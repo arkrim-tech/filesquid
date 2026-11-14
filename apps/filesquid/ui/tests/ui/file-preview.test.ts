@@ -275,3 +275,108 @@ describe("<fs-file-preview>", () => {
     expect(preview.shadowRoot?.querySelector("pre")?.textContent).toBe("hello world");
   });
 });
+
+/** Give an `<img>` a natural and a shown width, as a decoded image in a laid-out page has. */
+function sized(img: HTMLImageElement, natural: number, shown: number): void {
+  Object.defineProperty(img, "naturalWidth", { configurable: true, value: natural });
+  img.getBoundingClientRect = () => ({ width: shown, height: 0 }) as DOMRect;
+}
+
+describe("<fs-file-preview> zoom chip (UI-S-031, Task UI-F2.19)", () => {
+  it("says it is loading the full size, with a progress bar, until the image has loaded", async () => {
+    const preview = await mount(source(), ref("0a1b2c3d.png", "facade-study.png"));
+    const root = preview.shadowRoot as ShadowRoot;
+    const chip = root.querySelector("figure > .zoom") as HTMLElement;
+    expect(chip.hidden).toBe(false);
+    expect(chip.dataset.state).toBe("loading");
+    const loading = chip.querySelector(".loading") as HTMLElement;
+    expect(loading.hidden).toBe(false);
+    expect(loading.textContent).toBe(labels.fileLoadingFullSize);
+    const bar = chip.querySelector("[role='progressbar']") as HTMLElement;
+    expect(bar.hidden).toBe(false);
+    expect(bar.getAttribute("aria-labelledby")).toBe(loading.id);
+    expect(bar.querySelector(".progress-fill")).not.toBeNull();
+    expect((chip.querySelector(".fit") as HTMLElement).hidden).toBe(true);
+  });
+
+  it("states the fitted scale once the image has loaded, and drops the loading line", async () => {
+    const preview = await mount(source(), ref("0a1b2c3d.png", "facade-study.png"));
+    const root = preview.shadowRoot as ShadowRoot;
+    const img = root.querySelector("img") as HTMLImageElement;
+    sized(img, 1684, 640);
+    img.dispatchEvent(new Event("load"));
+    const chip = root.querySelector("figure > .zoom") as HTMLElement;
+    expect(chip.dataset.state).toBe("ready");
+    const fit = chip.querySelector(".fit") as HTMLElement;
+    expect(fit.hidden).toBe(false);
+    expect(fit.textContent).toBe(labels.fileZoomFit.replace("{percent}", "38"));
+    expect((chip.querySelector(".loading") as HTMLElement).hidden).toBe(true);
+    expect((chip.querySelector("[role='progressbar']") as HTMLElement).hidden).toBe(true);
+    expect(accessibilityViolations(preview)).toEqual([]);
+  });
+
+  it("follows the shown width when the frame is resized", async () => {
+    const observers: ResizeObserverCallback[] = [];
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        constructor(callback: ResizeObserverCallback) {
+          observers.push(callback);
+        }
+        observe(): void {}
+        disconnect(): void {}
+      },
+    );
+    const preview = await mount(source(), ref("0a1b2c3d.png", "facade-study.png"));
+    const img = preview.shadowRoot?.querySelector("img") as HTMLImageElement;
+    sized(img, 1280, 640);
+    img.dispatchEvent(new Event("load"));
+    const fit = preview.shadowRoot?.querySelector(".zoom .fit") as HTMLElement;
+    expect(fit.textContent).toBe(labels.fileZoomFit.replace("{percent}", "50"));
+    sized(img, 1280, 960);
+    for (const callback of observers) callback([], {} as ResizeObserver);
+    expect(fit.textContent).toBe(labels.fileZoomFit.replace("{percent}", "75"));
+    vi.unstubAllGlobals();
+  });
+
+  it("hides the chip when the image cannot be shown", async () => {
+    const src = source();
+    const preview = await mount(src, ref("0a1b2c3d.png", "facade-study.png"));
+    const img = preview.shadowRoot?.querySelector("img") as HTMLImageElement;
+    img.dispatchEvent(new Event("error"));
+    await settle();
+    img.dispatchEvent(new Event("error"));
+    await settle();
+    expect(preview.dataset.state).toBe("error");
+    expect((preview.shadowRoot?.querySelector(".zoom") as HTMLElement).hidden).toBe(true);
+  });
+
+  it("shows no chip for video, audio, text or a format it cannot show", async () => {
+    const src = source();
+    const files = [
+      ["0a1b2c3e.mp4", "site-walkthrough.mp4"],
+      ["0a1b2c3f.wav", "interview.wav"],
+      ["0a1b2c40.txt", "readme.txt"],
+      ["0a1b2c42.blend", "model-export.blend"],
+    ] as const;
+    for (const [path, name] of files) {
+      const preview = await mount(src, ref(path, name));
+      expect(preview.shadowRoot?.querySelector(".zoom")).toBeNull();
+    }
+  });
+
+  it("keeps the media frame on the 8 px --fs-radius and --fs-surface-raised and draws the chip from tokens", async () => {
+    const preview = await mount(source(), ref("0a1b2c3d.png", "facade-study.png"));
+    const css = preview.shadowRoot?.querySelector("style")?.textContent ?? "";
+    expect(css).toMatch(
+      /img, video \{[^}]*border-radius: var\(--fs-radius\);[^}]*background: var\(--fs-surface-raised\)/,
+    );
+    expect(css).toMatch(
+      /\.zoom \{[^}]*border: 1px solid var\(--fs-outline\);[^}]*border-radius: var\(--fs-radius-pill\);[^}]*background: var\(--fs-surface-card\)/,
+    );
+    expect(css).toMatch(/\.fit \{[^}]*font-weight: 500;[^}]*color: var\(--fs-on-surface\)/);
+    expect(css).toMatch(/\.loading \{[^}]*color: var\(--fs-on-surface-muted\)/);
+    expect(css).toMatch(/\.progress \{[^}]*background: var\(--fs-outline\)/);
+    expect(css).toMatch(/\.progress-fill \{[^}]*background: var\(--fs-primary\)/);
+  });
+});

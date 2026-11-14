@@ -25,6 +25,7 @@ import type { MetadataSource } from "../files/metadata-source";
 import type { FactsSource } from "../files/facts-source";
 import type { ProvenanceSource } from "../files/provenance-source";
 import { bindFilePanel, removeFilePanel, watchOwner } from "./file-panel-route";
+import type { AdminAccessStore } from "../components/admin-access";
 
 /** An element the routed views are mounted in; the app shell also offers `focusMain`. */
 export type RouteHost = HTMLElement & {
@@ -334,6 +335,8 @@ export interface FilesRouteOptions extends Pick<FileBrowserOptions, "labels" | "
   readonly filePanel?: FilePanelSources;
   /** Reads and writes statements for the file panel's Description tab (UI-F2.4). */
   readonly metadata?: MetadataSource;
+  /** The caller's admin role, for the View in Logs links (UI-S-032, UI-S-021). */
+  readonly access?: AdminAccessStore;
 }
 
 /**
@@ -355,7 +358,7 @@ export function bindFilesRoute(
   options: FilesRouteOptions,
   win: Window = window,
 ): () => void {
-  const { canViewLogs: owner, stop: stopWatching } = watchOwner(shell);
+  const { canViewLogs: owner, stop: stopWatching } = watchOwner(shell, options.access);
   applyFilesRoute(shell, options, win, owner);
   const onChange = () => {
     applyFilesRoute(shell, options, win, owner);
