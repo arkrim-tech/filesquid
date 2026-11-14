@@ -306,7 +306,17 @@ pub(crate) async fn answer_page(
         Err(error) => return error.into_response(),
     };
     let names = wanted_names(state, asked);
-    Json(view_page(page, names, principal).await).into_response()
+    private_json(view_page(page, names, principal).await)
+}
+
+/// Cache directive of every journal page and entry: they hold the caller's activity and,
+/// with `names=true`, names resolved for that caller, so no cache may store them.
+pub const JOURNAL_CACHE_CONTROL: &str = "private, no-store";
+
+/// `body` as a JSON answer that no cache may store ([`JOURNAL_CACHE_CONTROL`]). Pure.
+fn private_json<T: Serialize>(body: T) -> Response {
+    let cache = [(header::CACHE_CONTROL, JOURNAL_CACHE_CONTROL)];
+    (cache, Json(body)).into_response()
 }
 
 /// `GET /admin/journal/entries/{entry}`: one entry view, or `not_found`.
@@ -340,7 +350,7 @@ pub(super) async fn one(
     };
     let names = wanted_names(&state, asked);
     let mut named = resolve_names(names.as_deref(), &principal, std::slice::from_ref(&entry)).await;
-    Json(view(entry, &mut named)).into_response()
+    private_json(view(entry, &mut named))
 }
 
 /// The host's name lookup, when the caller asked for names and the host installed one.

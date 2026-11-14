@@ -336,3 +336,29 @@ async fn the_route_reports_unavailable_before_the_monitor_starts() {
         .expect("answer");
     assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
 }
+
+#[tokio::test]
+async fn journal_pages_are_never_stored_by_a_cache() {
+    let host = host();
+    for (path, token) in [
+        (OWN, ANA_TOKEN),
+        ("/api/v1/journal?names=true", ANA_TOKEN),
+        ("/api/v1/admin/journal", BEN_TOKEN),
+        ("/api/v1/admin/journal/entries/1", BEN_TOKEN),
+    ] {
+        let request = axum::http::Request::get(path)
+            .header("authorization", format!("Bearer {token}"))
+            .body(axum::body::Body::empty())
+            .expect("request");
+        let response =
+            tower::ServiceExt::oneshot(filesquid_api::router(host.state.clone()), request)
+                .await
+                .expect("answer");
+        assert_eq!(response.status(), StatusCode::OK, "{path}");
+        let cache = response
+            .headers()
+            .get("cache-control")
+            .map(|v| v.to_str().expect("ascii"));
+        assert_eq!(cache, Some("private, no-store"), "{path}");
+    }
+}

@@ -365,6 +365,14 @@
                   "$ref": "#/components/schemas/JournalViewPage"
                 }
               }
+            },
+            "headers": {
+              "Cache-Control": {
+                "description": "private, no-store: the answer holds the caller's activity and names resolved for the caller, so no cache may store it.",
+                "schema": {
+                  "type": "string"
+                }
+              }
             }
           },
           "400": {
@@ -420,6 +428,14 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/JournalEntryView"
+                }
+              }
+            },
+            "headers": {
+              "Cache-Control": {
+                "description": "private, no-store: the answer holds the caller's activity and names resolved for the caller, so no cache may store it.",
+                "schema": {
+                  "type": "string"
                 }
               }
             }
@@ -804,6 +820,14 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/JournalViewPage"
+                }
+              }
+            },
+            "headers": {
+              "Cache-Control": {
+                "description": "private, no-store: the answer holds the caller's activity and names resolved for the caller, so no cache may store it.",
+                "schema": {
+                  "type": "string"
                 }
               }
             }

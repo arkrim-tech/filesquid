@@ -3967,6 +3967,8 @@ export interface operations {
             /** @description One page of entries. */
             200: {
                 headers: {
+                    /** @description private, no-store: the answer holds the caller's activity and names resolved for the caller, so no cache may store it. */
+                    "Cache-Control"?: string;
                     [name: string]: unknown;
                 };
                 content: {
@@ -3998,6 +4000,8 @@ export interface operations {
             /** @description The entry. */
             200: {
                 headers: {
+                    /** @description private, no-store: the answer holds the caller's activity and names resolved for the caller, so no cache may store it. */
+                    "Cache-Control"?: string;
                     [name: string]: unknown;
                 };
                 content: {
@@ -4136,6 +4140,8 @@ export interface operations {
             /** @description One page of the caller's own entries. */
             200: {
                 headers: {
+                    /** @description private, no-store: the answer holds the caller's activity and names resolved for the caller, so no cache may store it. */
+                    "Cache-Control"?: string;
                     [name: string]: unknown;
                 };
                 content: {
