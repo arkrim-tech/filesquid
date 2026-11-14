@@ -159,7 +159,7 @@ Read a lane's hand-back from its session record. The hand-back is the message th
 ## Merge procedure
 
 - Merge only when all of these hold:
-  - CodeRabbit's latest review is of the head commit, it has no further comments, and no CodeRabbit thread is unresolved. Check the review's `commit_id` against the head SHA yourself; do not rely on the hand-back alone.
+  - CodeRabbit's latest review is of the head commit, it has no further comments, and no CodeRabbit thread is unresolved. Check the `commit_id` of CodeRabbit's latest review with a non-empty body against the head SHA yourself (an empty-body review only carries a thread reply); do not rely on the hand-back alone.
   - No human reviewer has requested changes that are still open.
   - The pull request reports `mergeable_state` `"clean"`. It is `null` right after a push, so check again.
   - The other merge conditions in [pr-review-loop.md](../../.agents/rules/pr-review-loop.md#merge-conditions) also hold.
