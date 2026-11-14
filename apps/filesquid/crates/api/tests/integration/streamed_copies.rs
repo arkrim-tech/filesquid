@@ -124,6 +124,19 @@ async fn a_small_copy_is_streamed_too_and_cites_its_content() {
     );
 }
 
+#[tokio::test]
+async fn an_empty_file_is_copied_too() {
+    let rig = FilesRig::new().await;
+    let source = import_source(&rig, "empty.txt", 0, Fill::Pattern).await;
+    let answer = copy(&rig, &source.file_id).await;
+    assert_eq!(answer.status, StatusCode::OK, "{:?}", answer.json());
+    let copy_id = answer.result()["file_id"].as_str().expect("id").to_string();
+    let copied = stored(&rig, &copy_id).await;
+    assert_eq!(copied.sha256, digest(b""));
+    assert_eq!(copied.size, 0);
+    assert_eq!(staged_files(&rig), Vec::<std::path::PathBuf>::new());
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn another_write_completes_while_a_copy_stages_and_the_stale_copy_is_refused() {
     let rig = Arc::new(FilesRig::new().await);
