@@ -79,11 +79,15 @@ function searchParams(params: URLSearchParams): SearchParams {
 }
 
 /**
- * The shell's health, host, event channel and the Jobs button's start-up listing of import
- * jobs (`GET /api/v1/jobs`, UI-1.2, API-S-037), answered as an empty page: the measured views
- * import nothing. Unserved, that read takes the catch-all's 404, the browser logs it as a console
- * error, and the UI forwards its own warning to `POST /api/v1/client-events`, which the
- * catch-all refuses too, so every test that tracks errors would fail on it.
+ * The shell's health, host, event channel and two routes every page of the build calls:
+ *
+ * - the Jobs button's start-up listing of import jobs (`GET /api/v1/jobs`, UI-1.2, API-S-037),
+ *   answered as an empty page, since the measured views import nothing;
+ * - the journal of the page's own console warnings (`POST /api/v1/client-events`, UI-F2.16,
+ *   API-S-030), acknowledged as the host does. The Large catalogue's levels are longer than the
+ *   50 pages the view loads, so the view warns by design, and the page forwards that warning.
+ *
+ * Unserved, either takes the catch-all's 404, which the browser logs as a console error.
  */
 async function serveShell(page: Page, host: Host): Promise<void> {
   await page.route("**/api/v1/health", (route) =>
@@ -104,6 +108,14 @@ async function serveShell(page: Page, host: Host): Promise<void> {
   );
   await page.routeWebSocket(/\/api\/v1\/events$/, (ws) => void host.sockets.push(ws));
   await page.route(/\/api\/v1\/jobs\?/, (route) => json(route, { jobs: [], truncated: false }));
+  await page.route(/\/api\/v1\/client-events$/, (route) => {
+    const body = route.request().postDataJSON() as { events: { id: string }[] };
+    return json(route, {
+      acknowledged: body.events.map((event) => event.id),
+      journaled: body.events.length,
+      principal: "urn:uuid:00000000-0000-4000-8000-0000000000f3",
+    });
+  });
 }
 
 /** The storage block's reads and the preferences, which start as `initial` over the defaults. */
