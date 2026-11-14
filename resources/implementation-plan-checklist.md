@@ -1,20 +1,19 @@
 # Implementation Plan Checklist: FileSquid
 
 <!-- mvp-progress:start -->
-![MVP progress: 84% complete](./assets/mvp-progress.svg)
+![MVP progress: 85% complete](./assets/mvp-progress.svg)
 
-**MVP progress: 84%**, about 1078 of 1285 estimated hours. 22 of 28 tasks are done and 4 more are under way. Each segment of the bar is one task below, as wide as its estimated hours in the implementation plan; an open task fills by the share of its module rows that are ticked. Below the bar, In progress lists the open tasks being worked on (global tasks with at least one module row ticked, including those whose module rows are all ticked but whose own box is still open, and tasks with an open pull request); the count of tasks under way is the number of distinct open tasks listed there. Up next lists the next five new module tasks whose listed dependencies are done or in progress. Regenerate with `python3 scripts/docs/update_mvp_progress.py` after ticking boxes or opening a pull request; the check run by `scripts/verify_docs.sh` does not call GitHub and uses the pull requests recorded in the block. In a clone that registers the `mvp-progress` git merge driver (see the README), merging two pull requests that both redraw it merges their ticks and redraws it when it can, and otherwise leaves a conflict.
+**MVP progress: 85%**, about 1090 of 1285 estimated hours. 22 of 28 tasks are done and 5 more are under way. Each segment of the bar is one task below, as wide as its estimated hours in the implementation plan; an open task fills by the share of its module rows that are ticked. Below the bar, In progress lists the open tasks being worked on (global tasks with at least one module row ticked, including those whose module rows are all ticked but whose own box is still open, and tasks with an open pull request); the count of tasks under way is the number of distinct open tasks listed there. Up next lists the next five new module tasks whose listed dependencies are done or in progress. Regenerate with `python3 scripts/docs/update_mvp_progress.py` after ticking boxes or opening a pull request; the check run by `scripts/verify_docs.sh` does not call GitHub and uses the pull requests recorded in the block. In a clone that registers the `mvp-progress` git merge driver (see the README), merging two pull requests that both redraw it merges their ticks and redraws it when it can, and otherwise leaves a conflict.
 
 **In progress**
 
-- [Task FS-2.4](./implementation-plan.md#task-fs-2.4) Activity journal, process registry and Monitor dashboard (its first two rows finished early, ahead of its listed dependencies; reopened 2026-10-31 for the two rows moved from Task FS-1.4) ([PR #178](https://github.com/arkrim-tech/filesquid/pull/178)): 3 of 4 module rows ticked
-    - [API-F2.27](../apps/filesquid/crates/api/resources/plan.md#phase-f2-activity-and-health-monitoring-global-task-fs-24-and-drive-parity-operations-global-task-fs-25-api-f24-in-global-task-fs-27-after-the-mvp) Self-scoped journal route
-- [Task FS-2.5](./implementation-plan.md#task-fs-2.5) Drive-parity views, search and version restore: 13 of 23 module rows ticked
-    - [API-F2.21](../apps/filesquid/crates/api/resources/plan.md#phase-f2-activity-and-health-monitoring-global-task-fs-24-and-drive-parity-operations-global-task-fs-25-api-f24-in-global-task-fs-27-after-the-mvp) View and search row facts, the Recent view and destination identifiers
+- [Task FS-2.4](./implementation-plan.md#task-fs-2.4) Activity journal, process registry and Monitor dashboard (its first two rows finished early, ahead of its listed dependencies; reopened 2026-10-31 for the two rows moved from Task FS-1.4): 3 of 4 module rows ticked
+    - [API-F2.27](../apps/filesquid/crates/api/resources/plan.md#phase-f2-activity-and-health-monitoring-global-task-fs-24-and-drive-parity-operations-global-task-fs-25-api-f24-in-global-task-fs-27-after-the-mvp) Self-scoped journal route ([PR #186](https://github.com/arkrim-tech/filesquid/pull/186))
+- [Task FS-2.5](./implementation-plan.md#task-fs-2.5) Drive-parity views, search and version restore: 14 of 23 module rows ticked
+    - [API-F2.21](../apps/filesquid/crates/api/resources/plan.md#phase-f2-activity-and-health-monitoring-global-task-fs-24-and-drive-parity-operations-global-task-fs-25-api-f24-in-global-task-fs-27-after-the-mvp) View and search row facts, the Recent view and destination identifiers ([PR #183](https://github.com/arkrim-tech/filesquid/pull/183))
     - [API-F2.22](../apps/filesquid/crates/api/resources/plan.md#phase-f2-activity-and-health-monitoring-global-task-fs-24-and-drive-parity-operations-global-task-fs-25-api-f24-in-global-task-fs-27-after-the-mvp) Library history object and streamed ZIP download
     - [API-F2.24](../apps/filesquid/crates/api/resources/plan.md#phase-f2-activity-and-health-monitoring-global-task-fs-24-and-drive-parity-operations-global-task-fs-25-api-f24-in-global-task-fs-27-after-the-mvp) Command envelopes on the metadata write routes
     - [API-F2.25](../apps/filesquid/crates/api/resources/plan.md#phase-f2-activity-and-health-monitoring-global-task-fs-24-and-drive-parity-operations-global-task-fs-25-api-f24-in-global-task-fs-27-after-the-mvp) Collection moves compare the expected revision
-    - [API-F2.26](../apps/filesquid/crates/api/resources/plan.md#phase-f2-activity-and-health-monitoring-global-task-fs-24-and-drive-parity-operations-global-task-fs-25-api-f24-in-global-task-fs-27-after-the-mvp) Streamed copies of any size
     - [API-F2.31](../apps/filesquid/crates/api/resources/plan.md#phase-f2-activity-and-health-monitoring-global-task-fs-24-and-drive-parity-operations-global-task-fs-25-api-f24-in-global-task-fs-27-after-the-mvp) The owner's library folder and volume names on the desktop
     - [API-F2.32](../apps/filesquid/crates/api/resources/plan.md#phase-f2-activity-and-health-monitoring-global-task-fs-24-and-drive-parity-operations-global-task-fs-25-api-f24-in-global-task-fs-27-after-the-mvp) Create-collection route, import reserve and job destination titles
     - [UI-F2.20](../apps/filesquid/ui/resources/plan.md#phase-f2-default-ui-global-tasks-fs-21-fs-22-fs-24-fs-25-11-12-after-the-mvp-ui-f26-in-global-task-fs-23-ui-f210-and-ui-f212-in-global-task-fs-27-ui-f213-in-global-task-fs-26-ui-f25-in-global-task-fs-c1-phase-c) Consume the row facts
@@ -23,17 +22,18 @@
 - [Task FS-2.8](./implementation-plan.md#task-fs-2.8) PROV-O history: 9 of 11 module rows ticked
     - [API-F2.23](../apps/filesquid/crates/api/resources/plan.md#phase-f2-prov-o-history-global-task-fs-28) A copy records its source in the provenance history
     - [API-F2.33](../apps/filesquid/crates/api/resources/plan.md#phase-f2-prov-o-history-global-task-fs-28) Fixity and resources in the file facts, operation IDs on errors and newest-first history
+- [DE-F3.1](../apps/filesquid/crates/desktop/resources/plan.md#phase-f3-installers-and-performance-global-tasks-fs-31-fs-34-and-after-the-mvp-fs-311) macOS early-access DMG and the FileSquid overlay (part of [Task FS-3.1](./implementation-plan.md#task-fs-3.1); [PR #182](https://github.com/arkrim-tech/filesquid/pull/182))
 - [Task FS-3.4](./implementation-plan.md#task-fs-3.4) MVP performance gate (macOS desktop): 1 of 3 module rows ticked
-    - [UI-F3.4](../apps/filesquid/ui/resources/plan.md#phase-f3-mvp-performance-global-task-fs-34) Virtualised navigation tree
+    - [UI-F3.4](../apps/filesquid/ui/resources/plan.md#phase-f3-mvp-performance-global-task-fs-34) Virtualised navigation tree ([PR #185](https://github.com/arkrim-tech/filesquid/pull/185))
     - [DE-F3.2](../apps/filesquid/crates/desktop/resources/plan.md#phase-f3-installers-and-performance-global-tasks-fs-31-fs-34-and-after-the-mvp-fs-311) Packaged desktop file-browsing performance
 
 **Up next** (the next 5 new module tasks, once their listed dependencies are done or in progress)
 
-- [DE-F3.1](../apps/filesquid/crates/desktop/resources/plan.md#phase-f3-installers-and-performance-global-tasks-fs-31-fs-34-and-after-the-mvp-fs-311) macOS early-access DMG and the FileSquid overlay (part of [Task FS-3.1](./implementation-plan.md#task-fs-3.1))
+- No new module task is ready.
 
-Generated 2026-11-13T23:16:01Z (RFC 3339, UTC) from the ticked boxes, the module plans and the open pull requests at that time.
-<!-- generated-at: 2026-11-13T23:16:01Z -->
-<!-- in-progress-prs: FS-2.4=#178 -->
+Generated 2026-11-14T00:45:24Z (RFC 3339, UTC) from the ticked boxes, the module plans and the open pull requests at that time.
+<!-- generated-at: 2026-11-14T00:45:24Z -->
+<!-- in-progress-prs: API-F2.21=#183,API-F2.27=#186,DE-F3.1=#182,UI-F3.4=#185 -->
 <!-- mvp-progress:end -->
 
 This is a short, ordered view of [implementation-plan.md](./implementation-plan.md). Each numbered item is a global task in the order the dev team expects to finish it, and the nested items are the module tasks it dispatches, taken from each module's `resources/plan.md`. Task codes link to the full task description. A box is ticked when the matching box is ticked in the source plan.
@@ -165,7 +165,7 @@ FileSquid MVP (early access) on the macOS desktop: phases F0 to F3, closed by ga
     - [ ] [API-F2.22](../apps/filesquid/crates/api/resources/plan.md#phase-f2-activity-and-health-monitoring-global-task-fs-24-and-drive-parity-operations-global-task-fs-25-api-f24-in-global-task-fs-27-after-the-mvp) Library history object and streamed ZIP download
     - [ ] [API-F2.24](../apps/filesquid/crates/api/resources/plan.md#phase-f2-activity-and-health-monitoring-global-task-fs-24-and-drive-parity-operations-global-task-fs-25-api-f24-in-global-task-fs-27-after-the-mvp) Command envelopes on the metadata write routes
     - [ ] [API-F2.25](../apps/filesquid/crates/api/resources/plan.md#phase-f2-activity-and-health-monitoring-global-task-fs-24-and-drive-parity-operations-global-task-fs-25-api-f24-in-global-task-fs-27-after-the-mvp) Collection moves compare the expected revision
-    - [ ] [API-F2.26](../apps/filesquid/crates/api/resources/plan.md#phase-f2-activity-and-health-monitoring-global-task-fs-24-and-drive-parity-operations-global-task-fs-25-api-f24-in-global-task-fs-27-after-the-mvp) Streamed copies of any size
+    - [x] [API-F2.26](../apps/filesquid/crates/api/resources/plan.md#phase-f2-activity-and-health-monitoring-global-task-fs-24-and-drive-parity-operations-global-task-fs-25-api-f24-in-global-task-fs-27-after-the-mvp) Streamed copies of any size
     - [x] [API-F2.30](../apps/filesquid/crates/api/resources/plan.md#phase-f2-activity-and-health-monitoring-global-task-fs-24-and-drive-parity-operations-global-task-fs-25-api-f24-in-global-task-fs-27-after-the-mvp) Configurable expiry interval for Recently deleted
     - [ ] [API-F2.31](../apps/filesquid/crates/api/resources/plan.md#phase-f2-activity-and-health-monitoring-global-task-fs-24-and-drive-parity-operations-global-task-fs-25-api-f24-in-global-task-fs-27-after-the-mvp) The owner's library folder and volume names on the desktop
     - [ ] [API-F2.32](../apps/filesquid/crates/api/resources/plan.md#phase-f2-activity-and-health-monitoring-global-task-fs-24-and-drive-parity-operations-global-task-fs-25-api-f24-in-global-task-fs-27-after-the-mvp) Create-collection route, import reserve and job destination titles

@@ -6,34 +6,41 @@
 //! record names the source as `dcterms:source` = `urn:uuid:<source-id>@vN`
 //! ([`crate::canonical::copy`]). The source is never changed. One set of bytes never gets
 //! two home collections: the copy is a new file, and the host records its home collection in
-//! its catalog. The copy is read whole, so a source over [`MAX_COPY_BYTES`] is refused until
-//! a streamed copy exists.
+//! its catalog.
+//!
+//! A copy of any size is streamed (Task API-F2.26; API-S-011, NFR-003, owner decision
+//! 2026-10-31, verbatim: "build streamed copies"): the source's stored original is staged
+//! into the new object's staging area through `ChangeModel::stage_file` (OCFL-S-026), as the
+//! import stages a source (`FileService::import_original`), read in ranges of at most 8 MiB and written in
+//! multipart parts of at most 64 MiB, so the file is never held in memory. The staged bytes
+//! live in the library's staging backend, which a host keeps on disk; an in-memory staging
+//! backend holds what it stages. The stage runs outside the library's write lock, which is
+//! taken for the commit only; under it the copy rechecks that no earlier run of its operation
+//! committed and that the source is still at the revision the caller read. What a failed or
+//! dropped attempt staged is cleared on a best-effort basis (see [`FileService::copy`]).
 
 use super::error::FileError;
 use super::provenance::{label_of, Caller, Committed, Write};
-use super::service::{change_model, read, FileService};
+use super::service::{change_model, FileService, Library};
 use super::statements::metadata_error;
 use super::upload::{canonical_error, committed_before, mint_file_id, parse_file_id};
 use super::view::UploadView;
 use super::COPY_OPERATION;
 use crate::canonical::{
-    commit_file_original, copy_record, file_object_id, file_object_root, read_file_original,
+    commit_staged_original, copy_record, file_object_id, file_object_root, read_file_original,
     source_reference, BoundMeta, CanonicalError, CopyInput, OwnerReadable, SOURCE_TERM,
 };
 use filesquid_core::{FileId, OperationKind};
 use filesquid_metadata::file_record::FileRecord;
 use filesquid_metadata::namespace::NamespaceRegistry;
 use filesquid_metadata::record::parse_curie_with;
-use filesquid_ocfl::read::Object;
-use filesquid_ocfl::storage::StorageBackend;
-use filesquid_ocfl::view;
+use filesquid_ocfl::change::{ChangeError, ChangeModel};
+use filesquid_ocfl::read::{Object, ReadError};
+use filesquid_ocfl::storage::{StorageBackend, StorageError, StorageKey};
 use filesquid_ocfl::write::VersionReservations;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-
-/// Largest original a copy reads, in bytes: the upload bound, since a copy holds the bytes
-/// in memory as an upload does.
-pub const MAX_COPY_BYTES: u64 = super::MAX_UPLOAD_BYTES as u64;
+use std::sync::Arc;
 
 /// Body of `POST /api/v1/files/copies`.
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -84,19 +91,40 @@ pub struct CopyView {
     pub path: Option<String>,
 }
 
-/// The source of one copy: its head record and bytes.
+/// The source of one copy: its head, its record there and where its original is stored.
 struct Source {
     file_id: FileId,
     version: String,
     record: FileRecord,
-    bytes: Vec<u8>,
+    /// The storage key of the original's content in the library's storage root.
+    key: StorageKey,
+}
+
+/// The staged content of one copy: its SHA-256 (lowercase hexadecimal) and size in bytes.
+struct StagedContent {
+    sha256: String,
+    size: u64,
+}
+
+/// One copy on its way: what was asked, by whom, of which source, into which new file.
+struct Attempt<'a> {
+    request: &'a CopyRequest,
+    caller: &'a Caller,
+    label: Option<String>,
+    registry: &'a NamespaceRegistry,
+    source: &'a Source,
+    file_id: &'a FileId,
+    /// The revision of the source the caller read.
+    expected: &'a str,
+    /// When the copy started (RFC 3339 UTC).
+    started: String,
 }
 
 impl<B, R, S> FileService<B, R, S>
 where
-    B: StorageBackend,
-    R: VersionReservations,
-    S: StorageBackend,
+    B: StorageBackend + 'static,
+    R: VersionReservations + 'static,
+    S: StorageBackend + 'static,
 {
     /// The display name a copy of the file `file_id` of `library_id` takes: its head
     /// record's. Storage I/O.
@@ -116,15 +144,29 @@ where
     }
 
     /// Copy the file `request.file_id` at its head by `caller` into a new file, in one commit
-    /// linked to the journal ([`super::Committed`]).
+    /// linked to the journal ([`super::Committed`]). The original is streamed whatever its
+    /// size: staged through [`ChangeModel::stage_file`] (OCFL-S-026) outside the library's
+    /// write lock, which is held for the commit only, and never held in memory (NFR-003).
+    /// Storage I/O.
     ///
     /// # Errors
-    /// `invalid_request` for a malformed file ID or message, or a source over
-    /// [`MAX_COPY_BYTES`]; `not_found` for an unknown library or file; a storage failure
-    /// otherwise. Nothing is published on any error, and the source never changes.
+    /// `invalid_request` for a malformed file ID or message; `not_found` for an unknown
+    /// library or file; `conflict` with `source_changed` in its message when the stored
+    /// original changed while it was read, or `source_unreadable` when it could not be read;
+    /// a storage failure otherwise. Nothing is published on any error, and the source never
+    /// changes. What the attempt staged is cleared on a best-effort basis: after a failure, and
+    /// through a drop guard when the copy is dropped before it settles. A failure to clear is
+    /// logged, and a copy dropped while the OCFL stage streams its source may leave that
+    /// stage's unfinished multipart upload behind.
     ///
-    /// `expected` is the source file object's head the caller read; any other is a
-    /// `conflict`, and nothing is copied.
+    /// `expected` is the source file object's head the caller read; any other, before the
+    /// stage or at the commit, is a `conflict`, and nothing is copied.
+    ///
+    /// The stage uses the new object's own staging area, named by its file ID: a fresh ID is
+    /// minted for each copy, and a reserved one (`request.reserved_file_id`) belongs to one
+    /// operation ID, whose second run the route refuses while the first is in flight
+    /// ([`super::command`]). A caller that passes the same reserved ID to two concurrent
+    /// copies breaks that rule and may see one attempt clear the other's stage.
     pub async fn copy(
         &self,
         request: CopyRequest,
@@ -136,54 +178,97 @@ where
         let label = label_of(request.message.as_deref())?;
         let library = self.library(&request.library_id)?;
         let registry = self.registry(&request.library_id).await?;
-        let _writing = library.writes.lock().await;
         let backend = library.files.backend.as_ref();
         let file_id = match copy_target(backend, &request).await? {
             CopyTarget::New(file_id) => file_id,
-            CopyTarget::Committed(view) => {
-                return Ok(Committed {
-                    view,
-                    entries: Vec::new(),
-                })
-            }
+            CopyTarget::Committed(view) => return Ok(resumed(view)),
         };
         let source = read_source(backend, source_id, expected).await?;
-        let reference = source_reference(&source.file_id, &source.version);
-        let record = self.copied_record(&file_id, &source, &registry, &reference)?;
         let root = file_object_root(&file_id).map_err(copy_error)?;
         let object_id = file_object_id(&file_id);
-        let prepared = self.prepare(&Write {
+        let staging = library.staging(&object_id)?;
+        let model = change_model(&library, &root, &object_id, staging);
+        let attempt = Attempt {
+            request: &request,
             caller: &caller,
-            kind: OperationKind::Copy,
             label,
+            registry: &registry,
+            source: &source,
+            file_id: &file_id,
+            expected,
+            started: self.created(),
+        };
+        let guard = StageGuard::new(&library, &root, &object_id);
+        let copied = self.stage_and_commit(&library, &model, &attempt).await;
+        match &copied {
+            Ok(_) => library.remember(&object_id, &root),
+            Err(_) => clear_staged(&model).await,
+        }
+        guard.disarm();
+        copied
+    }
+
+    /// Stage the source of `attempt` into `model`'s staging area, then commit it under the
+    /// write lock of `library`, once no earlier run committed the copy and the source is
+    /// still at the revision the caller read. Storage I/O.
+    ///
+    /// # Errors
+    /// As [`FileService::copy`]; the caller clears the staging area.
+    async fn stage_and_commit(
+        &self,
+        library: &Library<B, R, S>,
+        model: &ChangeModel<'_, B, R, S>,
+        attempt: &Attempt<'_>,
+    ) -> Result<Committed<CopyView>, FileError> {
+        let backend = library.files.backend.as_ref();
+        let source = attempt.source;
+        let path = crate::canonical::original::original_path_of(attempt.file_id, &source.record)
+            .map_err(copy_error)?;
+        let staged = stage_source(model, &path, backend, &source.key).await?;
+        let _writing = library.writes.lock().await;
+        if let CopyTarget::Committed(view) = copy_target(backend, attempt.request).await? {
+            clear_staged(model).await;
+            return Ok(resumed(view));
+        }
+        check_source_head(backend, &source.file_id, attempt.expected).await?;
+        self.commit_copy(model, attempt, &staged).await
+    }
+
+    /// Commit the staged content `staged` of `attempt` with the copy's record as the first
+    /// version of the new file object `model` writes. Storage I/O.
+    ///
+    /// # Errors
+    /// A record the metadata module refuses; as [`commit_staged_original`].
+    async fn commit_copy(
+        &self,
+        model: &ChangeModel<'_, B, R, S>,
+        attempt: &Attempt<'_>,
+        staged: &StagedContent,
+    ) -> Result<Committed<CopyView>, FileError> {
+        let (request, source, file_id) = (attempt.request, attempt.source, attempt.file_id);
+        let reference = source_reference(&source.file_id, &source.version);
+        let record = self.copied_record(attempt, staged, &reference)?;
+        let object_id = file_object_id(file_id);
+        let prepared = self.prepare(&Write {
+            caller: attempt.caller,
+            kind: OperationKind::Copy,
+            label: attempt.label.clone(),
             operation: Some(COPY_OPERATION),
             library_id: &request.library_id,
             object_id: &object_id,
             metadata: false,
             moves: BTreeMap::new(),
         })?;
-        let staging = library.staging(&object_id)?;
-        let model = change_model(&library, &root, &object_id, staging);
         let meta = BoundMeta {
             meta: prepared.meta(),
             bound: prepared.bound(),
         };
-        let committed = commit_file_original(
-            &model,
-            &OwnerReadable,
-            &file_id,
-            &record,
-            None,
-            &source.bytes,
-            meta,
-        )
-        .await
-        .map_err(copy_error)?;
-        let receipt =
-            committed.ok_or_else(|| FileError::internal("a new copy wrote no version"))?;
-        library.remember(&object_id, &root);
+        let content = (staged.sha256.as_str(), staged.size);
+        let receipt = commit_staged_original(model, file_id, &record, content, meta)
+            .await
+            .map_err(copy_error)?;
         let view = CopyView {
-            library_id: request.library_id,
+            library_id: request.library_id.clone(),
             file_id: file_id.as_str().to_string(),
             object_id: receipt.object_id.clone(),
             version: receipt.version.to_string(),
@@ -195,23 +280,23 @@ where
         Ok(prepared.finish(view, &receipt))
     }
 
-    /// The record of the copy `file_id` of `source`: the source's record rebound to the copy,
-    /// naming the source `reference` as its asserted `dcterms:source`, with this service's
-    /// clock. Pure but for the clock.
+    /// The record of the copy `attempt` makes, citing the staged content `staged`: the
+    /// source's record rebound to the copy, naming the source `reference` as its asserted
+    /// `dcterms:source`, finished at this service's clock. Pure but for the clock.
     fn copied_record(
         &self,
-        file_id: &FileId,
-        source: &Source,
-        registry: &NamespaceRegistry,
+        attempt: &Attempt<'_>,
+        staged: &StagedContent,
         reference: &str,
     ) -> Result<FileRecord, FileError> {
-        let started = self.created();
+        let registry = attempt.registry;
         let input = CopyInput {
-            source: &source.record,
-            started: &started,
+            source: &attempt.source.record,
+            started: &attempt.started,
             finished: &self.created(),
         };
-        let mut record = copy_record(file_id, &input, &source.bytes).map_err(copy_error)?;
+        let content = (staged.sha256.as_str(), staged.size);
+        let mut record = copy_record(attempt.file_id, &input, content).map_err(copy_error)?;
         let (namespace, _) = parse_curie_with(&format!("dcterms:{SOURCE_TERM}"), registry)
             .map_err(metadata_error)?;
         record
@@ -222,8 +307,21 @@ where
     }
 }
 
-/// The head record and bytes of the file `file_id`, read whole within [`MAX_COPY_BYTES`] once
-/// its head is `expected`: a stale revision is refused before any byte is read.
+/// The answer of a copy an earlier run of the same operation committed: nothing is written,
+/// so it has no journal entries of its own. Pure.
+fn resumed(view: CopyView) -> Committed<CopyView> {
+    Committed {
+        view,
+        entries: Vec::new(),
+    }
+}
+
+/// The head record of the file `file_id` and the storage key of its original's content, once
+/// its head is `expected`: a stale revision is refused before any byte is read. Storage I/O.
+///
+/// # Errors
+/// `not_found` for an unknown file; `conflict` for a head that is not `expected`; a storage
+/// failure otherwise.
 async fn read_source<B: StorageBackend>(
     backend: &B,
     file_id: FileId,
@@ -239,21 +337,231 @@ async fn read_source<B: StorageBackend>(
     if head.to_string() != expected {
         return Err(stale_source());
     }
-    let size = view::file_details(&object, &head, &original.path)
-        .await?
-        .size;
-    if size > MAX_COPY_BYTES {
-        return Err(FileError::invalid(format!(
-            "A copy reads at most {MAX_COPY_BYTES} bytes; this file is larger."
-        )));
-    }
-    let bytes = read(&object, &head, &original.path, 0, size).await?;
+    let state = object.state(&head)?;
+    let file = state
+        .get(&original.path)
+        .ok_or_else(|| ReadError::PathNotFound {
+            version: head.to_string(),
+            path: original.path.clone(),
+        })?;
+    let key = object.content_key(file)?;
     Ok(Source {
         file_id,
         version: head.to_string(),
         record: original.record,
-        bytes,
+        key,
     })
+}
+
+/// Refuse unless the head of the file object of `file_id` is still `expected`: a source that
+/// moved on while its copy was staged is not copied. Storage I/O.
+///
+/// # Errors
+/// `conflict` for another head; a storage failure otherwise.
+async fn check_source_head<B: StorageBackend>(
+    backend: &B,
+    file_id: &FileId,
+    expected: &str,
+) -> Result<(), FileError> {
+    let root = file_object_root(file_id).map_err(copy_error)?;
+    let object = Object::open(backend, &root).await?;
+    match object.head().to_string() == expected {
+        true => Ok(()),
+        false => Err(stale_source()),
+    }
+}
+
+/// Stage the stored content at `key` of `source` as the logical file `path` of `model`'s
+/// object, after clearing what an earlier attempt left staged, and answer its SHA-256 and
+/// size: the size the content has before and after the stage. The content is read in ranges
+/// of at most 8 MiB, at most twice, and written in multipart parts of at most 64 MiB
+/// (OCFL-S-026). Storage I/O.
+///
+/// # Errors
+/// `conflict` with `source_changed` or `source_unreadable` in its message (see
+/// [`FileService::copy`]); a storage failure otherwise.
+async fn stage_source<B, R, S>(
+    model: &ChangeModel<'_, B, R, S>,
+    path: &str,
+    source: &B,
+    key: &StorageKey,
+) -> Result<StagedContent, FileError>
+where
+    B: StorageBackend,
+    R: VersionReservations,
+    S: StorageBackend,
+{
+    model.reset().await?;
+    let before = source.head(key).await.map_err(source_unreadable)?;
+    let sha256 = model
+        .stage_file(path, source, key.as_str())
+        .await
+        .map_err(|err| stage_error(err, key))?;
+    let after = source.head(key).await.map_err(source_unreadable)?;
+    match after == before {
+        true => Ok(StagedContent {
+            sha256,
+            size: before.size,
+        }),
+        false => Err(source_changed()),
+    }
+}
+
+/// The cleanup of one copy's staging area when the copy is dropped before it settles: a
+/// request cancelled while its source is staged, or while it waits for the library's write
+/// lock or its commit, drops the copy's future, so the cleanup that follows the attempt never
+/// runs. Dropped while armed, the guard hands the cleanup to a task on the current Tokio
+/// runtime, since clearing a staging area is asynchronous. The copy disarms it once the
+/// attempt settled (committed, or failed and cleared).
+///
+/// A multipart upload the OCFL module's stage had open when the copy was dropped is the
+/// module's own and is not cleared here.
+struct StageGuard<B, R, S>
+where
+    B: StorageBackend + 'static,
+    R: VersionReservations + 'static,
+    S: StorageBackend + 'static,
+{
+    library: Option<Arc<Library<B, R, S>>>,
+    root: String,
+    object_id: String,
+}
+
+impl<B, R, S> StageGuard<B, R, S>
+where
+    B: StorageBackend + 'static,
+    R: VersionReservations + 'static,
+    S: StorageBackend + 'static,
+{
+    /// An armed guard of the staging area of `object_id` at `root` of `library`. Pure.
+    fn new(library: &Arc<Library<B, R, S>>, root: &str, object_id: &str) -> Self {
+        Self {
+            library: Some(library.clone()),
+            root: root.to_string(),
+            object_id: object_id.to_string(),
+        }
+    }
+
+    /// The attempt settled; nothing is left for the guard to clear. Pure.
+    fn disarm(mut self) {
+        self.library = None;
+    }
+}
+
+impl<B, R, S> Drop for StageGuard<B, R, S>
+where
+    B: StorageBackend + 'static,
+    R: VersionReservations + 'static,
+    S: StorageBackend + 'static,
+{
+    /// Spawn the clearing of a copy that was dropped before it settled; without a Tokio
+    /// runtime the failure is logged and the stage stays: only an attempt that reuses its
+    /// file ID (a retry of the same operation) resets it, and a copy with a fresh ID never does.
+    fn drop(&mut self) {
+        let Some(library) = self.library.take() else {
+            return;
+        };
+        let (root, object_id) = (
+            std::mem::take(&mut self.root),
+            std::mem::take(&mut self.object_id),
+        );
+        spawn_clear(library, root, object_id);
+    }
+}
+
+/// Hand the clearing of the staging area of `object_id` at `root` of `library`, which a
+/// dropped copy left, to a task on the current Tokio runtime; without a runtime the failure is
+/// logged and the stage stays, as [`StageGuard`]'s drop documents. Spawns a task.
+#[cfg(not(target_arch = "wasm32"))]
+fn spawn_clear<B, R, S>(library: Arc<Library<B, R, S>>, root: String, object_id: String)
+where
+    B: StorageBackend + 'static,
+    R: VersionReservations + 'static,
+    S: StorageBackend + 'static,
+{
+    let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+        tracing::warn!("a dropped copy's staging area could not be cleared: no runtime");
+        return;
+    };
+    runtime.spawn(async move { clear_abandoned(&library, &root, &object_id).await });
+}
+
+/// On `wasm32` the storage backends need not be `Send` (API-S-010), so a dropped copy's
+/// staging area is not cleared from a task: the stage stays, and the warning is logged
+/// (best-effort, as [`FileService::copy`] documents). Pure but for the log.
+#[cfg(target_arch = "wasm32")]
+fn spawn_clear<B, R, S>(_library: Arc<Library<B, R, S>>, _root: String, _object_id: String) {
+    tracing::warn!("a dropped copy's staging area is not cleared on this target");
+}
+
+/// Clear the staging area of `object_id` at `root` of `library`, which a dropped copy left;
+/// a failure is logged. Storage I/O.
+#[cfg(not(target_arch = "wasm32"))]
+async fn clear_abandoned<B, R, S>(library: &Library<B, R, S>, root: &str, object_id: &str)
+where
+    B: StorageBackend,
+    R: VersionReservations,
+    S: StorageBackend,
+{
+    match library.staging(object_id) {
+        Ok(staging) => clear_staged(&change_model(library, root, object_id, staging)).await,
+        Err(err) => {
+            tracing::warn!(error = ?err, "a dropped copy's staging area could not be opened")
+        }
+    }
+}
+
+/// Clear what a copy that failed, or that an earlier run had already committed, left in its
+/// object's staging area, on a best-effort basis: a failure to clear is logged and the staged
+/// bytes may remain (only an attempt that reuses the file ID resets that area).
+/// Storage I/O.
+async fn clear_staged<B, R, S>(model: &ChangeModel<'_, B, R, S>)
+where
+    B: StorageBackend,
+    R: VersionReservations,
+    S: StorageBackend,
+{
+    if let Err(err) = model.reset().await {
+        tracing::warn!(error = %err, "a copy's staging area could not be cleared");
+    }
+}
+
+/// The refusal of a copy whose stored original changed while it was read. Pure.
+fn source_changed() -> FileError {
+    FileError::conflict(
+        "source_changed: the file changed while it was read, so nothing was copied; try again.",
+    )
+}
+
+/// The refusal of a copy whose stored original could not be read; the storage error is
+/// logged, never answered, since it names a storage key. Pure but for the log.
+fn source_unreadable(err: StorageError) -> FileError {
+    tracing::warn!(error = %err, "the stored original of a copy's source could not be read");
+    FileError::conflict(
+        "source_unreadable: the file could not be read, so nothing was copied; try again.",
+    )
+}
+
+/// The error of a failed stage: a source that changed between its reads is
+/// [`source_changed`], a failed read of the source at `key` is [`source_unreadable`], anything
+/// else (the staging area's own failures) as the change model's error. Pure but for the log.
+fn stage_error(err: ChangeError, key: &StorageKey) -> FileError {
+    match err {
+        ChangeError::SourceChanged { .. } => source_changed(),
+        ChangeError::Storage(storage) if names_key(&storage, key) => source_unreadable(storage),
+        other => other.into(),
+    }
+}
+
+/// Whether `err` is about `key` (a read of the source, rather than of the staging area, whose
+/// keys are the area's own). Pure.
+fn names_key(err: &StorageError, key: &StorageKey) -> bool {
+    match err {
+        StorageError::NotFound { key: named }
+        | StorageError::Io { key: named, .. }
+        | StorageError::InvalidKey { key: named, .. } => named == key.as_str(),
+        _ => false,
+    }
 }
 
 /// The refusal of a copy whose source moved past the revision the caller read.

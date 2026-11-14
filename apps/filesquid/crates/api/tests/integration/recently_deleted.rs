@@ -81,7 +81,7 @@ impl Trash {
         let served = FileLibrary {
             backend: rig.root.clone(),
             reservations: rig.leases.clone(),
-            staging: rig.staging.clone(),
+            staging: rig.api_staging.clone(),
             staging_prefix: "studio".to_string(),
         };
         assert!(rig.service.open_library(&studio, served));
