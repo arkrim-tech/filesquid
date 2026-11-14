@@ -46,12 +46,9 @@ Feature: Production-build browsing performance
       | open an unseen folder and go back            |
       | narrow the view with the sidebar filter      |
 
-  # KNOWN GAP (owner decision, Task UI-F3.1 Walkthrough, Finding 4): on the Large catalog the "open an unseen folder and go back"
-  # row misses the result gate (p95 about 120 to 135 ms against 100 ms) because the navigation tree draws every node of a level,
-  # up to its cap of 10,000 nodes. The Playwright test names these records a known gap: its other assertions stay strict and it
-  # turns red the day every one of the records holds, as the cue to remove the gap. The Small catalog meets the gate (p95 about 70 ms).
-  # Owner decision 2026-10-30, verbatim: "Okay implement all these recommendations": the tree is virtualised by Task UI-F3.4, which
-  # removes this known gap (see virtualised_navigation_tree_UI-S-035.feature); the cap of 10,000 nodes a level stays for the MVP.
+  # Every row above is gated strictly on the Large catalog, "open an unseen folder and go back" included: the navigation tree
+  # draws only its window (Task UI-F3.4, owner decision 2026-10-30, verbatim: "Okay implement all these recommendations"), so
+  # no record is declared as an exception (see virtualised_navigation_tree_UI-S-035.feature). The cap of 10,000 nodes a level stays.
 
   Scenario: A prepared image paints the correct image within 100 milliseconds
     Given a folder of 60 different 1280 x 720 images is open in the viewer with the file panel

@@ -25,7 +25,7 @@ import {
 } from "./browse-classes";
 import { Catalogue, PROFILES } from "./fixtures";
 import { openView } from "./harness";
-import { assertBudgets, latency, publish, treeGap, type Measurement } from "./report";
+import { assertBudgets, latency, publish, type Measurement } from "./report";
 
 /** The feedback record of a class: the NFR-002 budget and the tail limit. */
 function feedback(profile: string, id: string, ack: readonly number[], notes = {}): Measurement {
@@ -115,19 +115,12 @@ test.describe("warm browse, Large catalog", () => {
       result("large", "back", run.back.ready),
     ];
     await publish(info, records);
-    // The functional assertions are strict; only the tree's known gap (Finding 4) is exempt.
+    // Gated strictly since the navigation tree draws only its window (Task UI-F3.4): no record
+    // of this class is a known gap.
+    assertBudgets(records);
     expect(run.folders).toBeGreaterThanOrEqual(BUDGETS.samples.warm);
     expect(session.errors).toEqual([]);
     expect(session.host.unserved).toEqual([]);
-    assertBudgets(
-      records,
-      treeGap(
-        "warm-open-folder-feedback-large",
-        "warm-open-folder-result-large",
-        "warm-back-feedback-large",
-        "warm-back-result-large",
-      ),
-    );
   });
 
   test("narrowing with the sidebar filter", async ({ page }, info) => {

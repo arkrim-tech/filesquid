@@ -1,10 +1,14 @@
+// @vitest-environment node
 /**
- * The known-gap rule of the performance suite (Task UI-F3.1, Finding 4): a gap exempts only
- * the latency limits its records are known to miss (a percentile or the maximum above its
- * limit). A record that has too few samples, or a record outside the gap, still fails the run.
+ * The known-gap rule of the performance suite (Task UI-F3.1): a gap exempts only the latency
+ * limits its records are known to miss (a percentile or the maximum above its limit). A record
+ * that has too few samples, or a record outside the gap, still fails the run. The suite
+ * declares no gap now (the navigation tree's closed with Task UI-F3.4), so the gap here is the
+ * test's own.
  */
+import { readFileSync, readdirSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { partitionFailures, treeGap } from "../performance/known-gap";
+import { partitionFailures, type KnownGap } from "../performance/known-gap";
 import type { Measurement } from "../performance/report";
 
 /** A record with the given failures. */
@@ -12,7 +16,7 @@ function record(id: string, failures: string[]): Measurement {
   return { id, title: id, budget: "limit", gated: true, warmup: 20, failures, notes: {}, raw: [] };
 }
 
-const gap = treeGap("open-result", "open-feedback");
+const gap: KnownGap = { ids: ["open-result", "open-feedback"], reason: "a gap for this test" };
 
 describe("partitionFailures", () => {
   it("tolerates a limit a gap record misses and keeps every other failure strict", () => {
@@ -37,6 +41,21 @@ describe("partitionFailures", () => {
     const { strict, tolerated } = partitionFailures([record("open-result", [])], gap);
     expect(strict).toEqual([]);
     expect(tolerated).toEqual([]);
+  });
+
+  // UI-S-035, Task UI-F3.4: once the tree is virtualised the known gap MUST be removed, so
+  // every record of the Large open-folder and back classes is gated strictly.
+  it("no performance spec declares a known gap", () => {
+    const dir = new URL("../performance/", import.meta.url);
+    const specs = readdirSync(dir).filter((name) => name.endsWith(".perf.spec.ts"));
+    expect(specs.length).toBeGreaterThan(5);
+    for (const name of specs) {
+      const source = readFileSync(new URL(name, dir), "utf8");
+      expect(source, name).not.toMatch(/treeGap|KnownGap/);
+      // `assertBudgets` takes the records alone: a second argument would be a gap.
+      expect(source, name).not.toMatch(/assertBudgets\(\s*[\w.[\]]+\s*,/);
+    }
+    expect(readFileSync(new URL("known-gap.ts", dir), "utf8")).not.toMatch(/treeGap/);
   });
 
   it("is all strict without a gap", () => {

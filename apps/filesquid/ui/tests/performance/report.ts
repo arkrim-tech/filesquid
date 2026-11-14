@@ -234,4 +234,4 @@ export function assertBudgets(records: readonly Measurement[], gap?: KnownGap): 
   expect(tolerated.length, `the known gap is closed, remove it: ${gap.reason}`).toBeGreaterThan(0);
 }
 
-export { treeGap, type KnownGap } from "./known-gap";
+export type { KnownGap } from "./known-gap";
