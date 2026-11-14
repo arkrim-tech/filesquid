@@ -276,8 +276,8 @@ fn deleted_file(name: &str) -> (Fixture, LibraryId, FileId) {
 fn later_service(fx: &Fixture, expiry: ExpiryMode) -> filesquid_api::library::LibraryService {
     let settings = Arc::new(MemorySettings::new());
     let stored = InstallationSettings {
-        default_retention_days: 30,
         expiry,
+        ..InstallationSettings::default()
     };
     settings
         .store(

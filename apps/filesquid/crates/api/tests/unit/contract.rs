@@ -427,7 +427,8 @@ fn sample_body(method: &Method, path: &str) -> Body {
         let settings = serde_json::json!({
             "envelope": {"schema_version": 1, "operation_id": "op-settings",
                          "expected_revision": "0", "scope": "installation"},
-            "input": {"default_retention_days": 30, "expiry": "keep_version_history"},
+            "input": {"default_retention_days": 30, "expiry": "keep_version_history",
+                      "expiry_interval_minutes": 60},
         });
         return Body::from(settings.to_string());
     }
@@ -1686,10 +1687,12 @@ fn recently_deleted_samples() -> Vec<(&'static str, Vec<Value>)> {
     let settings = InstallationSettings {
         default_retention_days: 30,
         expiry: ExpiryMode::KeepVersionHistory,
+        expiry_interval_minutes: 60,
     };
     let view = RecentlyDeletedSettingsView {
         default_retention_days: 30,
         expiry: ExpiryMode::DeleteAllVersionHistory,
+        expiry_interval_minutes: 1_440,
         may_change: true,
         libraries: vec![LibraryRetentionView {
             library_id: library.as_str().into(),

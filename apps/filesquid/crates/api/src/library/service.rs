@@ -16,7 +16,7 @@ use super::catalog::{
 };
 use super::command::{CommandRequest, CommandResult};
 use super::plan::{Planned, Planner};
-use super::policy::{DeletionPolicy, VisibilityFilter};
+use super::policy::{is_expiry_interval, is_retention, DeletionPolicy, VisibilityFilter};
 use super::query::{Cursor, LibraryQuery, Page, QueryAnswer, QueryRequest};
 use super::settings::{InstallationSettings, RetentionSettings, SETTINGS_OPERATION};
 use super::{LibraryError, LOG_TARGET};
@@ -91,8 +91,9 @@ impl LibraryService {
     /// changes nothing stores nothing.
     ///
     /// # Errors
-    /// `invalid_retention` for a period outside 1 to 3,650 days; `unavailable` when no store
-    /// is installed or it fails. A refusal is journaled once as `failed`.
+    /// `invalid_retention` for a period outside 1 to 3,650 days; `invalid_expiry_interval`
+    /// for an expiry interval outside 5 to 1,440 minutes; `unavailable` when no store is
+    /// installed or it fails. A refusal is journaled once as `failed` and stores nothing.
     pub fn set_installation_settings(
         &self,
         actor: &str,
@@ -108,10 +109,16 @@ impl LibraryService {
         actor: &str,
         settings: InstallationSettings,
     ) -> Result<InstallationSettings, LibraryError> {
-        if !settings.is_valid() {
+        if !is_retention(settings.default_retention_days) {
             return Err(LibraryError::invalid(
                 "invalid_retention",
                 "Choose a period between 1 and 3,650 days.",
+            ));
+        }
+        if !is_expiry_interval(settings.expiry_interval_minutes) {
+            return Err(LibraryError::invalid(
+                "invalid_expiry_interval",
+                "Choose an interval between 5 and 1,440 minutes.",
             ));
         }
         let store = self.settings.as_ref().ok_or(LibraryError::Unavailable)?;

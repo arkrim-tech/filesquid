@@ -1490,12 +1490,12 @@ export interface paths {
         };
         /**
          * Read the Recently deleted settings
-         * @description The installation default retention (30 days unless changed), the expiry setting (`keep_version_history` by default), whether the caller may change them (only the admin; on the desktop the owner), and each library the caller may read with its own period and revision (Task API-F2.15; API-S-019, ADR 041 Decisions 10 and 11). Readable by anyone who may read a library.
+         * @description The installation default retention (30 days unless changed), the expiry setting (`keep_version_history` by default), the expiry interval (`expiry_interval_minutes`, 60 minutes unless changed; Task API-F2.30), whether the caller may change them (only the admin; on the desktop the owner), and each library the caller may read with its own period and revision (Task API-F2.15; API-S-019, ADR 041 Decisions 10 and 11). Readable by anyone who may read a library.
          */
         get: operations["getRecentlyDeletedSettings"];
         /**
          * Change the Recently deleted settings
-         * @description Set the installation default retention (1 to 3,650 days, invalid_retention otherwise) and the expiry setting, sent as a command: the CommandEnvelope (scope `installation`; expected_revision is not compared, because the settings carry no revision) and the settings as `input`. Only the admin may (on the desktop, the owner); any other caller is 403 forbidden. The change is journaled once as settings.recently_deleted.set, without its values, and never changes the purge_after of a file already deleted. A change to the current values stores nothing. The answer is a `committed` CommandOutcome with the settings now in force as `result`; a repeated operation_id of the same command answers that outcome again, the same operation_id with other settings is invalid_request, and one still running is 409 conflict.
+         * @description Set the installation default retention (1 to 3,650 days, invalid_retention otherwise), the expiry setting and the expiry interval (`expiry_interval_minutes`, a whole number of minutes from 5 to 1,440; any other value is invalid_request and nothing is stored; Task API-F2.30), sent as a command: the CommandEnvelope (scope `installation`; expected_revision is not compared, because the settings carry no revision) and the settings as `input`. Only the admin may (on the desktop, the owner); any other caller is 403 forbidden. The change is journaled once as settings.recently_deleted.set, without its values, and never changes the purge_after of a file already deleted. A changed interval takes effect for the host's next expiry run without a restart. A change to the current values stores nothing. The answer is a `committed` CommandOutcome with the settings now in force as `result`; a repeated operation_id of the same command answers that outcome again, the same operation_id with other settings is invalid_request, and one still running is 409 conflict.
          */
         put: operations["putRecentlyDeletedSettings"];
         post?: never;
@@ -3407,11 +3407,13 @@ export interface components {
             /** @description Left out for `one_by_one`. */
             cause?: components["schemas"]["DeletionCause"];
         };
-        /** @description The installation's Recently deleted settings (ADR 041 Decisions 10 and 11), kept in the host's operational store. */
+        /** @description The installation's Recently deleted settings (ADR 041 Decisions 10 and 11; the expiry interval, API-S-019), kept in the host's operational store. */
         InstallationSettings: {
             /** @description Days a deleted file stays in Recently deleted in a library without its own period (30 by default). */
             default_retention_days: number;
             expiry: components["schemas"]["ExpiryMode"];
+            /** @description Minutes between two expiry runs of the host: a whole number from 5 to 1,440 (60 by default). A changed interval takes effect for the next run without a restart: that run falls due one new interval after the start of the last run, or at once when that time has already passed. A value outside the bounds or not a whole number is refused as `invalid_request` and nothing is stored. */
+            expiry_interval_minutes: number;
         };
         /** @description One library's own retention in the settings answer. */
         LibraryRetention: {
@@ -3431,6 +3433,8 @@ export interface components {
             /** @description The installation default retention, in days. */
             default_retention_days: number;
             expiry: components["schemas"]["ExpiryMode"];
+            /** @description Minutes between two expiry runs of the host (60 unless changed). Expiry runs at the host's launch and then at this interval. */
+            expiry_interval_minutes: number;
             /** @description Whether the caller may change the installation settings: only the admin (on the desktop, the owner). */
             may_change: boolean;
             /** @description The libraries the caller may read, with their own periods. */

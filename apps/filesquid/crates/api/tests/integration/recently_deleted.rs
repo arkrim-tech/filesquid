@@ -13,7 +13,7 @@ mod drive_catalog;
 use axum::http::{Method, StatusCode};
 use drive_catalog::{DriveCatalog, COLLECTION, REPOSITORY};
 use files_fixture::{encode, operation_id, upload_facts, Answer, FilesRig, LIBRARY};
-use filesquid_api::auth::Principal;
+use filesquid_api::auth::{Action, Authenticator, Authoriser, Policy, Principal, Resource};
 use filesquid_api::files::FileLibrary;
 use filesquid_api::journal::{JournalEntry, Outcome};
 use filesquid_api::library::{
@@ -60,7 +60,11 @@ struct Trash {
 impl Trash {
     /// Build the rig; `access` decides what the owner may read.
     async fn new(access: Option<Arc<dyn NavigationAccess>>) -> Self {
-        let rig = FilesRig::new().await;
+        Self::over(FilesRig::new().await, access).await
+    }
+
+    /// Build the rig over `rig`; `access` decides what its caller may read.
+    async fn over(rig: FilesRig, access: Option<Arc<dyn NavigationAccess>>) -> Self {
         let drive = DriveCatalog::new(LIBRARY);
         add_studio(&drive);
         let navigation = match access {
@@ -436,9 +440,12 @@ async fn the_settings_answer_the_default_the_expiry_setting_and_each_library_s_p
     assert_eq!(libraries[0]["retention_days"], Value::Null);
     assert_eq!(libraries[1]["retention_days"], 90);
     for (n, input) in [
-        json!({"default_retention_days": 0, "expiry": "keep_version_history"}),
-        json!({"default_retention_days": 3651, "expiry": "keep_version_history"}),
-        json!({"default_retention_days": 30, "expiry": "forever"}),
+        json!({"default_retention_days": 0, "expiry": "keep_version_history",
+               "expiry_interval_minutes": 60}),
+        json!({"default_retention_days": 3651, "expiry": "keep_version_history",
+               "expiry_interval_minutes": 60}),
+        json!({"default_retention_days": 30, "expiry": "forever", "expiry_interval_minutes": 60}),
+        json!({"default_retention_days": 30, "expiry": "keep_version_history"}),
     ]
     .into_iter()
     .enumerate()
@@ -455,7 +462,8 @@ async fn the_settings_answer_the_default_the_expiry_setting_and_each_library_s_p
             answer.json()
         );
     }
-    let input = json!({"default_retention_days": 14, "expiry": "delete_all_version_history"});
+    let input = json!({"default_retention_days": 14, "expiry": "delete_all_version_history",
+                       "expiry_interval_minutes": 60});
     let set = settings_command("op-settings", "installation", input.clone());
     let answer = trash
         .rig
@@ -481,7 +489,8 @@ async fn the_settings_answer_the_default_the_expiry_setting_and_each_library_s_p
     let reused = settings_command(
         "op-settings",
         "installation",
-        json!({"default_retention_days": 15, "expiry": "keep_version_history"}),
+        json!({"default_retention_days": 15, "expiry": "keep_version_history",
+               "expiry_interval_minutes": 60}),
     );
     let refused = trash
         .rig
@@ -572,4 +581,126 @@ async fn a_library_the_caller_may_not_read_is_left_out_of_recently_deleted() {
         settings["libraries"].as_array().expect("libraries").len(),
         1
     );
+}
+
+/// The settings input with the defaults and `interval` (any JSON value).
+fn interval_input(interval: Value) -> Value {
+    json!({"default_retention_days": 30, "expiry": "keep_version_history",
+           "expiry_interval_minutes": interval})
+}
+
+/// `PUT` the settings `input` under a fresh operation ID.
+async fn put_settings(trash: &Trash, input: Value) -> Answer {
+    let body = settings_command(&operation_id(), "installation", input);
+    trash
+        .rig
+        .send_command(Method::PUT, "/api/v1/settings/recently-deleted", &body)
+        .await
+}
+
+/// The `expiry_interval_minutes` the settings `GET` answers.
+async fn read_interval(trash: &Trash) -> Value {
+    let read = trash.rig.get("/api/v1/settings/recently-deleted").await;
+    assert_eq!(read.status, StatusCode::OK, "{:?}", read.json());
+    read.json()["expiry_interval_minutes"].clone()
+}
+
+/// Task API-F2.30 (API-S-019 **Routes and expiry runs**): the settings `GET` answers
+/// `expiry_interval_minutes`, 60 by default; the admin stores 5 and 1,440; each change is
+/// journaled once without its value and the current value stores nothing.
+#[tokio::test]
+async fn the_admin_reads_and_sets_the_expiry_interval_within_its_bounds() {
+    let trash = Trash::new(None).await;
+    assert_eq!(read_interval(&trash).await, 60);
+    let same = put_settings(&trash, interval_input(json!(60))).await;
+    assert_eq!(same.status, StatusCode::OK, "{:?}", same.json());
+    assert!(
+        trash.settings.journal_entries().is_empty(),
+        "the current value stores nothing"
+    );
+    for (n, minutes) in [5, 1_440].into_iter().enumerate() {
+        let answer = put_settings(&trash, interval_input(json!(minutes))).await;
+        assert_eq!(answer.status, StatusCode::OK, "{:?}", answer.json());
+        assert_eq!(answer.json()["kind"], "committed");
+        assert_eq!(answer.json()["result"]["expiry_interval_minutes"], minutes);
+        assert_eq!(read_interval(&trash).await, minutes);
+        let stored = trash.settings.journal_entries();
+        assert_eq!(stored.len(), n + 1, "journaled once");
+        assert_eq!(stored[n].operation, "settings.recently_deleted.set");
+        assert!(stored[n].target_ids.is_empty(), "no value is journaled");
+        let text = serde_json::to_string(&stored[n]).expect("entry");
+        assert!(!text.contains("expiry_interval"), "{text}");
+    }
+}
+
+/// Task API-F2.30: 4, 1,441, a fraction and any value that is not a whole number are
+/// refused as `invalid_request` with nothing stored, each refusal journaled once.
+#[tokio::test]
+async fn an_expiry_interval_outside_the_bounds_or_not_whole_is_refused_with_nothing_stored() {
+    let trash = Trash::new(None).await;
+    let bad = [
+        json!(4),
+        json!(1_441),
+        json!(1.5),
+        json!(-5),
+        json!("60"),
+        Value::Null,
+    ];
+    for (n, interval) in bad.into_iter().enumerate() {
+        let answer = put_settings(&trash, interval_input(interval.clone())).await;
+        assert_eq!(
+            answer.status,
+            StatusCode::BAD_REQUEST,
+            "{interval}: {:?}",
+            answer.json()
+        );
+        assert_eq!(answer.json()["code"], "invalid_request", "{interval}");
+        assert_eq!(read_interval(&trash).await, 60, "nothing is stored");
+        assert!(trash.settings.journal_entries().is_empty());
+        let refusals = trash.rig.journaled("settings.recently_deleted.set");
+        assert_eq!(refusals.len(), n + 1, "{interval}: journaled once");
+        assert_eq!(refusals[n].outcome, Outcome::Failed);
+    }
+}
+
+/// The token of the caller who is not the admin.
+const MEMBER_TOKEN: &str = "member-token";
+
+/// A signed-in caller who may do everything but change the installation settings: the
+/// stand-in for a server member until the server has accounts.
+struct Member;
+
+impl Authenticator for Member {
+    fn authenticate(&self, token: &str) -> Option<Principal> {
+        (token == MEMBER_TOKEN).then_some(Principal::Administrator)
+    }
+}
+
+impl Policy for Member {
+    fn permits(&self, _principal: &Principal, action: Action, _resource: &Resource) -> bool {
+        action != Action::ConfigureRecentlyDeleted
+    }
+}
+
+/// Task API-F2.30: a caller who is not the admin reads the interval, is told they may not
+/// change it, and is refused `forbidden` with nothing stored.
+#[tokio::test]
+async fn a_caller_who_is_not_the_admin_may_not_change_the_expiry_interval() {
+    let authoriser = Authoriser::new(Arc::new(Member), Arc::new(Member));
+    let rig = FilesRig::with_authoriser(authoriser, MEMBER_TOKEN.to_string()).await;
+    let trash = Trash::over(rig, None).await;
+    let read = trash.rig.get("/api/v1/settings/recently-deleted").await;
+    assert_eq!(read.status, StatusCode::OK, "{:?}", read.json());
+    assert_eq!(read.json()["expiry_interval_minutes"], 60);
+    assert_eq!(read.json()["may_change"], false);
+    let refused = put_settings(&trash, interval_input(json!(30))).await;
+    assert_eq!(
+        refused.status,
+        StatusCode::FORBIDDEN,
+        "{:?}",
+        refused.json()
+    );
+    assert_eq!(refused.json()["code"], "forbidden");
+    assert_eq!(read_interval(&trash).await, 60, "nothing is stored");
+    assert!(trash.settings.journal_entries().is_empty());
 }
