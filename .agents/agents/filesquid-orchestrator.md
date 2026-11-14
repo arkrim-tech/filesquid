@@ -137,7 +137,8 @@ INSTRUCTIONS FOR EVERY AGENT AND SESSION
   human review comment, or answer it with reasoning and evidence. Post exactly ONE reply
   per thread, then resolve it (the GraphQL resolveReviewThread mutation when GraphQL is
   available, else the resolution route your environment provides, else ask the owner;
-  check `isResolved`, not the reply). Answer
+  check `isResolved`, not the reply). A reviewer's later request or question on that
+  thread is a new finding and gets one reply of its own. Answer
   findings that have no thread in one PR comment per review. Leave a security finding you
   disagree with open for the owner. Push the fixes after the hook passes.
 - Repeat, as many rounds as needed, until CodeRabbit's latest review is of the head
