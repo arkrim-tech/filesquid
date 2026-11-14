@@ -1,0 +1,20 @@
+.claude/agents/filesquid-modules-engineer.md
+  h_10c93bba641ef0 1
+.claude/agents/filesquid-orchestrator.md
+  h_10c93bba641ef0 1
+.claude/agents/filesquid-platform-engineer.md
+  h_10c93bba641ef0 1
+.claude/agents/filesquid-ui-engineer.md
+  h_10c93bba641ef0 1
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9902a0a584bcc05556b9686e841304c798059700",
+  "prompts": {},
+  "humans": {
+    "h_10c93bba641ef0": {
+      "author": "Peter Van Garderen <vangarderen.peter@gmail.com>"
+    }
+  }
+}
