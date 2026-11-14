@@ -11,7 +11,7 @@
 //! A copy of any size is streamed (Task API-F2.26; API-S-011, NFR-003, owner decision
 //! 2026-10-31, verbatim: "build streamed copies"): the source's stored original is staged
 //! into the new object's staging area through `ChangeModel::stage_file` (OCFL-S-026), as the
-//! import stages a source ([`super::import`]), read in ranges of at most 8 MiB and written in
+//! import stages a source (`FileService::import_original`), read in ranges of at most 8 MiB and written in
 //! multipart parts of at most 64 MiB, so the file is never held in memory. The staged bytes
 //! live in the library's staging backend, which a host keeps on disk; an in-memory staging
 //! backend holds what it stages. The stage runs outside the library's write lock, which is
