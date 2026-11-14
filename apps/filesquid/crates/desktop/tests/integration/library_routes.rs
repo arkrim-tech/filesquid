@@ -1022,13 +1022,15 @@ fn recently_deleted_settings_and_the_expiry_job_are_wired() {
     let set = json!({
         "envelope": {"schema_version": 1, "operation_id": "op-settings",
                      "expected_revision": "0", "scope": "installation"},
-        "input": { "default_retention_days": 45, "expiry": "keep_version_history" },
+        "input": { "default_retention_days": 45, "expiry": "keep_version_history",
+                   "expiry_interval_minutes": 15 },
     });
     let (status, changed) =
         desktop.send("PUT", "/api/v1/settings/recently-deleted", Some(set), true);
     assert_eq!(status, 200, "{changed}");
     assert_eq!(changed["kind"], "committed");
     assert_eq!(changed["result"]["default_retention_days"], 45);
+    assert_eq!(changed["result"]["expiry_interval_minutes"], 15);
     let jobs = open_jobs(&desktop.dir, &desktop.host).expect("jobs");
     let task = ExpiryTask::new(
         service,
@@ -1036,10 +1038,56 @@ fn recently_deleted_settings_and_the_expiry_job_are_wired() {
         jobs.clone(),
         &installation(),
     );
+    assert_eq!(task.interval_minutes().expect("interval"), 15);
     task.run_once(None, &AtomicBool::new(false));
     let finished = jobs
         .unfinished_of(filesquid_api::library::EXPIRY_JOB_KIND, 1)
         .expect("jobs");
     assert!(finished.is_empty(), "the run completed its job");
+    expiry_monitor_follows_the_stored_interval(&desktop, task);
     desktop.stop();
+}
+
+/// Task API-F2.30 (DE-S-014): the expiry monitor of `task` runs at launch, then one stored
+/// interval (15 minutes here) after the start of its last run, and takes an interval changed
+/// through the settings route for its next run without a relaunch, at once when the new
+/// interval has already passed.
+fn expiry_monitor_follows_the_stored_interval(
+    desktop: &Desktop,
+    task: filesquid_desktop_lib::recently_deleted::ExpiryTask,
+) {
+    use filesquid_desktop_lib::recently_deleted::{ExpiryHandle, ExpiryMonitor};
+    use std::sync::atomic::AtomicI64;
+    const MINUTE_MS: i64 = 60_000;
+    let clock = Arc::new(AtomicI64::new(7 * MINUTE_MS));
+    let now = clock.clone();
+    let handle = ExpiryHandle::new(task, Arc::new(AtomicBool::new(false)));
+    let read = Arc::new(move || now.load(Ordering::SeqCst));
+    let monitor = ExpiryMonitor::with_clock(handle, read);
+    assert_eq!(monitor.next_due_ms(), None, "due at launch");
+    assert!(monitor.tick(), "runs at launch");
+    assert_eq!(monitor.last_started_ms(), Some(7 * MINUTE_MS));
+    assert_eq!(monitor.next_due_ms(), Some(22 * MINUTE_MS));
+    clock.store(22 * MINUTE_MS - 1, Ordering::SeqCst);
+    assert!(!monitor.tick(), "not before the stored interval has passed");
+    clock.store(22 * MINUTE_MS, Ordering::SeqCst);
+    assert!(monitor.tick(), "one stored interval after the last start");
+    let set = |operation: &str, minutes: u32| {
+        let body = json!({
+            "envelope": {"schema_version": 1, "operation_id": operation,
+                         "expected_revision": "0", "scope": "installation"},
+            "input": { "default_retention_days": 45, "expiry": "keep_version_history",
+                       "expiry_interval_minutes": minutes },
+        });
+        desktop.send("PUT", "/api/v1/settings/recently-deleted", Some(body), true)
+    };
+    let (status, body) = set("op-interval-60", 60);
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(monitor.next_due_ms(), Some(82 * MINUTE_MS), "no relaunch");
+    clock.store(52 * MINUTE_MS, Ordering::SeqCst);
+    assert!(!monitor.tick(), "30 minutes after the last start");
+    let (status, body) = set("op-interval-10", 10);
+    assert_eq!(status, 200, "{body}");
+    assert!(monitor.tick(), "the new interval already passed: at once");
+    assert_eq!(monitor.last_started_ms(), Some(52 * MINUTE_MS));
 }
