@@ -14,6 +14,7 @@ import type { FsMetadataPanel } from "../components/fs-metadata-panel";
 import type { FsProvenancePanel } from "../components/fs-provenance-panel";
 import type { FsFileBrowser } from "../components/fs-file-browser";
 import { HOST_EVENT } from "../components/fs-host-indicator";
+import { offersLogs, type AdminAccessStore } from "../components/admin-access";
 import { FILE_PANEL_CLOSE_EVENT, type FsFilePanel } from "../components/fs-file-panel";
 import type { FsVersionsPanel, VersionsSource } from "../components/fs-versions-panel";
 import type { FileRef, PanelTabId } from "../files/model";
@@ -53,22 +54,28 @@ export interface FilePanelRouteOptions {
 
 /**
  * Follow which host the shell shows, from its host badge's `fs-host` events, from now on: the
- * owner is the person on the desktop host, the only host with a Logs view (UI-S-021). Call it
+ * owner is the person on the desktop host, the only host with a Logs view (UI-S-021), whom the
+ * admin routes did not refuse: the same role check as the shell's Logs row and Monitor button
+ * (`offersLogs`, UI-S-032). Call it
  * when the route is bound, before the panel exists, so a host that is known by the time a file
  * opens is not missed. Side effect: adds an event listener to the shell.
  *
  * @param shell The app shell, whose host badge dispatches the events.
+ * @param access The caller's admin role; without it only the host decides.
  * @returns `canViewLogs`, which tells whether the viewer may open the Logs view now, and `stop`,
  *   which removes the listener (the route is unbound).
  */
-export function watchOwner(shell: HTMLElement): { canViewLogs: () => boolean; stop: () => void } {
+export function watchOwner(
+  shell: HTMLElement,
+  access?: AdminAccessStore,
+): { canViewLogs: () => boolean; stop: () => void } {
   let hostType: string | undefined;
   const onHost = (event: Event) => {
     hostType = (event as CustomEvent<{ hostType?: string }>).detail?.hostType;
   };
   shell.addEventListener(HOST_EVENT, onHost);
   return {
-    canViewLogs: () => hostType === "desktop",
+    canViewLogs: () => offersLogs(hostType, access?.state ?? "unknown"),
     stop: () => shell.removeEventListener(HOST_EVENT, onHost),
   };
 }
