@@ -63,7 +63,10 @@ pub fn volume_name_of_mount(point: &Path) -> Option<String> {
 }
 
 /// The mount point of the volume that holds `folder`: its topmost ancestor on the same
-/// device, at most 256 levels up (`MAX_ANCESTORS`). Reads filesystem metadata.
+/// device. It is answered only once it is verified: the next ancestor is on another device,
+/// or it is the root. An ancestor whose metadata cannot be read, or a folder more than 256
+/// levels deep (`MAX_ANCESTORS`), answers `None`, so an ordinary folder is never taken for a
+/// mount point. Reads filesystem metadata.
 #[cfg(unix)]
 pub fn mount_point_of(folder: &Path) -> Option<PathBuf> {
     use std::os::unix::fs::MetadataExt;
@@ -71,13 +74,12 @@ pub fn mount_point_of(folder: &Path) -> Option<PathBuf> {
     let device = std::fs::metadata(&canonical).ok()?.dev();
     let mut point = canonical.clone();
     for ancestor in canonical.ancestors().skip(1).take(MAX_ANCESTORS) {
-        let same = std::fs::metadata(ancestor).is_ok_and(|meta| meta.dev() == device);
-        if !same {
-            break;
+        if std::fs::metadata(ancestor).ok()?.dev() != device {
+            return Some(point);
         }
         point = ancestor.to_path_buf();
     }
-    Some(point)
+    point.parent().is_none().then_some(point)
 }
 
 /// No device numbers to compare on this platform, so no mount point is found.

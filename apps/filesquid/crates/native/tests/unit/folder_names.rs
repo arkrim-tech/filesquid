@@ -56,12 +56,18 @@ fn a_folder_answers_its_own_name_and_the_volume_of_its_mount_point() {
     std::fs::create_dir_all(&folder).expect("folder");
     let names = read_folder_names(&folder);
     assert_eq!(names.folder_name.as_deref(), Some("Family archive"));
-    let point = mount_point_of(&folder).expect("a mount point");
-    assert!(folder
-        .canonicalize()
-        .expect("canonical")
-        .starts_with(&point));
-    assert_eq!(names.volume_name, volume_name_of_mount(&point));
+    #[cfg(unix)]
+    {
+        let point = mount_point_of(&folder).expect("a mount point");
+        let canonical = folder.canonicalize().expect("canonical");
+        assert!(canonical.starts_with(&point));
+        assert_eq!(names.volume_name, volume_name_of_mount(&point));
+    }
+    #[cfg(not(unix))]
+    {
+        assert_eq!(mount_point_of(&folder), None, "no device numbers here");
+        assert_eq!(names.volume_name, None);
+    }
     let text = format!("{names:?}");
     let parent = dir.file_name().expect("name").to_string_lossy().to_string();
     assert!(!text.contains(&parent), "no parent folder: {text}");
@@ -90,5 +96,26 @@ fn the_registry_answers_a_registered_folder_s_names_and_none_once_it_is_gone() {
         FolderNames::default(),
         "a folder that cannot be reached now has no names"
     );
+    std::fs::remove_dir_all(&dir).expect("cleanup");
+}
+
+/// A mount point that cannot be verified within the ancestor cap is no mount point, so an
+/// ordinary folder is never reported as a volume.
+#[test]
+fn a_folder_deeper_than_the_ancestor_cap_answers_no_mount_point_and_no_volume() {
+    let dir = fresh_dir("deep");
+    let mut folder = dir.clone();
+    for _ in 0..300 {
+        folder.push("d");
+    }
+    std::fs::create_dir_all(&folder).expect("deep folder");
+    assert_eq!(
+        mount_point_of(&folder),
+        None,
+        "the cap is reached before the boundary"
+    );
+    let names = read_folder_names(&folder);
+    assert_eq!(names.folder_name.as_deref(), Some("d"));
+    assert_eq!(names.volume_name, None);
     std::fs::remove_dir_all(&dir).expect("cleanup");
 }
