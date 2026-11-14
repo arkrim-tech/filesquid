@@ -1,0 +1,177 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+#
+# CodeRabbit configuration for FileSquid.
+#
+# CodeRabbit is the pull-request reviewer (.agents/rules/pr-review-loop.md). It reads this
+# file from the branch under review, so a pull request that edits this file is reviewed
+# with its own edits. Only the owner changes this file; agents MUST NOT edit it to narrow
+# what is reviewed. Comment `@coderabbitai configuration` on a pull request to see the
+# settings CodeRabbit resolved for it.
+#
+# Every key below differs from CodeRabbit's default or is pinned on purpose. Anything not
+# listed stays at its default.
+
+language: en-US
+
+reviews:
+  # More feedback than the default `chill` profile.
+  profile: assertive
+
+  # A review that stops on an error fails the `CodeRabbit` check run instead of ending
+  # neutral, so "the check run succeeded" means "a review ran".
+  fail_commit_status: true
+
+  # List ignored files and suppressed comments on the pull request, so a reader can see
+  # that no changed file was left out of the review.
+  review_details: true
+
+  # No fortune message while a review runs.
+  in_progress_fortune: false
+
+  auto_review:
+    enabled: true
+    drafts: false
+    # Review every push.
+    auto_incremental_review: true
+    # The default pauses automatic reviews after 5 reviewed commits on a pull request.
+    # The review loop allows up to 10 rounds, so never pause.
+    auto_pause_after_reviewed_commits: 0
+
+  # Extra review guidance per path. The project rules themselves are loaded through
+  # `knowledge_base.code_guidelines` below; these point the reviewer at the defects
+  # that are easy to miss when only the diff is read.
+  path_instructions:
+    - path: "apps/filesquid/crates/**/src/**/*.rs"
+      instructions: |
+        Review against AGENTS.md sections 13, 15 and 21 to 26.
+        - Follow each changed call into the unchanged code it reaches before concluding;
+          report a defect that only shows across functions or files.
+        - Every error is logged, returned or raised. Flag a discarded `Result`, a
+          `let _ =` or `.ok()` that drops an error, and a function that reports success
+          after an inner call failed.
+        - Every loop, poll and retry has a cap and a safe path when the cap is hit. Flag a
+          tight loop that can log or write once per tick for ever.
+        - Every resource opened is closed on every exit path, the error path included. No
+          lock or database connection is held across an await.
+        - One function does one job and is at most 60 lines. A function that does I/O or
+          mutates state says so in its name; flag getter-named functions that do I/O.
+        - Every API route is authorised before it touches files, SQL or keys.
+        - A module crate takes no default dependency on another module crate.
+        - Bounds or constants marked provisional must not be frozen into a database
+          schema or migration.
+        - Public items carry rustdoc. Logs go to stdout only, never to a file.
+    - path: "apps/filesquid/ui/src/**"
+      instructions: &ui_rules |
+        Review against AGENTS.md sections 15 to 17 and the UI rules.
+        - Vanilla TypeScript custom elements only: no UI framework and no runtime npm
+          dependency.
+        - The UI reaches data only through the FileSquid API client, never the
+          filesystem, a database or a module directly.
+        - Listeners, observers, timers and abort controllers are released in
+          `disconnectedCallback` and on every replace or error path. Late `load`,
+          `error` or promise results must not update a newer state.
+        - A client-side gate (hide, disable, redirect) is cosmetic: check that the API
+          enforces the same rule, and that the gate cannot lock a permitted user out.
+          Follow error values into the client code that parses them.
+        - Text comes from the label tables, with every new key present in both
+          `apps/filesquid/ui/src/theme/labels.en.json` and
+          `apps/imagesquid/src/theme/labels.en.json`. No hard-coded English.
+        - Names and other data are set with `textContent`, never `innerHTML`.
+        - Stylesheets use logical properties so right-to-left layouts mirror, and a
+          `display` rule must not defeat the `hidden` attribute.
+        - Hiding or removing a control that existed before is a behaviour change: say
+          which user action is no longer reachable.
+        - Exported items carry TSDoc.
+    - path: "apps/imagesquid/src/**"
+      instructions: *ui_rules
+    - path: "apps/**/tests/**"
+      instructions: |
+        Judge whether each test would fail if the feature were broken.
+        - Flag assertions that restate the implementation, tests that only exercise a
+          stub written to mirror the code, and tests that inject a state no user path
+          can produce.
+        - Flag production wiring that no test executes (for example a spawn, a route
+          binding or an entry module that is never imported by a test).
+        - Flag error, refusal and failure paths that the change adds but no test covers.
+        - UI behaviour must be asserted against the built production artifact with DOM
+          assertions, not only in a simulated DOM that applies no stylesheet.
+        - Flag fixed sleeps and timing assumptions.
+    - path: "**/resources/tasks/*Walkthrough.md"
+      instructions: |
+        Check the walkthrough's claims against the diff in the same pull request.
+        - It holds raw test output, a coverage report, and the pre-commit summary line
+          `Test scope: <scope>` for the head commit.
+        - A suite that was not run is named as not run. A failing run is not described
+          as passing or waved through as pre-existing without evidence.
+        - Every "tested" or "covered" claim has a matching test in the diff.
+        - Every documented command appears to have been executed in the environment the
+          walkthrough shows.
+        - Tests were written before the implementation; flag a statement that they
+          were not.
+        - No absolute machine path appears.
+    - path: "scripts/**"
+      instructions: |
+        These scripts are the project's quality gates.
+        - A change must not weaken or narrow a gate. State exactly what the gate
+          accepted before and accepts after.
+        - A gate must fail closed: flag an error hidden by `2>/dev/null`, a missing tool
+          that leads to a pass, and a pipeline whose failure is swallowed.
+        - Scripts run on bash 3.2 with BSD and GNU userland: flag `sed` escapes such as
+          a tab written as backslash-t in a replacement, `readlink -f`, `mapfile` and
+          associative arrays.
+        - Paths with spaces or special characters must survive quoting and parsing.
+    - path: "apps/filesquid/crates/api/openapi.json"
+      instructions: |
+        The contract, the Rust types, `apps/filesquid/ui/src/api/schema.d.ts` and
+        `apps/filesquid/ui/src/api/contract-version.ts` must agree, and a breaking change
+        must raise the contract version.
+
+  # Pass or fail checks reported with each review. Custom checks need a paid CodeRabbit
+  # plan; where the plan does not include them they do not run.
+  pre_merge_checks:
+    custom_checks:
+      - name: "No hosted workflow"
+        mode: error
+        instructions: |
+          Fail if the pull request adds or changes any file under `.github/workflows/`
+          or a file named `.gitlab-ci.yml`. Pass otherwise.
+      - name: "Owner-merge files"
+        mode: warning
+        instructions: |
+          Warn if the pull request changes any of: `AGENTS.md`, `.coderabbit.yaml`,
+          a file under `.agents/rules/` or `.agents/agents/`, `scripts/pre-commit.sh`,
+          `scripts/changed_scope.sh`, a file matching `scripts/verify_*.sh`, a file
+          under `scripts/lib/`, or a file under `resources/architecture/`. Name the
+          files and state that only the owner may merge this pull request. Pass
+          otherwise.
+      - name: "Hook summary line recorded"
+        mode: warning
+        instructions: |
+          Pass if the pull request description, or a file matching
+          `**/resources/tasks/*Walkthrough.md` changed in the pull request, contains the
+          text `All Pre-Commit Hooks Passed! Test scope:`. Warn otherwise.
+      - name: "Tests accompany source changes"
+        mode: warning
+        instructions: |
+          If the pull request changes a file under `apps/filesquid/crates/<crate>/src/`,
+          pass only if it also changes a file under that same crate's `tests/`
+          directory. If it changes a file under `apps/filesquid/ui/src/`, pass only if
+          it also changes a file under `apps/filesquid/ui/tests/`. Pass when no such
+          source file changed. Otherwise warn and name the crate or package.
+      - name: "Task walkthrough present"
+        mode: warning
+        instructions: |
+          If the pull request title contains a task ID in the form of letters, a
+          hyphen, an optional `F` and a dotted number (for example `UI-F2.19`,
+          `API-F2.30`, `DE-F3.1`, `IO-1.2`, `FS-2.4`), pass only if the pull request adds
+          or changes a file named `Task-<that ID>-Walkthrough.md` under a
+          `resources/tasks/` directory and adds no file ending in `-Plan.md` or
+          `-ToDos.md`. Pass when the title holds no task ID. Otherwise warn.
+
+knowledge_base:
+  code_guidelines:
+    enabled: true
+    # CodeRabbit already reads `AGENTS.md` by default. The binding rules live in
+    # `.agents/rules/`, which is not a default location.
+    filePatterns:
+      - ".agents/rules/*.md"
