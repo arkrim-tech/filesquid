@@ -825,8 +825,8 @@ fn the_facts_name_the_library_folder_until_it_cannot_be_reached() {
     std::fs::rename(&folder, dir.join("Moved away")).expect("moved");
     let (status, facts) = desktop.get(&uri);
     assert_eq!(status, 200, "{facts}");
-    assert_eq!(facts["folder_name"], Value::Null, "{facts}");
-    assert_eq!(facts["volume_name"], Value::Null, "{facts}");
+    assert_eq!(facts.get("folder_name"), Some(&Value::Null), "{facts}");
+    assert_eq!(facts.get("volume_name"), Some(&Value::Null), "{facts}");
     let (_, entries) = desktop.stop();
     let journal = serde_json::to_string(&entries).expect("json");
     assert!(

@@ -462,16 +462,21 @@ async fn an_unreadable_volume_or_an_unreachable_folder_answers_null_names() {
     let (unreachable, _) = create_named(&rig, "b", "B").await;
     let names = FolderNames::safe(Some("Family archive"), None);
     rig.names.lock().expect("names").insert(location, names);
-    let json = facts(&rig, &no_volume).await.json();
-    assert_eq!(json["folder_name"], "Family archive");
-    assert_eq!(json["volume_name"], Value::Null);
-    let json = facts(&rig, &unreachable).await.json();
-    assert_eq!(
-        json["folder_name"],
-        Value::Null,
-        "the folder cannot be reached"
-    );
-    assert_eq!(json["volume_name"], Value::Null);
+    let answer = facts(&rig, &no_volume).await;
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.text());
+    let json = answer.json();
+    assert_eq!(json.get("folder_name"), Some(&json!("Family archive")));
+    assert_eq!(json.get("volume_name"), Some(&Value::Null), "{json}");
+    assert_null_names(&facts(&rig, &unreachable).await);
+}
+
+/// Assert `answer` is a successful facts answer that carries both names as `null`: present
+/// and null, so an error body or an omitted field never passes for one.
+fn assert_null_names(answer: &Answer) {
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.text());
+    let json = answer.json();
+    assert_eq!(json.get("folder_name"), Some(&Value::Null), "{json}");
+    assert_eq!(json.get("volume_name"), Some(&Value::Null), "{json}");
 }
 
 #[tokio::test]
@@ -482,9 +487,7 @@ async fn a_host_that_reads_no_names_answers_both_as_null() {
         .lock()
         .expect("names")
         .insert(location, family_names());
-    let json = facts(&rig, &library).await.json();
-    assert_eq!(json["folder_name"], Value::Null, "{json}");
-    assert_eq!(json["volume_name"], Value::Null, "{json}");
+    assert_null_names(&facts(&rig, &library).await);
     assert_eq!(
         rig.registry.folder_names("loc-unknown"),
         FolderNames::default()

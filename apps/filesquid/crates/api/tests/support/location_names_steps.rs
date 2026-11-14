@@ -266,8 +266,12 @@ fn no_path(w: &mut MonitorWorld) {
 #[then(expr = "location-names answer should carry folder_name and a null volume_name")]
 fn answer_null_volume(w: &mut MonitorWorld) {
     let json = w.location_names.json();
-    assert_eq!(json["folder_name"], "Family archive", "{json}");
-    assert_eq!(json["volume_name"], Value::Null, "{json}");
+    assert_eq!(
+        json.get("folder_name"),
+        Some(&json!("Family archive")),
+        "{json}"
+    );
+    assert_eq!(json.get("volume_name"), Some(&Value::Null), "{json}");
 }
 
 #[then(expr = "location-names facts should carry folder_name {string} and volume_name {string}")]
@@ -283,8 +287,8 @@ fn facts_null(w: &mut MonitorWorld) {
     let answer = world.answer.as_ref().expect("an answer");
     assert_eq!(answer.status.as_u16(), 200, "{}", answer.text());
     let json = answer.json();
-    assert_eq!(json["folder_name"], Value::Null, "{json}");
-    assert_eq!(json["volume_name"], Value::Null, "{json}");
+    assert_eq!(json.get("folder_name"), Some(&Value::Null), "{json}");
+    assert_eq!(json.get("volume_name"), Some(&Value::Null), "{json}");
 }
 
 #[then(
