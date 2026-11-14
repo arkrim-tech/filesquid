@@ -578,8 +578,21 @@ test("View in Logs opens the Logs address filtered to the file and to an operati
     "aria-label",
     fill("provenanceViewOperationInLogs", { kind: "metadata edit", version: "v4" }),
   );
+  // The Logs view reads the journal page, the oldest entry and the library names as soon as it
+  // opens. Answer them here (an empty journal), or the preview server's proxy refuses them with
+  // 502 lines that race the end of the test.
+  const fileFilters: (string | null)[] = [];
+  await page.route(/\/api\/v1\/admin\/journal(\?|$)/, (route) => {
+    fileFilters.push(new URL(route.request().url()).searchParams.get("file"));
+    return route.fulfill({ json: { entries: [], next_cursor: null } });
+  });
+  await page.route(/\/api\/v1\/libraries\/recent$/, (route) =>
+    route.fulfill({ json: { libraries: [] } }),
+  );
   await prov.locator(".footer a.logs").click();
   await expect(page).toHaveURL(new RegExp(`#/logs\\?file=${FILE_ID}$`));
+  await expect(page.locator("fs-logs")).toHaveAttribute("data-state", "empty");
+  expect(fileFilters[0]).toBe(FILE_ID);
   expect(errors).toEqual([]);
 });
 
