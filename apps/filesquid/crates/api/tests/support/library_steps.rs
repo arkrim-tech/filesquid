@@ -720,8 +720,8 @@ fn run_expiry(w: &mut MonitorWorld, days: i64, expiry: &str) {
     };
     let settings = std::sync::Arc::new(MemorySettings::new());
     let stored = InstallationSettings {
-        default_retention_days: 30,
         expiry: mode,
+        ..InstallationSettings::default()
     };
     let seed =
         filesquid_api::journal::JournalEntry::new("x", filesquid_api::journal::Outcome::Succeeded);

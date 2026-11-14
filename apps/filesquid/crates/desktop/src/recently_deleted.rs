@@ -1,30 +1,35 @@
-//! The desktop's Recently deleted (Task API-F2.15; API-S-019, DE-S-014, ADR 041 Decisions 8
-//! to 11): the library service the Recently deleted and settings routes run, over the
-//! library catalogs, with the installation's settings in the operational store
+//! The desktop's Recently deleted (Tasks API-F2.15 and API-F2.30; API-S-019, DE-S-014, ADR
+//! 041 Decisions 8 to 11): the library service the Recently deleted and settings routes run,
+//! over the library catalogs, with the installation's settings in the operational store
 //! (`filesquid.sqlite`); and the expiry of deleted files as a durable job, run at launch and
-//! then every [`EXPIRY_INTERVAL`] until the app exits.
+//! then at the installation's stored expiry interval until the app exits.
 //!
-//! The desktop only wires: what a command, a setting or an expiry means is `filesquid-api`'s
-//! ([`LibraryService`]), and how an expired file's object is deleted or rewritten as a
-//! tombstone is the catalog's ([`SqliteCatalog`]).
+//! The [`ExpiryMonitor`] reads the stored interval at every tick, so an interval the owner
+//! changes takes effect for the next run without a relaunch: that run falls due one new
+//! interval after the start of the last run, or at once when that time has already passed.
+//!
+//! The desktop only wires: what a command, a setting, an expiry or its schedule means is
+//! `filesquid-api`'s ([`LibraryService`], [`ExpirySchedule`]), and how an expired file's
+//! object is deleted or rewritten as a tombstone is the catalog's ([`SqliteCatalog`]).
 
 use filesquid_api::jobs::{Job, JobError, JobRunner, Jobs};
-use filesquid_api::library::LibraryService;
+use filesquid_api::library::{
+    ExpirySchedule, LibraryError, LibraryService, DEFAULT_EXPIRY_INTERVAL_MINUTES,
+};
 use filesquid_api::navigation::NavigationPublisher;
 use filesquid_api::ApiState;
 use filesquid_core::InstallationId;
 use filesquid_native::workers::expiry::run_expiry_job;
 use filesquid_native::{HostMonitor, SqliteCatalog, SqliteRetentionSettings, JOURNAL_FILE};
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, PoisonError, Weak};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-/// Time between two expiry runs.
-pub const EXPIRY_INTERVAL: Duration = Duration::from_secs(60 * 60);
-
-/// How often a waiting expiry loop checks whether the app is exiting.
-const STOP_POLL: Duration = Duration::from_secs(1);
+/// How often the expiry monitor checks whether a run is due and whether the app is exiting.
+/// It bounds how late a run starts after it falls due, and how long a changed interval waits
+/// to be read.
+pub const EXPIRY_TICK: Duration = Duration::from_secs(1);
 
 /// Install the library service of the Recently deleted and settings routes over `catalog`,
 /// with the installation settings in `data_dir`'s operational store, its refusals journaled
@@ -78,6 +83,15 @@ impl ExpiryTask {
             jobs,
             source: format!("installation:{}", installation.as_str()),
         }
+    }
+
+    /// The installation's stored expiry interval, in minutes. Database I/O.
+    ///
+    /// # Errors
+    /// The settings store cannot be read.
+    pub fn interval_minutes(&self) -> Result<u32, LibraryError> {
+        let settings = self.service.installation_settings()?;
+        Ok(settings.expiry_interval_minutes)
     }
 
     /// Run one expiry job now, `resumed` when the job routes resumed that job; a failure is
@@ -152,6 +166,19 @@ impl ExpiryHandle {
         self.running.load(Ordering::SeqCst)
     }
 
+    /// Whether the app is exiting.
+    pub fn is_stopping(&self) -> bool {
+        self.stop.load(Ordering::SeqCst)
+    }
+
+    /// The installation's stored expiry interval, in minutes. Database I/O.
+    ///
+    /// # Errors
+    /// The settings store cannot be read.
+    pub fn interval_minutes(&self) -> Result<u32, LibraryError> {
+        self.task.interval_minutes()
+    }
+
     /// Wait at most `limit` for a run in progress to end (the exit sets the stop flag first,
     /// so the run suspends its job between libraries).
     pub fn wait(&self, limit: Duration) {
@@ -200,28 +227,107 @@ impl JobRunner for ExpiryHandle {
     }
 }
 
-/// Run `handle` at launch and then every [`EXPIRY_INTERVAL`] on a blocking thread, until its
-/// stop flag is set at app exit (bounded by the app's lifetime).
-pub fn spawn_expiry(handle: Arc<ExpiryHandle>) {
-    tauri::async_runtime::spawn(async move {
-        while !handle.stop.load(Ordering::SeqCst) {
-            let run = handle.clone();
-            let ran = tauri::async_runtime::spawn_blocking(move || run.run_now()).await;
-            if ran.is_err() {
-                tracing::error!(operation = "library.expiry", "the expiry run panicked");
-            }
-            wait_or_stop(&handle.stop).await;
-        }
-    });
+/// The clock an [`ExpiryMonitor`] schedules by: milliseconds that never go backwards.
+pub type MonitorClock = Arc<dyn Fn() -> i64 + Send + Sync>;
+
+/// The expiry monitor of this host (DE-S-014): it runs the expiry at launch and then at the
+/// installation's stored expiry interval, read again at every tick, so a changed interval is
+/// taken for the next run without a relaunch.
+pub struct ExpiryMonitor {
+    /// What a run does, and the app's exit flag.
+    handle: Arc<ExpiryHandle>,
+    /// The start of the last run this monitor started.
+    schedule: Mutex<ExpirySchedule>,
+    /// The monitor's clock.
+    clock: MonitorClock,
+    /// The interval read last, used while the settings store cannot be read.
+    last_interval: AtomicU32,
 }
 
-/// Wait [`EXPIRY_INTERVAL`], waking every [`STOP_POLL`] to end early when `stop` is set.
-async fn wait_or_stop(stop: &AtomicBool) {
-    let steps = EXPIRY_INTERVAL.as_secs() / STOP_POLL.as_secs().max(1);
-    for _ in 0..steps {
-        if stop.load(Ordering::SeqCst) {
-            return;
-        }
-        tokio::time::sleep(STOP_POLL).await;
+impl ExpiryMonitor {
+    /// A monitor of `handle` whose clock is the time since now, which a change of the
+    /// system's clock does not move.
+    pub fn new(handle: Arc<ExpiryHandle>) -> Self {
+        let launched = Instant::now();
+        let elapsed = move || i64::try_from(launched.elapsed().as_millis()).unwrap_or(i64::MAX);
+        Self::with_clock(handle, Arc::new(elapsed))
     }
+
+    /// A monitor of `handle` that reads `clock`.
+    pub fn with_clock(handle: Arc<ExpiryHandle>, clock: MonitorClock) -> Self {
+        Self {
+            handle,
+            schedule: Mutex::new(ExpirySchedule::new()),
+            clock,
+            last_interval: AtomicU32::new(DEFAULT_EXPIRY_INTERVAL_MINUTES),
+        }
+    }
+
+    /// The stored expiry interval in minutes, or the interval read last when the settings
+    /// store cannot be read now (the failure is logged). Database I/O.
+    pub fn interval_minutes(&self) -> u32 {
+        match self.handle.interval_minutes() {
+            Ok(minutes) => {
+                self.last_interval.store(minutes, Ordering::SeqCst);
+                minutes
+            }
+            Err(err) => {
+                tracing::warn!(
+                    operation = filesquid_api::library::EXPIRY_JOB_KIND,
+                    error_code = err.error_code(),
+                    "the expiry interval could not be read; the last one read is kept"
+                );
+                self.last_interval.load(Ordering::SeqCst)
+            }
+        }
+    }
+
+    /// When the last run this monitor started began, on its clock; `None` before the first.
+    pub fn last_started_ms(&self) -> Option<i64> {
+        self.schedule().last_started_ms()
+    }
+
+    /// When the next run falls due under the interval stored now, on the monitor's clock;
+    /// `None` before the run at launch. Database I/O.
+    pub fn next_due_ms(&self) -> Option<i64> {
+        let interval = self.interval_minutes();
+        self.schedule().next_due_ms(interval)
+    }
+
+    /// Run the expiry now if a run is due under the interval stored now; answer whether this
+    /// call ran it. A run already in progress (a resumed job) is left alone and the due run
+    /// starts at a later tick. Database, filesystem and journal I/O.
+    pub fn tick(&self) -> bool {
+        let interval = self.interval_minutes();
+        let now = (self.clock)();
+        if !self.schedule().is_due(interval, now) {
+            return false;
+        }
+        if !self.handle.run_now() {
+            return false;
+        }
+        self.schedule().record_start(now);
+        true
+    }
+
+    /// The schedule; a poisoned lock still holds a whole value.
+    fn schedule(&self) -> std::sync::MutexGuard<'_, ExpirySchedule> {
+        self.schedule.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+/// Tick `monitor` every [`EXPIRY_TICK`] on a blocking thread, so the expiry runs at launch and
+/// then at the stored interval, until the app's exit sets the stop flag (bounded by the app's
+/// lifetime).
+pub fn spawn_expiry(monitor: Arc<ExpiryMonitor>) {
+    tauri::async_runtime::spawn(async move {
+        while !monitor.handle.is_stopping() {
+            let tick = monitor.clone();
+            let ticked = tauri::async_runtime::spawn_blocking(move || tick.tick()).await;
+            if ticked.is_err() {
+                tracing::error!(operation = "library.expiry", "the expiry run panicked");
+            }
+            tokio::time::sleep(EXPIRY_TICK).await;
+        }
+    });
 }
