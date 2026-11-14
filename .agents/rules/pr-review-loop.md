@@ -50,7 +50,7 @@ Only the owner edits this section. It is updated after the owner's manual testin
 3. **Fix every CodeRabbit comment.** Every finding counts: actionable inline comments, nitpicks and outside-diff comments (the last two sit in the review body, not in threads), and any CodeRabbit reply on a thread that asks for more. For each:
    - Fix it in code or documentation, following every other rule in `.agents/rules/` (TDD, lint, docs, links).
    - If the finding is wrong, answer it with the reasoning and evidence. Never dismiss a finding silently.
-   - Each thread gets exactly one reply: the fix commit or the reasoning. Then resolve the thread with the host's review API, using the GraphQL `resolveReviewThread` mutation. If the reviewer answers that reply with a new request or question, that is a new finding and gets one reply of its own.
+   - Each thread gets exactly one reply: the fix commit or the reasoning. Then resolve the thread with the host's review API. When GraphQL is available, use the `resolveReviewThread` mutation; where it is refused, use the host's REST route for resolving a review thread. If the reviewer answers that reply with a new request or question, that is a new finding and gets one reply of its own.
    - Findings with no thread (nitpick and outside-diff comments) get one PR comment per review that answers each of them by name, with the fix commit or the reasoning.
    - If you disagree with a security finding, leave its thread open and ask the owner.
 
