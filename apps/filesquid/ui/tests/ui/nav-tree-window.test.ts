@@ -350,6 +350,29 @@ describe("<fs-nav-tree> keyboard over undrawn nodes (UI-S-035, UI-S-016)", () =>
     expect(rowsOf(listOf(root, "collection"))).toBe(10_002);
   });
 
+  // CodeRabbit on PR #185: `*` over a long level must rebuild the tree once, not once a sibling,
+  // and open no more nodes than the session keeps open.
+  it("* draws the tree once for many closed siblings and opens at most 256 of them", async () => {
+    const { root, source } = await mount({ total: 600, folders: () => 1 });
+    const box = root.querySelector(".sections") as HTMLElement;
+    let renders = 0;
+    const observer = new MutationObserver((records) => (renders += records.length));
+    observer.observe(box, { childList: true });
+    named(root, bigName(0))?.focus();
+    press(root, "*");
+    await settle();
+    await settle();
+    observer.disconnect();
+    const opened = source.calls.filter((call) => call.parent?.startsWith("c-"));
+    expect(opened).toHaveLength(256);
+    expect(opened.map((call) => call.parent)).toEqual(
+      Array.from({ length: 256 }, (_, i) => bigHandle(i)),
+    );
+    expect(renders).toBeLessThanOrEqual(2);
+    expect(rowsOf(listOf(root, "collection"))).toBe(600 + 256);
+    expect(root.activeElement?.textContent).toBe(bigName(0));
+  });
+
   it("a typed character finds a node far outside the window", async () => {
     const { root } = await mount({
       total: 10_000,
@@ -419,6 +442,22 @@ describe("<fs-nav-tree> level cap (UI-S-017)", () => {
     expect(line?.style.getPropertyValue("--r")).toBe("10000");
     expect(last.getAttribute("aria-describedby")).toBe(line?.querySelector("span")?.id);
     expect(line?.querySelector("span")?.id).toBeTruthy();
+  });
+
+  // CodeRabbit on PR #185: the line the last node names as its description is in the DOM by the
+  // time that node takes focus, not only after the window is drawn again.
+  it("draws the limit line before the last node takes focus", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const { root } = await mount({ total: 50_000 });
+    let described: string | null | undefined;
+    root.addEventListener("focusin", (event) => {
+      const id = (event.target as HTMLElement).getAttribute("aria-describedby");
+      if (id) described = root.getElementById(id)?.textContent;
+    });
+    named(root, bigName(0))?.focus();
+    press(root, "End");
+    expect(root.activeElement?.textContent).toBe(bigName(9999));
+    expect(described).toBe(formatLabel(labels.navigationLevelLimit, { count: "10,000" }));
   });
 
   it("shows no limit line for a level that fits", async () => {

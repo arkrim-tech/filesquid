@@ -695,25 +695,63 @@ export class FsNavTree extends HTMLElement {
       this.store?.setCollapsed(node.node, !open);
       return;
     }
-    this.opened.delete(node.node);
-    if (open) this.opened.add(node.node);
-    if (this.opened.size > MAX_SESSION_OPEN)
-      this.opened.delete(this.opened.values().next().value as string);
+    if (open) this.markOpened(node);
+    else this.opened.delete(node.node);
     if (open && !this.loaded.has(node.node)) void this.readChildren(node);
     else this.render();
   }
 
   /**
-   * Read a node's children, marking it busy meanwhile. An answer that arrives after a newer
-   * load started, or from a source that was replaced, is dropped. I/O: source reads.
+   * Open several parents at once (the `*` key): the kept choices change for repositories and
+   * libraries, at most {@link MAX_SESSION_OPEN} deeper nodes open for this session, the tree is
+   * drawn once, and the children of the unread ones are read together and drawn once more when
+   * all have answered. I/O: source reads.
+   */
+  private async openAll(nodes: readonly NavigationNode[]): Promise<void> {
+    const opening = nodes.filter((node) => !OPEN_BY_DEFAULT.has(node.kind));
+    const kept = opening.slice(0, MAX_SESSION_OPEN);
+    for (const node of nodes) {
+      if (OPEN_BY_DEFAULT.has(node.kind)) this.store?.setCollapsed(node.node, false);
+    }
+    for (const node of kept) this.markOpened(node);
+    const unread = kept.filter((node) => !this.loaded.has(node.node) && !this.busy.has(node.node));
+    for (const node of unread) this.busy.add(node.node);
+    this.render();
+    if (unread.length === 0) return;
+    await Promise.allSettled(unread.map((node) => this.fetchChildren(node)));
+    this.render();
+  }
+
+  /** Open a deeper node for this session; past {@link MAX_SESSION_OPEN} the oldest closes. */
+  private markOpened(node: NavigationNode): void {
+    this.opened.delete(node.node);
+    this.opened.add(node.node);
+    if (this.opened.size > MAX_SESSION_OPEN)
+      this.opened.delete(this.opened.values().next().value as string);
+  }
+
+  /**
+   * Read a node's children, marking it busy meanwhile, and draw the tree before and after.
+   * I/O: source reads.
    */
   private async readChildren(node: NavigationNode): Promise<void> {
-    const source = this.options?.source;
-    if (!source || this.busy.has(node.node)) return;
-    const generation = this.generation;
+    if (!this.options?.source || this.busy.has(node.node)) return;
     this.busy.add(node.node);
     this.render();
+    await this.fetchChildren(node);
+    this.render();
+  }
+
+  /**
+   * Read the children of a node the caller marked busy, and keep them. An answer that arrives
+   * after a newer load started, or from a source that was replaced, is dropped; a failure is
+   * logged and closes the node. Draws nothing. I/O: source reads.
+   */
+  private async fetchChildren(node: NavigationNode): Promise<void> {
+    const source = this.options?.source;
+    const generation = this.generation;
     try {
+      if (!source) return;
       const level = await readLevel(source, node.node);
       if (generation === this.generation && source === this.options?.source) {
         this.keepLevel(node.node, level);
@@ -723,7 +761,6 @@ export class FsNavTree extends HTMLElement {
       this.opened.delete(node.node);
     } finally {
       this.busy.delete(node.node);
-      this.render();
     }
   }
 
@@ -799,7 +836,9 @@ export class FsNavTree extends HTMLElement {
     const nodeAt = (i: number) => list.nodeAt(keys.rows[i] ?? -1);
     if (action.type === "focus") this.focusRow(list, keys.rows[action.index] ?? -1);
     const targets = action.type === "expand" ? action.indexes : [];
-    for (const node of targets.map(nodeAt)) if (node) this.setOpen(node, true);
+    const opening = targets.flatMap((i) => nodeAt(i) ?? []);
+    if (opening.length === 1) this.setOpen(opening[0] as NavigationNode, true);
+    else if (opening.length > 1) void this.openAll(opening);
     const closing = action.type === "collapse" ? nodeAt(action.index) : undefined;
     if (closing) this.setOpen(closing, false);
   }

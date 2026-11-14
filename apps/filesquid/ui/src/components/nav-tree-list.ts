@@ -69,10 +69,11 @@ export class TreeList {
    * @returns The row's tree item, or undefined when the row is not a node.
    */
   ensure(index: number): HTMLElement | undefined {
-    if (this.rows[index]?.type !== "node") return undefined;
-    const earlier = [...this.drawn.keys()].filter((drawn) => drawn < index);
-    const before = earlier.length > 0 ? this.drawn.get(Math.max(...earlier)) : undefined;
-    this.place(index, before);
+    const row = this.rows[index];
+    if (row?.type !== "node") return undefined;
+    this.placeInOrder(index);
+    // The limit line the node names as its description is drawn with it, before it has focus.
+    if (row.limit !== undefined) this.placeInOrder(row.limit);
     return this.item(index);
   }
 
@@ -152,6 +153,13 @@ export class TreeList {
   keys(nameOf: (node: NavigationNode) => string): TreeKeys {
     this.keyCache ??= keyItems(this.rows, nameOf);
     return this.keyCache;
+  }
+
+  /** Draw one row, if it is not drawn, after the nearest drawn row before it. */
+  private placeInOrder(index: number): void {
+    const earlier = [...this.drawn.keys()].filter((drawn) => drawn < index);
+    const before = earlier.length > 0 ? this.drawn.get(Math.max(...earlier)) : undefined;
+    this.place(index, before);
   }
 
   /** Add a row to the wanted set, with the limit line that describes it. */
