@@ -159,13 +159,33 @@ list_rpaths_macos() {
   }'
 }
 
-# Print the first existing file that @rpath name $1 resolves to for loader $2, trying the run
-# paths of the loader and then those of the main executable. Each run path is expanded
-# relative to the image that declares it, so an inherited `@loader_path` run path means the
-# main executable's folder. Prints nothing when none exists.
+# Print the image that loaded image $1 in the walk (recorded in $PARENTS), or nothing for the
+# subject's own files and the run-time libraries.
+parent_image() {
+  awk -F'\t' -v child="$1" '$1 == child { print $2; exit }' "$PARENTS"
+}
+
+# Print the loading chain of image $1, one image per line: the image, the image that loaded
+# it, and so on up to the first image without a parent, then the main executable. At most
+# MAX_LINKS images, so a recorded cycle ends.
+loading_chain() {
+  local image="$1" depth=0
+  while [ -n "$image" ] && [ "$depth" -lt "$MAX_LINKS" ]; do
+    printf '%s\n' "$image"
+    [ "$image" = "$MAIN_FILE" ] && return
+    image=$(parent_image "$image")
+    depth=$((depth + 1))
+  done
+  printf '%s\n' "$MAIN_FILE"
+}
+
+# Print the first existing file that @rpath name $1 resolves to for loader $2. dyld searches
+# the run paths of the loader and then those inherited along its loading chain up to the
+# main executable; each run path is expanded relative to the image that declares it, so an
+# `@loader_path` run path means that image's folder. Prints nothing when none exists.
 resolve_rpath_name_macos() {
   local name="$1" loader="$2" image rpath candidate
-  for image in "$loader" "$MAIN_FILE"; do
+  loading_chain "$loader" | while IFS= read -r image; do
     candidate=$(list_rpaths_macos "$image" | while IFS= read -r rpath; do
       case "$rpath" in
         @rpath/*) continue ;;
@@ -178,7 +198,7 @@ resolve_rpath_name_macos() {
     done)
     if [ -n "$candidate" ]; then
       printf '%s\n' "$candidate"
-      return
+      break
     fi
   done
 }
@@ -200,19 +220,21 @@ resolve_install_name_macos() {
   esac
 }
 
-# Print the dynamic libraries file $1 names, resolved, one per line (macOS: otool). When
-# otool fails, prints "?otool failed: <reason>".
+# Print the dynamic libraries file $1 names, resolved, one per line (macOS: otool). A
+# dylib's own install name (LC_ID_DYLIB, which `otool -L` also prints) is not a dependency
+# and is left out. When otool fails, prints "?otool failed: <reason>".
 list_dependencies_macos() {
-  local listing status
+  local listing status identity
+  identity=$(otool -D "$1" 2>/dev/null | awk 'NR > 1 { print; exit }')
   listing=$(otool -L "$1" 2>&1)
   status=$?
   if [ "$status" -ne 0 ]; then
     printf '?otool failed (exit %s): %s\n' "$status" "$(printf '%s' "$listing" | head -n 1)"
     return
   fi
-  printf '%s\n' "$listing" | awk '!/:$/ {
+  printf '%s\n' "$listing" | awk -v identity="$identity" '!/:$/ {
     sub(/^[ \t]+/, ""); sub(/ \(compatibility version.*$/, "")
-    if ($0 != "") print
+    if ($0 != "" && $0 != identity) print
   }' | sort -u |
     while IFS= read -r name; do
       resolve_install_name_macos "$name" "$1"
@@ -308,6 +330,7 @@ walk_libraries() {
         continue
       fi
       printf 'lib\t%s\t%s\t%s\n' "$origin" "$(library_owner "$resolved")" "$resolved" >> "$ROWS"
+      printf '%s\t%s\n' "$resolved" "$current" >> "$PARENTS"
       printf '%s\n' "$resolved" >> "$queue"
     done
   done
@@ -455,8 +478,8 @@ main() {
   SUBJECT_PATH=$(physical_path "$SUBJECT")
   WORK=$(mktemp -d "${TMPDIR:-/tmp}/filesquid-inventory.XXXXXX") || exit 1
   trap 'rm -rf "$WORK"' EXIT
-  SEEN="$WORK/seen" ROWS="$WORK/rows" FINDINGS="$WORK/findings"
-  : > "$SEEN"; : > "$ROWS"; : > "$FINDINGS"
+  SEEN="$WORK/seen" ROWS="$WORK/rows" FINDINGS="$WORK/findings" PARENTS="$WORK/parents"
+  : > "$SEEN"; : > "$ROWS"; : > "$FINDINGS"; : > "$PARENTS"
   list_subject_files > "$WORK/files"
   [ -s "$WORK/files" ] || { echo "no executable or library in: $SUBJECT" >&2; exit 1; }
   MAIN_FILE=$(find_main_executable)
