@@ -23,7 +23,8 @@ use crate::files::{real_dir, storage_root, HostLeases};
 use crate::registry_sqlite::{RegistryRow, SqliteLibraryRegistry};
 use filesquid_api::history::backfill::{Backfill, BackfillError, BackfillReport};
 use filesquid_api::local_library::{
-    FreeSpace, LibraryLocations, LibraryRegistry, LibraryRoot, RegistryBook, RegistryEntry,
+    FolderNames, FreeSpace, LibraryLocations, LibraryRegistry, LibraryRoot, RegistryBook,
+    RegistryEntry,
 };
 use filesquid_core::LibraryId;
 use filesquid_ocfl::storage::{complete_immediately, FsBackend};
@@ -340,6 +341,16 @@ impl LibraryRegistry for HostLocations {
             Some(folder) => volume_free_space(&folder),
             None => FreeSpace::VolumeUnreadable,
         }
+    }
+
+    /// The registered folder's own name and its volume's name (API-S-034), read now; no
+    /// names for an unknown location or a folder that cannot be reached now. Reads
+    /// filesystem metadata.
+    fn folder_names(&self, location_id: &str) -> FolderNames {
+        self.folder_of(location_id)
+            .map_or_else(FolderNames::default, |folder| {
+                crate::folder_names::read_folder_names(&folder)
+            })
     }
 }
 

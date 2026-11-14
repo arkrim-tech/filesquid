@@ -1072,7 +1072,7 @@ export interface paths {
         put?: never;
         /**
          * Let the owner pick a folder in the host's dialog
-         * @description API-S-025. The host shows its own native folder dialog for the purpose named (an empty folder for a new library, a folder that holds a library, or an empty folder for a snapshot copy), registers the folder the owner picks under an opaque location ID, and answers that ID, or that the owner cancelled. The folder never crosses the API as a path, title or storage key (API-S-005); the UI names the ID in the create, open and snapshot-copy routes. One dialog is open at a time: a request while one is open is refused 409 conflict (`dialog_open`), as is a picked folder the host cannot register (`location_refused`). A host without a dialog (filesquid-server) answers 503 unavailable. Each request is journaled once as `library.location.choose`: succeeded with the location ID, cancelled, or failed with its error code.
+         * @description API-S-025. The host shows its own native folder dialog for the purpose named (an empty folder for a new library, a folder that holds a library, or an empty folder for a snapshot copy), registers the folder the owner picks under an opaque location ID, and answers that ID, or that the owner cancelled. On the desktop the answer also carries the chosen folder's own name and its volume's name (`folder_name`, `volume_name`; Task API-F2.31), each null when unreadable; never a parent folder or the path. The folder never crosses the API as a path, title or storage key (API-S-005); the UI names the ID in the create, open and snapshot-copy routes. One dialog is open at a time: a request while one is open is refused 409 conflict (`dialog_open`), as is a picked folder the host cannot register (`location_refused`). A host without a dialog (filesquid-server) answers 503 unavailable. Each request is journaled once as `library.location.choose`: succeeded with the location ID, cancelled, or failed with its error code.
          */
         post: operations["chooseLibraryLocation"];
         delete?: never;
@@ -1290,7 +1290,7 @@ export interface paths {
         };
         /**
          * A library's name and free space
-         * @description Answers {library_id, name, free_bytes, free_bytes_reason} of a library this host opened (API-S-038): free_bytes is the free space of the volume that holds its storage root, or null with free_bytes_reason volume_unreadable (the volume could not be read; every build other than Linux and macOS until DE-F3.3) or not_local. Readable by anyone who may read the library, not by administrators only. An unknown library, or one the caller may not read, is 404 not_found; each refusal is journaled once as library.facts. A host without a library registry, filesquid-server among them, answers 503 unavailable. Never a path, storage key or location ID.
+         * @description Answers {library_id, name, free_bytes, free_bytes_reason, revision, folder_name, volume_name} of a library this host opened (API-S-038): free_bytes is the free space of the volume that holds its storage root, or null with free_bytes_reason volume_unreadable (the volume could not be read; every build other than Linux and macOS until DE-F3.3) or not_local. Readable by anyone who may read the library, not by administrators only. An unknown library, or one the caller may not read, is 404 not_found; each refusal is journaled once as library.facts. A host without a library registry, filesquid-server among them, answers 503 unavailable. On the desktop, folder_name and volume_name name the library folder and its volume (API-S-034), null when unreadable or when the folder cannot be reached now; every other host answers both as null. Never a path, a parent folder, a storage key or a location ID.
          */
         get: operations["getLibraryFacts"];
         put?: never;
@@ -2639,6 +2639,10 @@ export interface components {
         LocationChoice: {
             outcome: components["schemas"]["ChoiceOutcome"];
             location_id?: string;
+            /** @description The chosen folder's own name on the desktop, the owner's own device (API-S-034; owner decision 2026-11-02): its last path component only, never a parent folder or the path, after the safe transformation of API-S-005. null when the host cannot read it, and always null on every other host. Never journaled, logged or sent as an event. null when cancelled. Every FileSquid host built from this contract version sends it; it is optional so that clients built against an earlier minor version stay valid. */
+            folder_name?: string | null;
+            /** @description The name of the volume that holds the folder on the desktop (API-S-034), after the same transformation: the name of an external or removable volume's mount point. null when the host cannot read it (the system disk, Windows), and always null on every other host. Never journaled, logged or sent as an event. null when cancelled. Every FileSquid host built from this contract version sends it; it is optional so that clients built against an earlier minor version stay valid. */
+            volume_name?: string | null;
         };
         /**
          * @description What the owner picks in the host's dialog.
@@ -3018,6 +3022,10 @@ export interface components {
             free_bytes_reason: components["schemas"]["FreeBytesReason"] | null;
             /** @description The revision of the library while it is open on this host, the expected revision of its next copy, rebuild or rename command (Task API-F2.19); null for a remembered library that is not open now. */
             revision: string | null;
+            /** @description The library folder's own name on the desktop, the owner's own device (API-S-034; owner decision 2026-11-02): its last path component only, never a parent folder or the path, after the safe transformation of API-S-005. null when the host cannot read it, and always null on every other host. Never journaled, logged or sent as an event. null when the folder cannot be reached now. Every FileSquid host built from this contract version sends it; it is optional so that clients built against an earlier minor version stay valid. */
+            folder_name?: string | null;
+            /** @description The name of the volume that holds the folder on the desktop (API-S-034), after the same transformation: the name of an external or removable volume's mount point. null when the host cannot read it (the system disk, Windows), and always null on every other host. Never journaled, logged or sent as an event. null when the folder cannot be reached now. Every FileSquid host built from this contract version sends it; it is optional so that clients built against an earlier minor version stay valid. */
+            volume_name?: string | null;
         };
         /** @description One library this host opened (API-S-038). Never a path, storage key or location ID. */
         RecentLibrary: {

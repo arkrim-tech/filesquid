@@ -10,10 +10,17 @@
 //! refused `409 conflict`. Each request is journaled once as [`CHOOSE_OPERATION`]:
 //! `succeeded` with the location ID as its target, `cancelled`, or `failed` with its error
 //! code; never a path or folder name.
+//!
+//! **Folder and volume names (Task API-F2.31; API-S-034, owner decision 2026-11-02):** a chosen
+//! folder is answered with its own name and its volume's name as the host read them
+//! ([`ChosenFolder`]), each passed through API-S-005's safe transformation here, whatever the
+//! host handed over, and `null` when the host cannot read it. They are answered to the caller
+//! only: never journaled, logged or sent as an event.
 
 use crate::auth::{journal_entry, Action, Principal};
 use crate::error::{ApiError, ErrorCode};
 use crate::journal::{JournalEntry, Level, Outcome};
+use crate::local_library::FolderNames;
 use crate::routes::Route;
 use crate::ApiState;
 use axum::extract::rejection::JsonRejection;
@@ -65,6 +72,31 @@ pub struct LocationChoice {
     /// The opaque ID the host registered the folder under; absent when cancelled.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub location_id: Option<String>,
+    /// The chosen folder's own name (API-S-034), `null` when cancelled, when the host cannot
+    /// read it, and on every host but the desktop.
+    pub folder_name: Option<String>,
+    /// The name of the volume that holds the chosen folder, under the same rules.
+    pub volume_name: Option<String>,
+}
+
+/// A folder the owner picked, as the host registered it: its opaque location ID and the names
+/// the host read of it and its volume.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ChosenFolder {
+    /// The opaque ID the host registered the folder under.
+    pub location_id: String,
+    /// The folder's own name and its volume's name, each `None` when unreadable.
+    pub names: FolderNames,
+}
+
+impl ChosenFolder {
+    /// The folder registered as `location_id` with `names`. Pure.
+    pub fn new(location_id: impl Into<String>, names: FolderNames) -> Self {
+        Self {
+            location_id: location_id.into(),
+            names,
+        }
+    }
 }
 
 /// Why a host could not offer a choice.
@@ -93,12 +125,13 @@ impl ChooseError {
 /// The host's folder dialog and registry.
 pub trait LocationChooser: Send + Sync {
     /// Let the owner pick a folder for `purpose` and register it, answering its opaque
-    /// location ID, or `None` when the owner cancelled. Blocks until the dialog closes.
+    /// location ID with the names the host read of the folder and its volume, or `None` when
+    /// the owner cancelled. Blocks until the dialog closes.
     ///
     /// # Errors
     ///
     /// A [`ChooseError`]; nothing is registered.
-    fn choose(&self, purpose: ChoicePurpose) -> Result<Option<String>, ChooseError>;
+    fn choose(&self, purpose: ChoicePurpose) -> Result<Option<ChosenFolder>, ChooseError>;
 }
 
 /// The folder-choice route, relative to [`crate::API_PREFIX`].
@@ -134,29 +167,40 @@ async fn choose(
 async fn run(
     chooser: Arc<dyn LocationChooser>,
     purpose: ChoicePurpose,
-) -> Result<Option<String>, ChooseError> {
+) -> Result<Option<ChosenFolder>, ChooseError> {
     let joined = tokio::task::spawn_blocking(move || chooser.choose(purpose)).await;
     joined.unwrap_or(Err(ChooseError::Unavailable))
 }
 
-/// Journal the choice and answer it.
-async fn answer(state: &ApiState, actor: &str, location: Option<String>) -> Response {
-    let (outcome, entry) = match &location {
-        Some(id) => (
-            ChoiceOutcome::Chosen,
-            JournalEntry::new(CHOOSE_OPERATION, Outcome::Succeeded).target(id.as_str()),
-        ),
-        None => (
-            ChoiceOutcome::Cancelled,
-            JournalEntry::new(CHOOSE_OPERATION, Outcome::Cancelled),
-        ),
+/// Journal the choice with its opaque location ID only, and answer it with the folder's safe
+/// names.
+async fn answer(state: &ApiState, actor: &str, chosen: Option<ChosenFolder>) -> Response {
+    let entry = match &chosen {
+        Some(folder) => JournalEntry::new(CHOOSE_OPERATION, Outcome::Succeeded)
+            .target(folder.location_id.as_str()),
+        None => JournalEntry::new(CHOOSE_OPERATION, Outcome::Cancelled),
     };
     journal_entry(state, entry.actor(actor)).await;
-    Json(LocationChoice {
-        outcome,
-        location_id: location,
-    })
-    .into_response()
+    Json(choice_answer(chosen)).into_response()
+}
+
+/// The answer of `chosen`: its location ID and safe names, or cancelled. Pure.
+fn choice_answer(chosen: Option<ChosenFolder>) -> LocationChoice {
+    let Some(folder) = chosen else {
+        return LocationChoice {
+            outcome: ChoiceOutcome::Cancelled,
+            location_id: None,
+            folder_name: None,
+            volume_name: None,
+        };
+    };
+    let names = folder.names.made_safe();
+    LocationChoice {
+        outcome: ChoiceOutcome::Chosen,
+        location_id: Some(folder.location_id),
+        folder_name: names.folder_name,
+        volume_name: names.volume_name,
+    }
 }
 
 /// Journal an unreadable body once and answer `400 invalid_request`.
