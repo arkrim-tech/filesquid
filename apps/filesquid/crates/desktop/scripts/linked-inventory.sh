@@ -31,8 +31,8 @@
 # writes only to a temporary directory, which it removes on every exit path.
 #
 # Exit status: 0 complete inventory; 1 usage error, unreadable subject, or an incomplete
-# inventory (a library that could not be found, the Rust crates not listed, or the walk
-# limit reached); 2 ImageMagick is in the inventory, bundled in the subject or reached from it
+# inventory (a library that could not be found or inspected, a --runtime-lib that is not a
+# readable file, the Rust crates not listed, or the walk limit reached); 2 ImageMagick is in the inventory, bundled in the subject or reached from it
 # (ADR 006 forbids it; the inventory is still printed); 3 libvips was not found, so the
 # inventory is incomplete. Each case also prints a `finding` row.
 
@@ -124,12 +124,19 @@ list_subject_files() {
   done
 }
 
-# Print the dynamic libraries file $1 names, resolved, one per line (Linux: ldd).
+# Print the dynamic libraries file $1 names, resolved, one per line (Linux: ldd). A path may
+# hold spaces: it is everything between "=> " (or the line start) and the load address.
 list_dependencies_linux() {
   ldd "$1" 2>/dev/null | awk '
-    /=> not found/ { print "!" $1; next }
-    /=>/ && $3 ~ /^\// { print $3; next }
-    $1 ~ /^\// { print $1 }'
+    /=> not found/ { sub(/^[ \t]+/, ""); sub(/ => not found.*$/, ""); print "!" $0; next }
+    {
+      line = $0
+      arrow = index(line, "=> ")
+      if (arrow > 0) line = substr(line, arrow + 3)
+      sub(/^[ \t]+/, "", line)
+      sub(/ \(0x[0-9a-fA-F]+\)$/, "", line)
+      if (line ~ /^\//) print line
+    }'
 }
 
 # Print the run paths (LC_RPATH) of Mach-O file $1, one per line. A path may hold spaces.
@@ -247,6 +254,10 @@ walk_libraries() {
       printf 'finding\tlimit\tmore than %s libraries; the inventory is incomplete\n' "$MAX_ITEMS" >> "$FINDINGS"
       return
     fi
+    if ! is_object_file "$current"; then
+      printf 'finding\tuninspected\tnot an executable or library of this platform: %s\n' "$current" >> "$FINDINGS"
+      continue
+    fi
     list_dependencies "$current" | while IFS= read -r dependency; do
       case "$dependency" in
         !*)
@@ -319,14 +330,19 @@ describe_vips() {
 }
 
 # Walk every run-time loaded library and its loader modules; print the `vips` and `module`
-# rows. Records a finding when none is found and --without-vips was not given.
+# rows. Records a finding when none is found and --without-vips was not given, and one for
+# each named library that is not a readable file (missing, or a symbolic-link loop).
 inventory_runtime_libraries() {
   local queue="$WORK/runtime-queue" library module found=0
   : > "$queue"
-  while IFS= read -r library; do
-    [ -n "$library" ] || continue
+  while IFS= read -r named; do
+    [ -n "$named" ] || continue
     found=1
-    library=$(physical_path "$library")
+    library=$(physical_path "$named")
+    if [ ! -f "$library" ] || [ ! -r "$library" ]; then
+      printf 'finding\truntime-missing\t%s\n' "$named" >> "$FINDINGS"
+      continue
+    fi
     case "$(basename "$library")" in libvips*) describe_vips "$library" ;; esac
     if ! grep -Fxq "$library" "$SEEN"; then
       printf '%s\n' "$library" >> "$SEEN"
@@ -374,12 +390,27 @@ find_imagemagick() {
 }
 
 # Print the exit status the findings call for: 2 ImageMagick, 3 libvips missing, 1 an
-# incomplete inventory (walk limit, unresolved library, crates not listed), else 0.
+# incomplete inventory (walk limit, unresolved, uninspected or missing library, crates not
+# listed), else 0.
 exit_status() {
   if grep -q '^finding	imagemagick	' "$FINDINGS"; then echo 2; return; fi
   if grep -q '^finding	libvips-missing	' "$FINDINGS"; then echo 3; return; fi
-  if grep -Eq '^finding	(limit|unresolved|crates-unlisted)	' "$FINDINGS"; then echo 1; return; fi
+  if grep -Eq '^finding	(limit|unresolved|uninspected|runtime-missing|crates-unlisted)	' "$FINDINGS"; then echo 1; return; fi
   echo 0
+}
+
+# Print the subject's main executable: the first file in a `Contents/MacOS` folder of an app
+# bundle, the subject itself or an app inside a mounted volume, else the first object file.
+find_main_executable() {
+  local bundled=""
+  if [ -d "$SUBJECT_PATH" ]; then
+    bundled=$(find "$SUBJECT_PATH" -maxdepth 4 -path '*/Contents/MacOS/*' -type f 2>/dev/null | sort | head -n 1)
+  fi
+  if [ -n "$bundled" ]; then
+    printf '%s\n' "$bundled"
+  else
+    head -n 1 "$WORK/files"
+  fi
 }
 
 main() {
@@ -391,12 +422,16 @@ main() {
   : > "$SEEN"; : > "$ROWS"; : > "$FINDINGS"
   list_subject_files > "$WORK/files"
   [ -s "$WORK/files" ] || { echo "no executable or library in: $SUBJECT" >&2; exit 1; }
-  MAIN_FILE=$(head -n 1 "$WORK/files")
-  [ -d "$SUBJECT_PATH/Contents/MacOS" ] && MAIN_FILE=$(find "$SUBJECT_PATH/Contents/MacOS" -type f | sort | head -n 1)
+  MAIN_FILE=$(find_main_executable)
   MAIN_DIR=$(dirname "$MAIN_FILE")
 
   printf '# FileSquid linked inventory (ADR 011 review input)\n'
   printf '# subject: %s\n# platform: %s %s\n' "$(basename "$SUBJECT_PATH")" "$PLATFORM" "$(uname -m)"
+  if [ -d "$SUBJECT_PATH" ]; then
+    printf '# main executable: %s\n' "${MAIN_FILE#"$SUBJECT_PATH"/}"
+  else
+    printf '# main executable: %s\n' "$(basename "$MAIN_FILE")"
+  fi
   printf '## Files scanned\n'
   sed "s#^$SUBJECT_PATH/##; s#^#file\t#" "$WORK/files"
   cat "$WORK/files" >> "$SEEN"

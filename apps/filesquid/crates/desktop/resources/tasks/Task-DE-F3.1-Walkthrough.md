@@ -124,7 +124,7 @@ test the_macos_icon_is_an_apple_icon_image ... FAILED
 test result: FAILED. 1 passed; 14 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
 ```
 
-The inventory script and its tests were written together, not test-first. Its tests then caught two defects, which were fixed: `--without-vips` still looked for libvips, and the ImageMagick check matched a folder name. A later reading of the script found that a symbolic-link loop was followed without a bound and that the macOS parsing split paths at spaces; both were fixed, the first with a test. The first AI PR Agent review found that a bundled ImageMagick inside the subject escaped the check, and that an unresolved library or a failed `cargo tree` still exited 0; three tests were written first and failed, then both were fixed.
+The inventory script and its tests were written together, not test-first. Its tests then caught two defects, which were fixed: `--without-vips` still looked for libvips, and the ImageMagick check matched a folder name. A later reading of the script found that a symbolic-link loop was followed without a bound and that the macOS parsing split paths at spaces; both were fixed, the first with a test. The first AI PR Agent review found that a bundled ImageMagick inside the subject escaped the check, and that an unresolved library or a failed `cargo tree` still exited 0; three tests were written first and failed, then both were fixed. The second review found that a `--runtime-lib` that is not a readable file was accepted, that the Linux parser cut a library path at its first space, and that in a mounted volume a bundled library could be taken for the main executable; five tests were written first and failed, then all three were fixed (a missing run-time library and a file that is not an object file are now findings with exit status 1, and the script prints the main executable it chose).
 
 The branding spec against a binary built over the stub page (the UI not built):
 
@@ -162,17 +162,21 @@ test the_capability_policy_holds_with_the_overlays_merged ... ok
 test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
      Running tests/integration/linked_inventory.rs (integration_linked_inventory)
 test it_fails_when_imagemagick_is_bundled_inside_the_subject ... ok
+test it_fails_when_the_rust_crates_cannot_be_listed ... ok
 test it_fails_when_imagemagick_is_in_the_inventory ... ok
 test it_fails_when_a_linked_library_cannot_be_found ... ok
-test it_ends_on_a_symbolic_link_loop ... ok
-test it_fails_when_the_rust_crates_cannot_be_listed ... ok
+test it_finds_the_app_executable_inside_a_mounted_volume ... ok
 test it_lists_the_dynamic_libraries_of_a_real_binary ... ok
-test it_refuses_a_subject_that_does_not_exist ... ok
 test it_refuses_a_folder_with_no_executable_in_it ... ok
+test it_refuses_a_subject_that_does_not_exist ... ok
+test it_keeps_the_whole_path_of_a_library_in_a_folder_with_spaces ... ok
 test it_lists_the_run_time_loaded_libvips_and_its_loader_modules ... ok
+test it_reports_a_library_it_cannot_inspect ... ok
 test it_lists_the_rust_crates_with_their_licences ... ok
+test it_reports_a_run_time_library_that_does_not_exist ... ok
+test it_reports_a_run_time_library_reached_through_a_symbolic_link_loop_as_missing ... ok
 test it_says_when_libvips_is_missing_and_lists_it_when_it_is_installed ... ok
-test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 23.28s
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 22.93s
 ```
 
 `cargo test -p filesquid-desktop --locked --features test-webdriver --test features`, the new feature and the summary:
@@ -246,6 +250,7 @@ That run's one failed spec file is `libraries.e2e.mjs`, with two failing tests (
 # FileSquid linked inventory (ADR 011 review input)
 # subject: filesquid-desktop
 # platform: Linux x86_64
+# main executable: filesquid-desktop
 ## Files scanned
 file	<target>/debug/filesquid-desktop
 ## Run-time loaded libvips
@@ -383,7 +388,7 @@ cd apps/filesquid
 cargo test -p filesquid-desktop --locked --test integration_distribution_overlay --test integration_linked_inventory
 ```
 
-Expect: `15 passed` and `10 passed` (the test of an unresolved library is built with `rustc` on Linux only).
+Expect: `15 passed` and `13 passed` (the two tests that build an executable with `rustc` against their own shared library run on Linux only).
 
 Send back: the output of the three test commands.
 
@@ -397,7 +402,7 @@ brew list --versions vips
 vips --vips-config
 ```
 
-Expect: exit status 0, a `file` row for `Contents/MacOS/filesquid-desktop`, `lib` rows marked `system` for the macOS frameworks and `homebrew:<formula> <version>` for libvips and what it loads, `vips` and `module` rows, and a few hundred `crate` rows. Exit status 2 means ImageMagick is in the inventory; exit status 3 means no libvips was found; exit status 1 with a `finding unresolved` or `finding crates-unlisted` row means the inventory is incomplete. Each is a finding for the review, not a script failure. `finding unresolved` rows name a library the script could not find; the macOS path of the script has never been run, so please report those.
+Expect: exit status 0, a `file` row for `Contents/MacOS/filesquid-desktop`, `lib` rows marked `system` for the macOS frameworks and `homebrew:<formula> <version>` for libvips and what it loads, `vips` and `module` rows, and a few hundred `crate` rows. Exit status 2 means ImageMagick is in the inventory; exit status 3 means no libvips was found; exit status 1 with a `finding unresolved`, `uninspected`, `runtime-missing` or `crates-unlisted` row means the inventory is incomplete. Check that the `# main executable:` line names `FileSquid.app/Contents/MacOS/filesquid-desktop`. Each is a finding for the review, not a script failure. `finding unresolved` rows name a library the script could not find; the macOS path of the script has never been run, so please report those.
 
 Send back: `filesquid-dmg-inventory.txt`, the exit status, and the output of the two `brew`/`vips` commands. That file is the input to the ADR 011 licence and patent review, which MUST pass before the DMG goes to anyone outside the development team (ADR 035 Decision 5).
 

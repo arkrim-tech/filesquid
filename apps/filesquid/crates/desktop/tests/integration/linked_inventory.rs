@@ -52,8 +52,17 @@ impl Scratch {
         Self(dir)
     }
 
-    /// Write a stand-in file (not a real library) at `relative` and return its path. Performs
-    /// filesystem I/O.
+    /// Copy this test binary, a real object file of the platform, to `relative` as a stand-in
+    /// library and return its path. Performs filesystem I/O.
+    fn object(&self, relative: &str) -> String {
+        let path = self.0.join(relative);
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("stand-in directory");
+        std::fs::copy(this_binary(), &path).expect("copy a real object file");
+        path.to_string_lossy().into_owned()
+    }
+
+    /// Write a stand-in file that is not an object file at `relative` and return its path.
+    /// Performs filesystem I/O.
     fn stand_in(&self, relative: &str) -> String {
         let path = self.0.join(relative);
         std::fs::create_dir_all(path.parent().expect("parent")).expect("stand-in directory");
@@ -117,9 +126,9 @@ fn it_refuses_a_folder_with_no_executable_in_it() {
 #[test]
 fn it_lists_the_run_time_loaded_libvips_and_its_loader_modules() {
     let scratch = Scratch::new("vips");
-    let library = scratch.stand_in("lib/libvips.so.42");
-    scratch.stand_in("lib/vips-modules-8.15/vips-heif.so");
-    scratch.stand_in("lib/vips-modules-8.15/vips-jxl.so");
+    let library = scratch.object("lib/libvips.so.42");
+    scratch.object("lib/vips-modules-8.15/vips-heif.so");
+    scratch.object("lib/vips-modules-8.15/vips-jxl.so");
     let output = run_inventory(&["--no-crates", "--runtime-lib", &library, &this_binary()]);
     let text = stdout(&output);
     assert_eq!(output.status.code(), Some(0), "{text}");
@@ -140,8 +149,8 @@ fn it_lists_the_run_time_loaded_libvips_and_its_loader_modules() {
 #[test]
 fn it_fails_when_imagemagick_is_in_the_inventory() {
     let scratch = Scratch::new("magick");
-    let library = scratch.stand_in("lib/libvips.so.42");
-    scratch.stand_in("lib/vips-modules-8.15/vips-magick.so");
+    let library = scratch.object("lib/libvips.so.42");
+    scratch.object("lib/vips-modules-8.15/vips-magick.so");
     let output = run_inventory(&["--no-crates", "--runtime-lib", &library, &this_binary()]);
     let text = stdout(&output);
     assert_eq!(output.status.code(), Some(2), "{text}");
@@ -152,7 +161,7 @@ fn it_fails_when_imagemagick_is_in_the_inventory() {
 }
 
 #[test]
-fn it_ends_on_a_symbolic_link_loop() {
+fn it_reports_a_run_time_library_reached_through_a_symbolic_link_loop_as_missing() {
     let scratch = Scratch::new("loop");
     let first = scratch.0.join("libvips.so.42");
     let second = scratch.0.join("libvips.so.42.17");
@@ -161,12 +170,64 @@ fn it_ends_on_a_symbolic_link_loop() {
     let library = first.to_string_lossy().into_owned();
     let output = run_inventory(&["--no-crates", "--runtime-lib", &library, &this_binary()]);
     let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(1), "{text}");
+    let findings = rows(&text, "finding");
+    assert_eq!(findings.len(), 1, "{text}");
+    assert!(
+        findings[0].starts_with("finding\truntime-missing\t"),
+        "{text}"
+    );
+    assert!(rows(&text, "vips").is_empty(), "{text}");
+}
+
+#[test]
+fn it_reports_a_run_time_library_that_does_not_exist() {
+    let output = run_inventory(&[
+        "--no-crates",
+        "--runtime-lib",
+        "/nonexistent/libvips.so.42",
+        &this_binary(),
+    ]);
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(1), "{text}");
+    let findings = rows(&text, "finding");
+    assert_eq!(
+        findings,
+        vec!["finding\truntime-missing\t/nonexistent/libvips.so.42"],
+        "{text}"
+    );
+}
+
+#[test]
+fn it_reports_a_library_it_cannot_inspect() {
+    let scratch = Scratch::new("not-an-object");
+    let library = scratch.stand_in("lib/libvips.so.42");
+    let output = run_inventory(&["--no-crates", "--runtime-lib", &library, &this_binary()]);
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(1), "{text}");
+    let findings = rows(&text, "finding");
+    assert_eq!(findings.len(), 1, "{text}");
+    assert!(findings[0].starts_with("finding\tuninspected\t"), "{text}");
+    assert!(findings[0].ends_with("libvips.so.42"), "{text}");
+}
+
+#[test]
+fn it_finds_the_app_executable_inside_a_mounted_volume() {
+    let scratch = Scratch::new("volume");
+    scratch.object("FileSquid.app/Contents/Frameworks/aaa-first.so");
+    scratch.object("FileSquid.app/Contents/MacOS/filesquid-desktop");
+    let volume = scratch.0.to_string_lossy().into_owned();
+    let output = run_inventory(&["--without-vips", "--no-crates", &volume]);
+    let text = stdout(&output);
     assert_eq!(output.status.code(), Some(0), "{text}");
-    let runtime: Vec<_> = rows(&text, "lib")
-        .into_iter()
-        .filter(|row| row.starts_with("lib\truntime\t"))
-        .collect();
-    assert_eq!(runtime.len(), 1, "{text}");
+    let main = text
+        .lines()
+        .find(|line| line.starts_with("# main executable: "))
+        .unwrap_or_else(|| panic!("no main executable line: {text}"));
+    assert_eq!(
+        main,
+        "# main executable: FileSquid.app/Contents/MacOS/filesquid-desktop"
+    );
 }
 
 #[test]
@@ -188,12 +249,12 @@ fn it_fails_when_imagemagick_is_bundled_inside_the_subject() {
     assert!(findings[0].ends_with("libMagickCore-7.so"), "{text}");
 }
 
-/// Build, with the workspace's `rustc`, an executable in `dir` that links the shared
-/// library `libfilesquid_absent.so`, then delete that library, so the executable names a
-/// library that cannot be found. Returns the executable's path. Starts processes and performs
+/// Build, with the workspace's `rustc`, the shared library `libfilesquid_absent.so` in
+/// `library_dir` and an executable in `dir` that links it, with `library_dir` as its run
+/// path. Returns the executable's and the library's paths. Starts processes and performs
 /// filesystem I/O.
 #[cfg(target_os = "linux")]
-fn build_executable_with_a_missing_library(dir: &Path) -> String {
+fn build_executable_linking_a_library(dir: &Path, library_dir: &Path) -> (String, PathBuf) {
     let library_source = dir.join("absent.rs");
     let program_source = dir.join("program.rs");
     std::fs::write(
@@ -206,7 +267,9 @@ fn build_executable_with_a_missing_library(dir: &Path) -> String {
         "extern \"C\" { fn absent(); }\nfn main() { unsafe { absent() } }\n",
     )
     .expect("program source");
-    let library = dir.join("libfilesquid_absent.so");
+    std::fs::create_dir_all(library_dir).expect("library folder");
+    let library = library_dir.join("libfilesquid_absent.so");
+    let rpath = format!("link-arg=-Wl,-rpath,{}", library_dir.display());
     let program = dir.join("program");
     let rustc = |arguments: Vec<&std::ffi::OsStr>| {
         let status = Command::new("rustc")
@@ -226,23 +289,25 @@ fn build_executable_with_a_missing_library(dir: &Path) -> String {
         library_source.as_os_str(),
     ]);
     rustc(vec![
+        "-C".as_ref(),
+        rpath.as_ref(),
         "-L".as_ref(),
-        dir.as_os_str(),
+        library_dir.as_os_str(),
         "-l".as_ref(),
         "dylib=filesquid_absent".as_ref(),
         "-o".as_ref(),
         program.as_os_str(),
         program_source.as_os_str(),
     ]);
-    std::fs::remove_file(&library).expect("remove the library");
-    program.to_string_lossy().into_owned()
+    (program.to_string_lossy().into_owned(), library)
 }
 
 #[cfg(target_os = "linux")]
 #[test]
 fn it_fails_when_a_linked_library_cannot_be_found() {
     let scratch = Scratch::new("unresolved");
-    let program = build_executable_with_a_missing_library(&scratch.0);
+    let (program, library) = build_executable_linking_a_library(&scratch.0, &scratch.0);
+    std::fs::remove_file(&library).expect("remove the library");
     let output = run_inventory(&["--without-vips", "--no-crates", &program]);
     let text = stdout(&output);
     assert_eq!(output.status.code(), Some(1), "{text}");
@@ -250,6 +315,24 @@ fn it_fails_when_a_linked_library_cannot_be_found() {
     assert_eq!(findings.len(), 1, "{text}");
     assert!(
         findings[0].starts_with("finding\tunresolved\tlibfilesquid_absent.so"),
+        "{text}"
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn it_keeps_the_whole_path_of_a_library_in_a_folder_with_spaces() {
+    let scratch = Scratch::new("spaces");
+    let folder = scratch.0.join("My Libraries");
+    let (program, library) = build_executable_linking_a_library(&scratch.0, &folder);
+    let output = run_inventory(&["--without-vips", "--no-crates", &program]);
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(0), "{text}");
+    let expected = format!("\t{}", library.display());
+    assert!(
+        rows(&text, "lib")
+            .iter()
+            .any(|row| row.ends_with(&expected)),
         "{text}"
     );
 }
