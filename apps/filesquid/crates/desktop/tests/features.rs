@@ -135,6 +135,33 @@ impl Drop for Launched {
 /// Scenario counter, so concurrent scenarios get separate data directories.
 static SCENARIOS: AtomicU32 = AtomicU32::new(0);
 
+/// How often [`stop_when_quiet`] looks at the sink.
+const DRAIN_TICK: Duration = Duration::from_millis(10);
+
+/// How many ticks without a new event end a drain once an event has arrived (50 ms).
+const DRAIN_QUIET_TICKS: u32 = 5;
+
+/// The most ticks one drain waits (5 s), so a drain that receives nothing still ends.
+const DRAIN_MAX_TICKS: u32 = 500;
+
+/// Stop the pump once `sink` has received at least one event and nothing new has arrived for
+/// [`DRAIN_QUIET_TICKS`], or after [`DRAIN_MAX_TICKS`]. A fixed 50 ms window raced the
+/// forwarder on a loaded machine and ended some drains before the first event was forwarded.
+async fn stop_when_quiet(sink: Arc<KeepingSink>, stop: Arc<AtomicBool>) {
+    let mut seen = 0;
+    let mut quiet = 0;
+    for _ in 0..DRAIN_MAX_TICKS {
+        tokio::time::sleep(DRAIN_TICK).await;
+        let now = sink.0.lock().expect("events").len();
+        quiet = if now > 0 && now == seen { quiet + 1 } else { 0 };
+        seen = now;
+        if quiet >= DRAIN_QUIET_TICKS {
+            break;
+        }
+    }
+    stop.store(true, std::sync::atomic::Ordering::SeqCst);
+}
+
 /// A sink that keeps every event it is given.
 #[derive(Default)]
 struct KeepingSink(Mutex<Vec<ApiEvent>>);
@@ -184,14 +211,11 @@ impl DesktopWorld {
             heartbeat: Duration::from_millis(10),
             process: None,
         };
-        let sink = KeepingSink::default();
-        let stopper = tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_millis(50)).await;
-            stop.store(true, std::sync::atomic::Ordering::SeqCst);
-        });
-        pump(subscription, &sink, forwarding).await;
+        let sink = Arc::new(KeepingSink::default());
+        let stopper = tokio::spawn(stop_when_quiet(sink.clone(), stop));
+        pump(subscription, &*sink, forwarding).await;
         stopper.await.expect("stopper");
-        self.received = sink.0.into_inner().expect("events");
+        self.received = std::mem::take(&mut *sink.0.lock().expect("events"));
     }
 }
 
