@@ -54,7 +54,7 @@ On the orchestrator's machine, run only the preview and performance Playwright s
 
 ## Process rules
 
-- Merge `origin/main` into your branch by merge commit. Never rebase and never force-push. Commit the merge on its own; the only code it may contain is conflict resolution. Commit feature and fix code separately, because the AI PR Agent skips merge commits and would not review it (owner decision).
+- Merge `origin/main` into your branch by merge commit. Never rebase and never force-push. Commit the merge on its own; the only code it may contain is conflict resolution. Commit feature and fix code separately.
 - Never put the owner's email address in any request, URL or header (for example a `User-Agent`). Use a generic `User-Agent`.
 - Keep model and tool names out of code, pull request text and docs. The attribution trailer your own session supplies is the only place one may appear.
 - Never stop processes by name or pattern (`pkill -f`, `killall`, `pgrep … | xargs kill`): other agents share this machine and may be running the same command. Stop only a process you started, by the PID you recorded when you started it. To stop a background hook run, kill that PID or let it finish.
