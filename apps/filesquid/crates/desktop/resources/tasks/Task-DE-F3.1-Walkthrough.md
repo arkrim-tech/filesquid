@@ -128,6 +128,8 @@ The inventory script and its tests were written together, not test-first. Its te
 
 The merge of main at fd8d8b9 (API-F2.30) made two existing event-channel scenarios of the desktop BDD harness fail in some runs: its `drain` helper stopped the pump after a fixed 50 ms, which raced the forwarder on a loaded machine. `drain` now stops once an event has arrived and 50 ms pass without another, and after 5 s at the latest; the features then passed 6 runs of 6 (79 scenarios). On origin/main alone (71 scenarios) the same test had passed 4 runs of 4.
 
+The pull request's reviewer changed to CodeRabbit on 2026-11-14 (owner decision). Its first review (of 4c571fb) found seven issues and one nitpick, all fixed with tests written first and failing: the subject path was interpolated into a `sed` program, so a crafted folder name ran a shell command (now removed by parameter expansion; `it_never_runs_text_from_the_subject_path`); a `find` that could not list a folder was ignored (`unlisted` finding, exit status 1); bundled libraries were marked seen before the walk, so they had no loading chain (the walk now starts at the main executable and records the first loader of every library apart from the seen list); a `vips` program elsewhere on `PATH` was taken to describe the chosen libvips (only the installation's own `bin/vips` is used now); the crate list ignored the subject's build features (`--features`, printed as `# crate features:`); a bundled libvips was looked for at the volume's root instead of beside the app's executable (macOS only, no test here); the branding spec read text node by node, so a label split across elements passed (it now reads each element's and each shadow root's whole text, and a new test injects a split label and must find it); and the test cleanup warning now goes through `tracing` to the JSON stdout subscriber.
+
 The branding spec against a binary built over the stub page (the UI not built):
 
 ```text
@@ -165,23 +167,28 @@ test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fin
      Running tests/integration/linked_inventory.rs (integration_linked_inventory)
 test it_accepts_a_statically_linked_file_as_having_no_libraries ... ok
 test it_fails_when_imagemagick_is_bundled_inside_the_subject ... ok
-test it_fails_when_the_rust_crates_cannot_be_listed ... ok
-test it_fails_when_imagemagick_is_in_the_inventory ... ok
+test it_does_not_take_build_options_from_an_unrelated_vips_program ... ok
 test it_fails_when_a_linked_library_cannot_be_found ... ok
+test it_fails_when_imagemagick_is_in_the_inventory ... ok
+test it_fails_when_the_rust_crates_cannot_be_listed ... ok
 test it_finds_the_app_executable_inside_a_mounted_volume ... ok
 test it_lists_the_dynamic_libraries_of_a_real_binary ... ok
+test it_keeps_the_whole_path_of_a_library_in_a_folder_with_spaces ... ok
+test it_lists_the_run_time_loaded_libvips_and_its_loader_modules ... ok
 test it_refuses_a_folder_with_no_executable_in_it ... ok
 test it_refuses_a_subject_that_does_not_exist ... ok
-test it_keeps_the_whole_path_of_a_library_in_a_folder_with_spaces ... ok
+test it_never_runs_text_from_the_subject_path ... ok
+test it_lists_the_crates_of_the_features_the_subject_was_built_with ... ok
+test it_reports_a_folder_it_cannot_enumerate ... ok
 test it_reports_a_library_whose_inspection_fails ... ok
-test it_reports_a_resolved_library_path_that_is_not_a_file ... ok
-test it_lists_the_run_time_loaded_libvips_and_its_loader_modules ... ok
-test it_reports_a_library_it_cannot_inspect ... ok
 test it_lists_the_rust_crates_with_their_licences ... ok
+test it_reports_a_resolved_library_path_that_is_not_a_file ... ok
+test it_reports_a_library_it_cannot_inspect ... ok
 test it_reports_a_run_time_library_that_does_not_exist ... ok
 test it_reports_a_run_time_library_reached_through_a_symbolic_link_loop_as_missing ... ok
+test it_walks_a_bundled_library_from_the_executable_that_loads_it ... ok
 test it_says_when_libvips_is_missing_and_lists_it_when_it_is_installed ... ok
-test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 23.39s
+test result: ok. 23 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 23.25s
 ```
 
 `cargo test -p filesquid-desktop --locked --features test-webdriver --test features`, the new feature and the summary:
@@ -384,7 +391,7 @@ npx wdio run ./wdio.conf.mjs --spec specs/branding.e2e.mjs
 npm run test:e2e
 ```
 
-Expect from the branding spec: `4 passing`. The whole suite (`npm run test:e2e`) had two failing tests in `libraries.e2e.mjs` on Linux; say whether they fail on macOS too. The test-instrumented binary is a debug build with a WebDriver server in it. It is not the app inside the DMG, which has none; step 3 is the check of that app.
+Expect from the branding spec: `5 passing`. The whole suite (`npm run test:e2e`) had two failing tests in `libraries.e2e.mjs` on Linux; say whether they fail on macOS too. The test-instrumented binary is a debug build with a WebDriver server in it. It is not the app inside the DMG, which has none; step 3 is the check of that app.
 
 Also run the configuration and inventory tests, which use `otool` on macOS:
 
@@ -393,7 +400,7 @@ cd apps/filesquid
 cargo test -p filesquid-desktop --locked --test integration_distribution_overlay --test integration_linked_inventory
 ```
 
-Expect: `15 passed` and `13 passed` (five tests run on Linux only: two build an executable with `rustc` against their own shared library, three put a stand-in `ldd` on `PATH`).
+Expect: `15 passed` and `17 passed` (six tests run on Linux only: three build an executable with `rustc` against their own shared library, three put a stand-in `ldd` on `PATH`).
 
 Send back: the output of the three test commands.
 

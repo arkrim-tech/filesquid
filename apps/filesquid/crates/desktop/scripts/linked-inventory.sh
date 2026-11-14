@@ -13,6 +13,9 @@
 #                         Without it the script looks for libvips 8 where the workers do.
 #   --without-vips        state that no libvips is expected, so its absence is not an error
 #   --no-crates           leave out the Rust crates section (it needs cargo and the workspace)
+#   --features <list>     the Cargo features the subject was built with (comma-separated), so
+#                         the crates section lists what that build links; default features
+#                         when not given (the shipping build)
 #
 # Prints tab-separated rows to stdout, one section after another:
 #
@@ -32,7 +35,8 @@
 #
 # Exit status: 0 complete inventory; 1 usage error, unreadable subject, or an incomplete
 # inventory (a library that could not be found or inspected, a --runtime-lib that is not a
-# readable file, the Rust crates not listed, or the walk limit reached); 2 ImageMagick is in the inventory, bundled in the subject or reached from it
+# readable file, a folder that could not be listed, the Rust crates not listed, or the walk
+# limit reached); 2 ImageMagick is in the inventory, bundled in the subject or reached from it
 # (ADR 006 forbids it; the inventory is still printed); 3 libvips was not found, so the
 # inventory is incomplete. Each case also prints a `finding` row.
 
@@ -48,13 +52,14 @@ MAX_LINKS=40
 SUBJECT=""
 WITHOUT_VIPS=0
 WITH_CRATES=1
+FEATURES=""
 RUNTIME_LIBS=""
 HERE=$(cd "$(dirname "$0")" && pwd -P)
 WORKSPACE=$(cd "$HERE/../../.." && pwd -P)
 PLATFORM=$(uname -s)
 
 usage() {
-  sed -n '9,16p' "$0" | sed 's/^# \{0,1\}//' >&2
+  sed -n '9,19p' "$0" | sed 's/^# \{0,1\}//' >&2
 }
 
 # Parse the command line into the globals above. Exits 1 on a usage error.
@@ -69,6 +74,11 @@ parse_arguments() {
         ;;
       --without-vips) WITHOUT_VIPS=1; shift ;;
       --no-crates) WITH_CRATES=0; shift ;;
+      --features)
+        [ $# -ge 2 ] || { usage; exit 1; }
+        FEATURES="$2"
+        shift 2
+        ;;
       -h | --help) usage; exit 0 ;;
       -*) echo "unknown option: $1" >&2; usage; exit 1 ;;
       *)
@@ -113,15 +123,26 @@ physical_path() {
 # Print the object files of the subject, one per line: the file itself, or every object file
 # under the directory.
 list_subject_files() {
+  local listing="$WORK/subject-listing" candidate
   if [ -f "$SUBJECT_PATH" ]; then
     printf '%s\n' "$SUBJECT_PATH"
     return
   fi
-  find "$SUBJECT_PATH" -type f 2>/dev/null | sort | while IFS= read -r candidate; do
+  record_find "$SUBJECT_PATH" -type f > "$listing"
+  sort "$listing" | while IFS= read -r candidate; do
     if is_object_file "$candidate"; then
       printf '%s\n' "$candidate"
     fi
   done
+}
+
+# Run `find` with arguments $@ and print what it lists. A failure of find (an unreadable
+# folder, for example) is an `unlisted` finding; what it listed before failing is kept.
+record_find() {
+  local error="$WORK/find-error"
+  if ! find "$@" 2> "$error"; then
+    printf 'finding\tunlisted\t%s: %s\n' "$1" "$(head -n 1 "$error")" >> "$FINDINGS"
+  fi
 }
 
 # Print the dynamic libraries file $1 names, resolved, one per line (Linux: ldd). A path may
@@ -157,6 +178,16 @@ list_rpaths_macos() {
     sub(/^[ \t]*path /, ""); sub(/ \(offset [0-9]+\)$/, "")
     print
   }'
+}
+
+# Record that image $2 loads library $1, unless an edge into $1 is already recorded (the
+# first loader in the walk, which starts at the main executable, is the one dyld follows) or
+# $1 is the main executable. Kept apart from SEEN, so a library scanned already still gets
+# its loader.
+record_loading_edge() {
+  [ "$1" = "$MAIN_FILE" ] && return
+  [ -n "$(parent_image "$1")" ] && return
+  printf '%s\t%s\n' "$1" "$2" >> "$PARENTS"
 }
 
 # Print the image that loaded image $1 in the walk (recorded in $PARENTS), or nothing for the
@@ -319,6 +350,7 @@ walk_libraries() {
           ;;
       esac
       resolved=$(physical_path "$dependency")
+      record_loading_edge "$resolved" "$current"
       grep -Fxq "$resolved" "$SEEN" && continue
       printf '%s\n' "$resolved" >> "$SEEN"
       if is_macos_system_library "$resolved"; then
@@ -330,7 +362,6 @@ walk_libraries() {
         continue
       fi
       printf 'lib\t%s\t%s\t%s\n' "$origin" "$(library_owner "$resolved")" "$resolved" >> "$ROWS"
-      printf '%s\t%s\n' "$resolved" "$current" >> "$PARENTS"
       printf '%s\n' "$resolved" >> "$queue"
     done
   done
@@ -341,7 +372,7 @@ walk_libraries() {
 find_libvips() {
   local candidate
   if [ "$PLATFORM" = "Darwin" ]; then
-    for candidate in "$SUBJECT_PATH/Contents/Frameworks/libvips.42.dylib" \
+    for candidate in "$(dirname "$MAIN_DIR")/Frameworks/libvips.42.dylib" \
       /opt/homebrew/lib/libvips.42.dylib /usr/local/lib/libvips.42.dylib; do
       if [ -e "$candidate" ]; then
         printf '%s\n' "$candidate"
@@ -369,18 +400,20 @@ list_runtime_libraries() {
 list_vips_modules() {
   local dir
   dir=$(dirname "$1")
-  find "$dir" -maxdepth 2 -path '*/vips-modules-*' -type f 2>/dev/null | sort
+  record_find "$dir" -maxdepth 2 -path '*/vips-modules-*' -type f > "$WORK/modules-listing"
+  sort "$WORK/modules-listing"
 }
 
 # Print the `vips` rows for run-time library $1: where it is, and the version and build
-# options its own `vips` program reports when there is one beside it or on PATH.
+# options that the `vips` program of the same installation (`../bin/vips` beside its `lib`
+# folder) reports. A `vips` elsewhere on PATH may belong to another installation, so it is
+# never used; without the installation's own program the options are reported unknown.
 describe_vips() {
   local library="$1" tool
   printf 'vips\tlibrary\t%s\n' "$library"
   tool="$(dirname "$(dirname "$library")")/bin/vips"
-  [ -x "$tool" ] || tool=$(command -v vips 2>/dev/null || true)
-  if [ -z "$tool" ] || [ ! -x "$tool" ]; then
-    printf 'vips\tbuild-options\tunknown: no vips program found to report them\n'
+  if [ ! -x "$tool" ]; then
+    printf 'vips\tbuild-options\tunknown: no vips program beside this library to report them\n'
     return
   fi
   printf 'vips\tversion\t%s\n' "$("$tool" --version 2>/dev/null | head -n 1)"
@@ -428,8 +461,10 @@ EOF
 # Runs `cargo tree` in the workspace; a failure is a finding.
 inventory_crates() {
   local listing="$WORK/crates"
+  local selection=()
+  [ -z "$FEATURES" ] || selection=(--features "$FEATURES")
   if ! (cd "$WORKSPACE" && cargo tree -p filesquid-desktop -e normal --locked --prefix none \
-    --format '{p}|{l}') > "$listing" 2> "$WORK/crates-error"; then
+    "${selection[@]}" --format '{p}|{l}') > "$listing" 2> "$WORK/crates-error"; then
     printf 'finding\tcrates-unlisted\tcargo tree failed: %s\n' "$(head -n 1 "$WORK/crates-error")" >> "$FINDINGS"
     return
   fi
@@ -450,12 +485,12 @@ find_imagemagick() {
 }
 
 # Print the exit status the findings call for: 2 ImageMagick, 3 libvips missing, 1 an
-# incomplete inventory (walk limit, unresolved, uninspected or missing library, crates not
-# listed), else 0.
+# incomplete inventory (walk limit, unresolved, uninspected or missing library, a folder
+# find could not list, crates not listed), else 0.
 exit_status() {
   if grep -q '^finding	imagemagick	' "$FINDINGS"; then echo 2; return; fi
   if grep -q '^finding	libvips-missing	' "$FINDINGS"; then echo 3; return; fi
-  if grep -Eq '^finding	(limit|unresolved|uninspected|runtime-missing|crates-unlisted)	' "$FINDINGS"; then echo 1; return; fi
+  if grep -Eq '^finding	(limit|unresolved|uninspected|unlisted|runtime-missing|crates-unlisted)	' "$FINDINGS"; then echo 1; return; fi
   echo 0
 }
 
@@ -464,13 +499,39 @@ exit_status() {
 find_main_executable() {
   local bundled=""
   if [ -d "$SUBJECT_PATH" ]; then
-    bundled=$(find "$SUBJECT_PATH" -maxdepth 4 -path '*/Contents/MacOS/*' -type f 2>/dev/null | sort | head -n 1)
+    record_find "$SUBJECT_PATH" -maxdepth 4 -path '*/Contents/MacOS/*' -type f > "$WORK/main-listing"
+    bundled=$(sort "$WORK/main-listing" | head -n 1)
   fi
   if [ -n "$bundled" ]; then
     printf '%s\n' "$bundled"
   else
     head -n 1 "$WORK/files"
   fi
+}
+
+# Print one `file` row per path on stdin, relative to the subject. The subject path is
+# removed by parameter expansion, never put into a sed or awk program.
+print_file_rows() {
+  local path
+  while IFS= read -r path; do
+    if [ -d "$SUBJECT_PATH" ]; then
+      printf 'file\t%s\n' "${path#"$SUBJECT_PATH"/}"
+    else
+      printf 'file\t%s\n' "$(basename "$path")"
+    fi
+  done
+}
+
+# Walk the libraries of the subject's files: first from the main executable, so a bundled
+# library is reached through the image that loads it (its loading chain), then from every
+# subject file the first walk did not reach.
+walk_subject_files() {
+  printf '%s\n' "$MAIN_FILE" > "$SEEN"
+  printf '%s\n' "$MAIN_FILE" > "$WORK/link-queue"
+  walk_libraries "$WORK/link-queue" link
+  grep -Fvxf "$SEEN" "$WORK/files" > "$WORK/link-queue"
+  cat "$WORK/link-queue" >> "$SEEN"
+  walk_libraries "$WORK/link-queue" link
 }
 
 main() {
@@ -492,11 +553,10 @@ main() {
   else
     printf '# main executable: %s\n' "$(basename "$MAIN_FILE")"
   fi
+  printf '# crate features: %s\n' "${FEATURES:-default}"
   printf '## Files scanned\n'
-  sed "s#^$SUBJECT_PATH/##; s#^#file\t#" "$WORK/files"
-  cat "$WORK/files" >> "$SEEN"
-  cp "$WORK/files" "$WORK/link-queue"
-  walk_libraries "$WORK/link-queue" link
+  print_file_rows < "$WORK/files"
+  walk_subject_files
   printf '## Run-time loaded libvips\n'
   inventory_runtime_libraries
   printf '## Dynamic libraries\n'

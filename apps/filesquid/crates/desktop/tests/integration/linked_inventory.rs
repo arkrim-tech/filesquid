@@ -45,6 +45,7 @@ struct Scratch(PathBuf);
 impl Scratch {
     /// Make an empty scratch directory named for `label`. Performs filesystem I/O.
     fn new(label: &str) -> Self {
+        init_logging();
         let n = SCRATCH.fetch_add(1, Ordering::Relaxed);
         let name = format!("de-f3.1-inventory-{label}-{}-{n}", std::process::id());
         let dir = std::env::temp_dir().join(name);
@@ -74,9 +75,19 @@ impl Scratch {
 impl Drop for Scratch {
     fn drop(&mut self) {
         if let Err(err) = std::fs::remove_dir_all(&self.0) {
-            eprintln!("scratch directory not removed: {err}");
+            tracing::warn!(error = %err, "scratch directory not removed");
         }
     }
+}
+
+/// Install the JSON stdout subscriber of the logging rule for this test binary once, so a
+/// cleanup warning is emitted as a structured event. Later calls do nothing.
+fn init_logging() {
+    // `try_init` fails only when a subscriber is already installed, which is the intent.
+    let _ = tracing_subscriber::fmt()
+        .json()
+        .with_writer(std::io::stdout)
+        .try_init();
 }
 
 /// The rows of `text` whose first tab-separated field is `kind`.
@@ -341,12 +352,35 @@ fn it_keeps_the_whole_path_of_a_library_in_a_folder_with_spaces() {
 /// as a shell script. Starts a process and performs filesystem I/O.
 #[cfg(target_os = "linux")]
 fn run_inventory_with_ldd(scratch: &Scratch, body: &str, arguments: &[&str]) -> Output {
+    run_inventory_with_tool(scratch, "ldd", body, arguments)
+}
+
+/// The full path of program `name` on this process's `PATH`. Reads the filesystem.
+fn real_program(name: &str) -> String {
+    std::env::var("PATH")
+        .unwrap_or_default()
+        .split(':')
+        .map(|dir| Path::new(dir).join(name))
+        .find(|candidate| candidate.is_file())
+        .unwrap_or_else(|| panic!("{name} is not on PATH"))
+        .to_string_lossy()
+        .into_owned()
+}
+
+/// Run the script with `arguments` and a stand-in program `name` first on `PATH`, which runs
+/// `body` as a shell script. Starts a process and performs filesystem I/O.
+fn run_inventory_with_tool(
+    scratch: &Scratch,
+    name: &str,
+    body: &str,
+    arguments: &[&str],
+) -> Output {
     use std::os::unix::fs::PermissionsExt as _;
     let tools = scratch.0.join("tools");
     std::fs::create_dir_all(&tools).expect("tools folder");
-    let ldd = tools.join("ldd");
-    std::fs::write(&ldd, format!("#!/bin/sh\n{body}\n")).expect("stand-in ldd");
-    std::fs::set_permissions(&ldd, std::fs::Permissions::from_mode(0o755)).expect("executable");
+    let tool = tools.join(name);
+    std::fs::write(&tool, format!("#!/bin/sh\n{body}\n")).expect("stand-in program");
+    std::fs::set_permissions(&tool, std::fs::Permissions::from_mode(0o755)).expect("executable");
     let path = format!(
         "{}:{}",
         tools.display(),
@@ -411,6 +445,131 @@ fn it_accepts_a_statically_linked_file_as_having_no_libraries() {
     let text = stdout(&output);
     assert_eq!(output.status.code(), Some(0), "{text}");
     assert!(rows(&text, "lib").is_empty(), "{text}");
+}
+
+#[test]
+fn it_reports_a_folder_it_cannot_enumerate() {
+    let scratch = Scratch::new("enumeration");
+    let bundle = scratch.0.join("bundle");
+    std::fs::create_dir_all(&bundle).expect("bundle folder");
+    let executable = bundle.join("Contents/MacOS/filesquid-desktop");
+    std::fs::create_dir_all(executable.parent().expect("parent")).expect("bundle folders");
+    std::fs::copy(this_binary(), &executable).expect("copy a real object file");
+    let body = format!(
+        "\"{}\" \"$@\"; echo 'find: cannot read a folder' >&2; exit 1",
+        real_program("find")
+    );
+    let subject = bundle.to_string_lossy().into_owned();
+    let output = run_inventory_with_tool(
+        &scratch,
+        "find",
+        &body,
+        &["--without-vips", "--no-crates", &subject],
+    );
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(1), "{text}");
+    assert_eq!(rows(&text, "file").len(), 1, "{text}");
+    let findings = rows(&text, "finding");
+    assert!(
+        findings
+            .iter()
+            .any(|row| row.starts_with("finding\tunlisted\t")),
+        "{text}"
+    );
+}
+
+#[test]
+fn it_never_runs_text_from_the_subject_path() {
+    let scratch = Scratch::new("injection");
+    let marker = scratch.0.join("ran");
+    let folder = scratch
+        .0
+        .join(format!("audit#x#;e touch {}; #", marker.display()));
+    let executable = folder.join("filesquid-desktop");
+    std::fs::create_dir_all(&folder).expect("subject folder");
+    std::fs::copy(this_binary(), &executable).expect("copy a real object file");
+    let subject = folder.to_string_lossy().into_owned();
+    let output = run_inventory(&["--without-vips", "--no-crates", &subject]);
+    let text = stdout(&output);
+    assert!(
+        !marker.exists(),
+        "the subject path was run as a command: {text}"
+    );
+    assert_eq!(
+        rows(&text, "file"),
+        vec!["file\tfilesquid-desktop"],
+        "{text}"
+    );
+}
+
+#[test]
+fn it_does_not_take_build_options_from_an_unrelated_vips_program() {
+    let scratch = Scratch::new("other-vips");
+    let library = scratch.object("custom/lib/libvips.so.42");
+    let body = "echo 'vips-9.9.9 from another installation'";
+    let output = run_inventory_with_tool(
+        &scratch,
+        "vips",
+        body,
+        &["--no-crates", "--runtime-lib", &library, &this_binary()],
+    );
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(0), "{text}");
+    assert!(!text.contains("9.9.9"), "{text}");
+    assert!(
+        rows(&text, "vips")
+            .iter()
+            .any(|row| row.starts_with("vips\tbuild-options\tunknown")),
+        "{text}"
+    );
+}
+
+#[test]
+fn it_lists_the_crates_of_the_features_the_subject_was_built_with() {
+    let crate_named = |text: &str, name: &str| {
+        rows(text, "crate")
+            .iter()
+            .any(|row| row.split('\t').nth(1) == Some(name))
+    };
+    let plain = stdout(&run_inventory(&["--without-vips", &this_binary()]));
+    assert!(plain.contains("# crate features: default"), "{plain}");
+    assert!(
+        !crate_named(&plain, "tauri-plugin-wdio-webdriver"),
+        "{plain}"
+    );
+    let output = run_inventory(&[
+        "--without-vips",
+        "--features",
+        "test-webdriver",
+        &this_binary(),
+    ]);
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(0), "{text}");
+    assert!(text.contains("# crate features: test-webdriver"), "{text}");
+    assert!(crate_named(&text, "tauri-plugin-wdio-webdriver"), "{text}");
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn it_walks_a_bundled_library_from_the_executable_that_loads_it() {
+    let scratch = Scratch::new("bundled-chain");
+    let frameworks = scratch.0.join("FileSquid.app/Contents/Frameworks");
+    let (program, library) = build_executable_linking_a_library(&scratch.0, &frameworks);
+    let executable = scratch
+        .0
+        .join("FileSquid.app/Contents/MacOS/filesquid-desktop");
+    std::fs::create_dir_all(executable.parent().expect("parent")).expect("bundle folders");
+    std::fs::rename(&program, &executable).expect("move the executable into the bundle");
+    let app = scratch
+        .0
+        .join("FileSquid.app")
+        .to_string_lossy()
+        .into_owned();
+    let output = run_inventory(&["--without-vips", "--no-crates", &app]);
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(0), "{text}");
+    let expected = format!("lib\tlink\tbundled\t{}", library.display());
+    assert!(rows(&text, "lib").contains(&expected.as_str()), "{text}");
 }
 
 #[test]

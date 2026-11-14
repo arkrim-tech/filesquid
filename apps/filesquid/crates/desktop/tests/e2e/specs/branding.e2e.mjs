@@ -50,17 +50,23 @@ function readBrand() {
     img ? { src: img.getAttribute("src") ?? "", drawn: img.naturalWidth > 0, alt: img.alt } : null;
   const elements = everyElement(document);
   const first = (selector) => elements.find((element) => element.matches(selector));
-  const texts = elements
-    .filter((element) => !["SCRIPT", "STYLE"].includes(element.tagName))
-    .flatMap((element) => [
-      ...[...element.childNodes]
-        .filter((node) => node.nodeType === Node.TEXT_NODE)
-        .map((node) => node.textContent ?? ""),
-      ...["alt", "title", "aria-label", "placeholder"].map(
-        (name) => element.getAttribute(name) ?? "",
-      ),
-    ])
-    .map((text) => text.trim())
+  // Each element's complete text, so a label split across child elements ("<span>Early</span>
+  // <span>access</span>") is read as one string, and each shadow root's complete text, which
+  // its host's textContent leaves out; plus the text alternatives a reader announces.
+  const texts = [
+    ...elements
+      .filter((element) => !["SCRIPT", "STYLE"].includes(element.tagName))
+      .flatMap((element) => [
+        element.textContent ?? "",
+        ...["alt", "title", "aria-label", "placeholder"].map(
+          (name) => element.getAttribute(name) ?? "",
+        ),
+      ]),
+    ...elements
+      .filter((element) => element.shadowRoot)
+      .map((element) => element.shadowRoot.textContent ?? ""),
+  ]
+    .map((text) => text.replace(/\s+/g, " ").trim())
     .filter((text) => text !== "");
   return {
     shell: Boolean(first("fs-app-shell")?.shadowRoot),
@@ -118,6 +124,27 @@ describe("the distribution's brand in a packaged window", () => {
     expect(brand.aboutVersion.startsWith(`${PRODUCT} `)).toBe(true);
     expect(brand.aboutVersion).toMatch(/\d+\.\d+\.\d+/);
     expect(brand.aboutLogo.src).toContain(LOGO);
+  });
+
+  it("detects an early-access label split across elements in a shadow tree", async () => {
+    await browser.execute(() => {
+      const probe = document.createElement("p");
+      probe.id = "split-label-probe";
+      probe.append(Object.assign(document.createElement("span"), { textContent: "Early" }));
+      probe.append(" ");
+      probe.append(Object.assign(document.createElement("strong"), { textContent: "access" }));
+      document.querySelector("fs-app-shell").shadowRoot.append(probe);
+    });
+    const probed = await browser.execute(readBrand);
+    await browser.execute(() => {
+      document
+        .querySelector("fs-app-shell")
+        .shadowRoot.getElementById("split-label-probe")
+        .remove();
+    });
+    expect(probed.texts.some((text) => EARLY_ACCESS.test(text))).toBe(true);
+    const cleared = await browser.execute(readBrand);
+    expect(cleared.texts.some((text) => EARLY_ACCESS.test(text))).toBe(false);
   });
 
   it("shows no early-access label on the Settings page or the file browser", async () => {
