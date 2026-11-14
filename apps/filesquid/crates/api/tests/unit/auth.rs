@@ -344,6 +344,7 @@ fn every_routed_path_declares_its_action() {
             "/api/v1/health/live" => Action::Public,
             "/api/v1/openapi.json" => Action::ReadContract,
             "/api/v1/host" => Action::ReadHost,
+            "/api/v1/journal" => Action::ReadOwnJournal,
             "/api/v1/admin/ocfl/validation-runs" => Action::RunValidation,
             "/api/v1/admin/ocfl/validation-settings" => Action::ConfigureValidation,
             "/api/v1/admin/history/backfill" => Action::RunHistoryBackfill,
@@ -436,6 +437,7 @@ fn action_names_are_unique_dotted_identifiers() {
             "jobs.read",
             "jobs.manage",
             "settings.recently_deleted.configure",
+            "journal.read_own",
             "public"
         ]
     );

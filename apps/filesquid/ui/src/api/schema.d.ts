@@ -209,6 +209,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/journal": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Search the caller's own journal entries
+         * @description API-S-031 Self-scoped journal. Only the entries whose actor is the caller, with the filters, cursor paging and redaction of GET /api/v1/admin/journal; filters combine. Every caller the host authenticates may read it (action journal.read_own is granted to every accepted credential, not to administrators only); it is never public and it grants none of the admin routes. The actor is always the caller, so an actor parameter answers invalid_request, as do invalid filter values. Display names (names=true) are resolved now and only for files the caller may read. On the desktop the caller is the owner. A successful read is not journaled.
+         */
+        get: operations["getOwnJournal"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/history": {
         parameters: {
             query?: never;
@@ -3947,6 +3967,8 @@ export interface operations {
             /** @description One page of entries. */
             200: {
                 headers: {
+                    /** @description private, no-store: the answer holds the caller's activity and names resolved for the caller, so no cache may store it. */
+                    "Cache-Control"?: string;
                     [name: string]: unknown;
                 };
                 content: {
@@ -3978,6 +4000,8 @@ export interface operations {
             /** @description The entry. */
             200: {
                 headers: {
+                    /** @description private, no-store: the answer holds the caller's activity and names resolved for the caller, so no cache may store it. */
+                    "Cache-Control"?: string;
                     [name: string]: unknown;
                 };
                 content: {
@@ -4069,6 +4093,62 @@ export interface operations {
                     };
                 };
             };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["Internal"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    getOwnJournal: {
+        parameters: {
+            query?: {
+                /** @description Earliest time, RFC 3339 (inclusive). */
+                from?: string;
+                /** @description Latest time, RFC 3339 (inclusive). */
+                to?: string;
+                /** @description Exact operation, for example ocfl.commit. */
+                operation?: string;
+                /** @description Exact outcome. */
+                outcome?: components["schemas"]["Outcome"];
+                /** @description Exact level. */
+                level?: components["schemas"]["Level"];
+                /** @description Exact process id. */
+                process?: string;
+                /** @description A library ID among the entry's targets. */
+                library?: string;
+                /** @description An object ID: the object of the entry's object_ref, or one of its targets. */
+                object?: string;
+                /** @description A file ID (UUID): the same as object=urn:uuid:<file>. Not with object. */
+                file?: string;
+                /** @description Exact operation ID. */
+                operation_id?: string;
+                /** @description Cursor: entries with a greater id. */
+                after?: number;
+                /** @description Page size for a query (1-1000). Each operation states its default; the activity journal defaults to 100. */
+                limit?: components["parameters"]["PageSize"];
+                /** @description asc (default) or desc (newest first). */
+                order?: "asc" | "desc";
+                /** @description true: add the display name of the file each entry's object ID names, resolved now for the caller (display only). */
+                names?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description One page of the caller's own entries. */
+            200: {
+                headers: {
+                    /** @description private, no-store: the answer holds the caller's activity and names resolved for the caller, so no cache may store it. */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JournalViewPage"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             500: components["responses"]["Internal"];
