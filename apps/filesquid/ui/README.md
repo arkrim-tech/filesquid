@@ -300,6 +300,8 @@ const hostClient = createHostClient(window, () => tokens.get());
 
 `token` is either a string or a function the client asks on every request, so a token entered later is used at once. On the desktop the launch token takes precedence. In the default FileSquid and ImageSquid apps, open **Monitor** (`#/monitor`) and enter the administrator token; the host badge and Settings, About read again with it.
 
+**Admin views by role** ([UI-S-032](./resources/srs.md), UI-F2.21). One `AdminAccessStore` per page holds the caller's admin role. Whenever the page holds a credential (the launch token, or a token entered on the Monitor) it asks `GET /api/v1/admin/health` once: a success grants the admin views, a `403` other than `invalid_credentials` denies them, and any other answer leaves the role unknown. Give the store to `<fs-app-shell>` (`access`), `bindMonitorRoute` and `bindFilesRoute`: for a refused caller the header shows no Monitor button, the Logs row and the View in Logs links are hidden (`offersMonitor`, `offersLogs`), and `#/monitor` shows `stateDenied` with no further admin call.
+
 The token is kept in memory only: never in localStorage, sessionStorage, a cookie or the URL, and never logged, rendered or put in an error message. Reloading the page forgets it. A supplied token that is empty, or has characters that neither a header nor a subprotocol can carry, is refused before anything is sent. `memoryTokenStore` returns no token for an empty entry, so a blank sign-in reads as missing credentials.
 
 **Errors.** A refused call rejects with `ApiError`, which carries the contract's `status`, `code`, `retryable` and, for authorisation denials, `reason`:
