@@ -1,7 +1,9 @@
 //! The installation's Recently deleted settings in the desktop's operational store
-//! (`filesquid.sqlite`; Task API-F2.15, API-S-019, ADR 041 Decisions 10 and 11): the default
-//! retention period and the expiry setting, one row, read by every library and changed only
-//! by the admin (the route checks it). A change's journal entry is appended to the host's
+//! (`filesquid.sqlite`; Tasks API-F2.15 and API-F2.30, API-S-019, DE-S-014, ADR 041 Decisions
+//! 10 and 11): the default retention period, the expiry setting and the expiry interval, one
+//! row, read by every library and by the host's expiry monitor, and changed only by the admin
+//! (the route checks it). A store written before the expiry interval existed gains its column
+//! at open, at the default of 60 minutes. A change's journal entry is appended to the host's
 //! journal before the row is written, so no change is ever stored or acknowledged
 //! unjournaled; a write that then fails is journaled again as `failed`. No entry carries a
 //! value.
@@ -17,9 +19,35 @@ const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS recently_deleted_settings (
     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
     default_retention_days INTEGER NOT NULL CHECK (default_retention_days BETWEEN 1 AND 3650),
-    expiry TEXT NOT NULL CHECK (expiry IN ('keep_version_history', 'delete_all_version_history'))
+    expiry TEXT NOT NULL CHECK (expiry IN ('keep_version_history', 'delete_all_version_history')),
+    expiry_interval_minutes INTEGER NOT NULL DEFAULT 60
+        CHECK (expiry_interval_minutes BETWEEN 5 AND 1440)
 );
 ";
+
+/// Whether the settings table has the expiry-interval column (Task API-F2.30).
+const HAS_INTERVAL_COLUMN: &str =
+    "SELECT COUNT(*) FROM pragma_table_info('recently_deleted_settings')
+     WHERE name = 'expiry_interval_minutes'";
+
+/// Forward migration of a table created before Task API-F2.30: the expiry interval, 60
+/// minutes for the stored row, within the same bounds as a new table.
+const ADD_INTERVAL_COLUMN: &str = "ALTER TABLE recently_deleted_settings
+     ADD COLUMN expiry_interval_minutes INTEGER NOT NULL DEFAULT 60
+         CHECK (expiry_interval_minutes BETWEEN 5 AND 1440)";
+
+/// Add the expiry-interval column to a settings table that lacks it. Database I/O.
+fn migrate_interval_column(conn: &Connection) -> Result<(), CatalogError> {
+    let columns: i64 = conn
+        .query_row(HAS_INTERVAL_COLUMN, [], |row| row.get(0))
+        .map_err(unavailable)?;
+    if columns > 0 {
+        return Ok(());
+    }
+    conn.execute(ADD_INTERVAL_COLUMN, [])
+        .map(drop)
+        .map_err(unavailable)
+}
 
 /// [`RetentionSettings`] over the operational store.
 pub struct SqliteRetentionSettings {
@@ -58,6 +86,7 @@ impl SqliteRetentionSettings {
         conn.busy_timeout(std::time::Duration::from_secs(5))
             .map_err(unavailable)?;
         conn.execute_batch(SCHEMA).map_err(unavailable)?;
+        migrate_interval_column(&conn)?;
         Ok(Self {
             conn: Mutex::new(conn),
             journal,
@@ -68,12 +97,18 @@ impl SqliteRetentionSettings {
     fn write_row(&self, settings: &InstallationSettings) -> Result<(), CatalogError> {
         let conn = self.lock()?;
         conn.execute(
-            "INSERT INTO recently_deleted_settings (singleton, default_retention_days, expiry)
-             VALUES (1, ?1, ?2)
+            "INSERT INTO recently_deleted_settings
+                 (singleton, default_retention_days, expiry, expiry_interval_minutes)
+             VALUES (1, ?1, ?2, ?3)
              ON CONFLICT(singleton) DO UPDATE SET
                  default_retention_days = excluded.default_retention_days,
-                 expiry = excluded.expiry",
-            params![settings.default_retention_days, settings.expiry.as_str()],
+                 expiry = excluded.expiry,
+                 expiry_interval_minutes = excluded.expiry_interval_minutes",
+            params![
+                settings.default_retention_days,
+                settings.expiry.as_str(),
+                settings.expiry_interval_minutes
+            ],
         )
         .map(drop)
         .map_err(unavailable)
@@ -88,22 +123,24 @@ impl SqliteRetentionSettings {
 impl RetentionSettings for SqliteRetentionSettings {
     fn read(&self) -> Result<InstallationSettings, CatalogError> {
         let conn = self.lock()?;
-        let row: Option<(u32, String)> = conn
+        let row: Option<(u32, String, u32)> = conn
             .query_row(
-                "SELECT default_retention_days, expiry FROM recently_deleted_settings",
+                "SELECT default_retention_days, expiry, expiry_interval_minutes
+                 FROM recently_deleted_settings",
                 [],
-                |r| Ok((r.get(0)?, r.get(1)?)),
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
             )
             .optional()
             .map_err(unavailable)?;
         Ok(match row {
             None => InstallationSettings::default(),
-            Some((days, expiry)) => InstallationSettings {
+            Some((days, expiry, interval)) => InstallationSettings {
                 default_retention_days: days,
                 expiry: match expiry.as_str() {
                     "delete_all_version_history" => ExpiryMode::DeleteAllVersionHistory,
                     _ => ExpiryMode::KeepVersionHistory,
                 },
+                expiry_interval_minutes: interval,
             },
         })
     }
@@ -114,7 +151,7 @@ impl RetentionSettings for SqliteRetentionSettings {
         journal: JournalEntry,
     ) -> Result<(), CatalogError> {
         if !settings.is_valid() {
-            return Err(CatalogError::Failed("retention period out of range".into()));
+            return Err(CatalogError::Failed("settings out of range".into()));
         }
         // The journal entry is appended first, so a stored change is never unjournaled (the
         // journal shares this file, so the two cannot be one transaction without the append

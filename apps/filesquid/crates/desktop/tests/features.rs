@@ -1,7 +1,8 @@
 //! Cucumber harness for the `filesquid-desktop` Gherkin under `tests/features/` (F-057 and
 //! F-056: DE-S-001, DE-S-005; F-037: DE-S-001, DE-S-002, DE-S-006; F-061: DE-S-002, DE-S-003;
 //! F-001: SRS-F-001, API-S-025, DE-S-006; F-002: SRS-F-002, API-S-036, DE-S-019, DE-S-006;
-//! F-067: SRS-F-067, DE-S-011, DE-S-012; F-061: SRS-F-061, DE-S-013).
+//! F-067: SRS-F-067, DE-S-011, DE-S-012; F-061: SRS-F-061, DE-S-013; F-008: SRS-F-008,
+//! DE-S-014, API-S-019).
 //! Needs the `test-webdriver`
 //! feature for the 100 MB test file.
 //! Writes a JUnit report to `tests/allure-results/`, cleared before each run.
@@ -69,6 +70,8 @@ mod import_steps;
 #[path = "support/installation_steps.rs"]
 mod installation_steps;
 
+#[path = "support/expiry_steps.rs"]
+mod expiry_steps;
 #[path = "support/sealing_steps.rs"]
 mod sealing_steps;
 
@@ -96,6 +99,7 @@ struct DesktopWorld {
     imports: Option<import_steps::ImportScenario>,
     installation: Option<installation_steps::InstallationScenario>,
     sealing: Option<sealing_steps::SealingScenario>,
+    expiry: Option<expiry_steps::ExpiryScenario>,
 }
 
 /// The host monitor opened by the real launch path, in a scratch data directory that is
