@@ -52,19 +52,19 @@ Only the owner edits this section. It is updated after the owner's manual testin
    - If the finding is wrong, answer it with the reasoning and evidence. Never dismiss a finding silently.
    - Each thread gets exactly one reply. For a finding you fix, that reply names the fix commit and is posted after the push in step 4. For a finding you answer without a fix, it is the reasoning, posted now. Resolve the thread with the host's review API, only after its reply. When GraphQL is available, use the `resolveReviewThread` mutation. GitHub documents no REST route for this, so where GraphQL is refused use the thread-resolution route or tool the agent's environment provides; if it provides none, ask the owner to resolve the thread in the GitHub UI. If the reviewer answers that reply with a new request or question, that is a new finding and gets one reply of its own.
    - Findings with no thread (nitpick and outside-diff comments) get one PR comment per review that answers each of them by name, with the fix commit or the reasoning. Post it once that round's fixes are pushed, or immediately when the round has no fixes to push.
-   - If you disagree with a security finding, leave its thread open and ask the owner.
+   - If you disagree with a security finding, leave its thread open (or, for one with no thread, say so in the PR comment) and ask the owner.
 
    Human review comments are handled the same way.
 4. **Push the fixes.** Rerun `bash scripts/pre-commit.sh` (its change-aware scope is enough for a fix commit; the merge conditions below still require the scope's head-commit run, `FULL=1` for a `full` or `rust:` scope, before merge), commit with Conventional Commits, and push to the same branch. Push a round's fixes together: CodeRabbit reviews each push, and its review allowance per hour is limited (each review body states how many remain). Then reply on each thread you fixed, naming the commit, and resolve it.
 5. **Repeat** steps 2 to 4, as many rounds as needed, until CodeRabbit's latest review is of the head commit, it has no further comments, and no CodeRabbit thread is unresolved. The PR is then ready for human review to merge.
 
-CodeRabbit **has no further comments** when no finding from its review of the head commit, or from its replies since, is still open. A finding is closed when it was answered with reasoning in one reply (or, for a finding with no thread, in the PR comment of step 3) and its thread, if any, is resolved. A finding fixed in code needs a new commit, so a new head and a new CodeRabbit review. A finding answered without a code change needs no further commit or review.
+CodeRabbit **has no further comments** when no finding from its review of the head commit, or from its replies since, is still open. A finding is closed when it was answered with reasoning in one reply (or, for a finding with no thread, in the PR comment of step 3) and its thread, if any, is resolved. A disputed security finding stays open until the owner settles it, with or without a thread. A finding fixed in code needs a new commit, so a new head and a new CodeRabbit review. A finding answered without a code change needs no further commit or review.
 
 ## Merge conditions
 
 Merge the PR into `main` only when all of these are true:
 
-- CodeRabbit's latest review is of the head commit, it has no further comments, and no CodeRabbit thread is unresolved. A security thread left open for the owner blocks the merge until the owner settles it.
+- CodeRabbit's latest review is of the head commit, it has no further comments, and no CodeRabbit thread is unresolved. A disputed security finding left open for the owner, with or without a thread, blocks the merge until the owner settles it.
 - The hook passed on the current head commit with the run its scope requires: `FULL=1 bash scripts/pre-commit.sh`, summary line `Test scope: full`, when the PR's change scope (`scripts/changed_scope.sh` against `origin/main`) is `full` or includes `rust:`; otherwise a passing ordinary `bash scripts/pre-commit.sh`, summary line `Test scope: <scope>`.
 - The PR has no merge conflict with `main`. Resolve a conflict by merging `main` into the branch, then return to step 2.
 - No human reviewer has requested changes that are still open.
