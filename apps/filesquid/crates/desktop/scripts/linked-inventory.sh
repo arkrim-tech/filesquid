@@ -125,9 +125,20 @@ list_subject_files() {
 }
 
 # Print the dynamic libraries file $1 names, resolved, one per line (Linux: ldd). A path may
-# hold spaces: it is everything between "=> " (or the line start) and the load address.
+# hold spaces: it is everything between "=> " (or the line start) and the load address. A
+# statically linked file names none. When ldd fails otherwise, prints "?ldd failed: <reason>".
 list_dependencies_linux() {
-  ldd "$1" 2>/dev/null | awk '
+  local listing status
+  listing=$(ldd "$1" 2>&1)
+  status=$?
+  if [ "$status" -ne 0 ]; then
+    case "$listing" in
+      *"not a dynamic executable"* | *"statically linked"*) return ;;
+    esac
+    printf '?ldd failed (exit %s): %s\n' "$status" "$(printf '%s' "$listing" | head -n 1)"
+    return
+  fi
+  printf '%s\n' "$listing" | awk '
     /=> not found/ { sub(/^[ \t]+/, ""); sub(/ => not found.*$/, ""); print "!" $0; next }
     {
       line = $0
@@ -149,17 +160,25 @@ list_rpaths_macos() {
 }
 
 # Print the first existing file that @rpath name $1 resolves to for loader $2, trying the run
-# paths of the loader and then of the main executable; nothing when none exists.
+# paths of the loader and then those of the main executable. Each run path is expanded
+# relative to the image that declares it, so an inherited `@loader_path` run path means the
+# main executable's folder. Prints nothing when none exists.
 resolve_rpath_name_macos() {
-  local name="$1" loader="$2" rpath candidate
-  { list_rpaths_macos "$loader"; list_rpaths_macos "$MAIN_FILE"; } | while IFS= read -r rpath; do
-    case "$rpath" in
-      @rpath/*) continue ;;
-    esac
-    candidate=$(resolve_install_name_macos "$rpath/${name#@rpath/}" "$loader")
-    if [ -e "$candidate" ]; then
+  local name="$1" loader="$2" image rpath candidate
+  for image in "$loader" "$MAIN_FILE"; do
+    candidate=$(list_rpaths_macos "$image" | while IFS= read -r rpath; do
+      case "$rpath" in
+        @rpath/*) continue ;;
+      esac
+      found=$(resolve_install_name_macos "$rpath/${name#@rpath/}" "$image")
+      if [ -e "$found" ]; then
+        printf '%s\n' "$found"
+        break
+      fi
+    done)
+    if [ -n "$candidate" ]; then
       printf '%s\n' "$candidate"
-      break
+      return
     fi
   done
 }
@@ -181,9 +200,17 @@ resolve_install_name_macos() {
   esac
 }
 
-# Print the dynamic libraries file $1 names, resolved, one per line (macOS: otool).
+# Print the dynamic libraries file $1 names, resolved, one per line (macOS: otool). When
+# otool fails, prints "?otool failed: <reason>".
 list_dependencies_macos() {
-  otool -L "$1" 2>/dev/null | awk '!/:$/ {
+  local listing status
+  listing=$(otool -L "$1" 2>&1)
+  status=$?
+  if [ "$status" -ne 0 ]; then
+    printf '?otool failed (exit %s): %s\n' "$status" "$(printf '%s' "$listing" | head -n 1)"
+    return
+  fi
+  printf '%s\n' "$listing" | awk '!/:$/ {
     sub(/^[ \t]+/, ""); sub(/ \(compatibility version.*$/, "")
     if ($0 != "") print
   }' | sort -u |
@@ -264,14 +291,24 @@ walk_libraries() {
           printf 'finding\tunresolved\t%s (named by %s)\n' "${dependency#!}" "$current" >> "$FINDINGS"
           continue
           ;;
+        \?*)
+          printf 'finding\tuninspected\t%s: %s\n' "$current" "${dependency#?}" >> "$FINDINGS"
+          continue
+          ;;
       esac
       resolved=$(physical_path "$dependency")
       grep -Fxq "$resolved" "$SEEN" && continue
       printf '%s\n' "$resolved" >> "$SEEN"
-      printf 'lib\t%s\t%s\t%s\n' "$origin" "$(library_owner "$resolved")" "$resolved" >> "$ROWS"
-      if [ -f "$resolved" ] && ! is_macos_system_library "$resolved"; then
-        printf '%s\n' "$resolved" >> "$queue"
+      if is_macos_system_library "$resolved"; then
+        printf 'lib\t%s\t%s\t%s\n' "$origin" "$(library_owner "$resolved")" "$resolved" >> "$ROWS"
+        continue
       fi
+      if [ ! -f "$resolved" ]; then
+        printf 'finding\tunresolved\t%s (named by %s)\n' "$resolved" "$current" >> "$FINDINGS"
+        continue
+      fi
+      printf 'lib\t%s\t%s\t%s\n' "$origin" "$(library_owner "$resolved")" "$resolved" >> "$ROWS"
+      printf '%s\n' "$resolved" >> "$queue"
     done
   done
 }

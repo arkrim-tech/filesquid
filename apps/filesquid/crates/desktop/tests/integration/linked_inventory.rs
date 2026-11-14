@@ -337,6 +337,82 @@ fn it_keeps_the_whole_path_of_a_library_in_a_folder_with_spaces() {
     );
 }
 
+/// Run the script with `arguments` and a stand-in `ldd` first on `PATH`, which runs `body`
+/// as a shell script. Starts a process and performs filesystem I/O.
+#[cfg(target_os = "linux")]
+fn run_inventory_with_ldd(scratch: &Scratch, body: &str, arguments: &[&str]) -> Output {
+    use std::os::unix::fs::PermissionsExt as _;
+    let tools = scratch.0.join("tools");
+    std::fs::create_dir_all(&tools).expect("tools folder");
+    let ldd = tools.join("ldd");
+    std::fs::write(&ldd, format!("#!/bin/sh\n{body}\n")).expect("stand-in ldd");
+    std::fs::set_permissions(&ldd, std::fs::Permissions::from_mode(0o755)).expect("executable");
+    let path = format!(
+        "{}:{}",
+        tools.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    Command::new("bash")
+        .arg(script())
+        .args(arguments)
+        .env("PATH", path)
+        .output()
+        .expect("the inventory script starts")
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn it_reports_a_resolved_library_path_that_is_not_a_file() {
+    let scratch = Scratch::new("vanished");
+    let body = "printf '\\tlibgone.so.1 => /nonexistent/libgone.so.1 (0x00007f0000000000)\\n'";
+    let output = run_inventory_with_ldd(
+        &scratch,
+        body,
+        &["--without-vips", "--no-crates", &this_binary()],
+    );
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(1), "{text}");
+    let findings = rows(&text, "finding");
+    assert_eq!(findings.len(), 1, "{text}");
+    assert!(
+        findings[0].starts_with("finding\tunresolved\t/nonexistent/libgone.so.1"),
+        "{text}"
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn it_reports_a_library_whose_inspection_fails() {
+    let scratch = Scratch::new("inspection-fails");
+    let body = "echo 'ldd: cannot read the file' >&2; exit 2";
+    let output = run_inventory_with_ldd(
+        &scratch,
+        body,
+        &["--without-vips", "--no-crates", &this_binary()],
+    );
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(1), "{text}");
+    let findings = rows(&text, "finding");
+    assert_eq!(findings.len(), 1, "{text}");
+    assert!(findings[0].starts_with("finding\tuninspected\t"), "{text}");
+    assert!(findings[0].contains("ldd failed"), "{text}");
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn it_accepts_a_statically_linked_file_as_having_no_libraries() {
+    let scratch = Scratch::new("static");
+    let body = "printf '\\tnot a dynamic executable\\n'; exit 1";
+    let output = run_inventory_with_ldd(
+        &scratch,
+        body,
+        &["--without-vips", "--no-crates", &this_binary()],
+    );
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(0), "{text}");
+    assert!(rows(&text, "lib").is_empty(), "{text}");
+}
+
 #[test]
 fn it_fails_when_the_rust_crates_cannot_be_listed() {
     let scratch = Scratch::new("no-workspace");

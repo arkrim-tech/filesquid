@@ -124,7 +124,7 @@ test the_macos_icon_is_an_apple_icon_image ... FAILED
 test result: FAILED. 1 passed; 14 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
 ```
 
-The inventory script and its tests were written together, not test-first. Its tests then caught two defects, which were fixed: `--without-vips` still looked for libvips, and the ImageMagick check matched a folder name. A later reading of the script found that a symbolic-link loop was followed without a bound and that the macOS parsing split paths at spaces; both were fixed, the first with a test. The first AI PR Agent review found that a bundled ImageMagick inside the subject escaped the check, and that an unresolved library or a failed `cargo tree` still exited 0; three tests were written first and failed, then both were fixed. The second review found that a `--runtime-lib` that is not a readable file was accepted, that the Linux parser cut a library path at its first space, and that in a mounted volume a bundled library could be taken for the main executable; five tests were written first and failed, then all three were fixed (a missing run-time library and a file that is not an object file are now findings with exit status 1, and the script prints the main executable it chose).
+The inventory script and its tests were written together, not test-first. Its tests then caught two defects, which were fixed: `--without-vips` still looked for libvips, and the ImageMagick check matched a folder name. A later reading of the script found that a symbolic-link loop was followed without a bound and that the macOS parsing split paths at spaces; both were fixed, the first with a test. The first AI PR Agent review found that a bundled ImageMagick inside the subject escaped the check, and that an unresolved library or a failed `cargo tree` still exited 0; three tests were written first and failed, then both were fixed. The second review found that a `--runtime-lib` that is not a readable file was accepted, that the Linux parser cut a library path at its first space, and that in a mounted volume a bundled library could be taken for the main executable; five tests were written first and failed, then all three were fixed (a missing run-time library and a file that is not an object file are now findings with exit status 1, and the script prints the main executable it chose). The third review found that on macOS a dependency named by a path that is not a file was listed without a finding, that a failing `ldd` or `otool` was taken as "no libraries", and that a run path inherited from the main executable was expanded relative to the library that used it. The first two were fixed with three tests on Linux (a stand-in `ldd` that names a missing file, one that fails, and one that reports a statically linked file, which is not a failure); the third is a macOS-only change with no test on this machine.
 
 The branding spec against a binary built over the stub page (the UI not built):
 
@@ -161,6 +161,7 @@ test the_macos_icon_is_an_apple_icon_image ... ok
 test the_capability_policy_holds_with_the_overlays_merged ... ok
 test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
      Running tests/integration/linked_inventory.rs (integration_linked_inventory)
+test it_accepts_a_statically_linked_file_as_having_no_libraries ... ok
 test it_fails_when_imagemagick_is_bundled_inside_the_subject ... ok
 test it_fails_when_the_rust_crates_cannot_be_listed ... ok
 test it_fails_when_imagemagick_is_in_the_inventory ... ok
@@ -170,13 +171,15 @@ test it_lists_the_dynamic_libraries_of_a_real_binary ... ok
 test it_refuses_a_folder_with_no_executable_in_it ... ok
 test it_refuses_a_subject_that_does_not_exist ... ok
 test it_keeps_the_whole_path_of_a_library_in_a_folder_with_spaces ... ok
+test it_reports_a_library_whose_inspection_fails ... ok
+test it_reports_a_resolved_library_path_that_is_not_a_file ... ok
 test it_lists_the_run_time_loaded_libvips_and_its_loader_modules ... ok
 test it_reports_a_library_it_cannot_inspect ... ok
 test it_lists_the_rust_crates_with_their_licences ... ok
 test it_reports_a_run_time_library_that_does_not_exist ... ok
 test it_reports_a_run_time_library_reached_through_a_symbolic_link_loop_as_missing ... ok
 test it_says_when_libvips_is_missing_and_lists_it_when_it_is_installed ... ok
-test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 22.93s
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 23.39s
 ```
 
 `cargo test -p filesquid-desktop --locked --features test-webdriver --test features`, the new feature and the summary:
@@ -388,7 +391,7 @@ cd apps/filesquid
 cargo test -p filesquid-desktop --locked --test integration_distribution_overlay --test integration_linked_inventory
 ```
 
-Expect: `15 passed` and `13 passed` (the two tests that build an executable with `rustc` against their own shared library run on Linux only).
+Expect: `15 passed` and `13 passed` (five tests run on Linux only: two build an executable with `rustc` against their own shared library, three put a stand-in `ldd` on `PATH`).
 
 Send back: the output of the three test commands.
 
@@ -408,7 +411,7 @@ Send back: `filesquid-dmg-inventory.txt`, the exit status, and the output of the
 
 ## Coverage
 
-The repository sets no coverage threshold for the desktop crate, and no coverage tool ran. This branch adds no code under `src/`. Each key of the two overlay files is asserted by a test in `distribution_overlay.rs`. In the inventory script, the Linux path, the stand-in libvips and module path, the ImageMagick finding and the three refusals are exercised by `linked_inventory.rs`; the macOS path (`otool`, install-name and run-path resolution, Homebrew owners) is not exercised by anything yet.
+The repository sets no coverage threshold for the desktop crate, and no coverage tool ran. This branch adds no code under `src/`. Each key of the two overlay files is asserted by a test in `distribution_overlay.rs`. In the inventory script, the Linux path, the stand-in libvips and module path, the ImageMagick finding and the three refusals are exercised by `linked_inventory.rs`; the macOS path (`otool`, install-name and run-path resolution with each run path expanded relative to the image that declares it, Homebrew owners) is not exercised by anything yet.
 
 ## Mocked Environment Variables
 
