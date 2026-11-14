@@ -271,3 +271,45 @@ async fn a_failing_store_answers_a_redacted_internal_error_through_the_router() 
     }
     monitor.shutdown();
 }
+
+// ---- Sub-codes (API-S-011 **Destination**, Task API-F2.21) ----
+
+#[test]
+fn a_rule_refusal_carries_its_sub_code_beside_status_and_code() {
+    use filesquid_api::SubCode;
+    let cases = [
+        ("destination_required", ErrorCode::InvalidRequest, 400),
+        ("collection_not_found", ErrorCode::NotFound, 404),
+        ("path_suffix_exhausted", ErrorCode::Conflict, 409),
+        ("restore_name_exhausted", ErrorCode::Conflict, 409),
+        ("name_too_long", ErrorCode::InvalidRequest, 400),
+        ("invalid_path", ErrorCode::InvalidRequest, 400),
+    ];
+    assert_eq!(cases.len(), SubCode::ALL.len(), "every sub-code is covered");
+    for (rule, code, status) in cases {
+        let error = ApiError::new(code, "Refused.").with_rule(rule);
+        assert_eq!(error.sub_code().map(SubCode::as_str), Some(rule));
+        let body = serde_json::to_value(&error).expect("json");
+        assert_eq!(body["sub_code"], rule);
+        assert_eq!(body["code"], code.as_str());
+        assert_eq!(error.clone().into_response().status().as_u16(), status);
+        let back: ApiError = serde_json::from_value(body).expect("round trip");
+        assert_eq!(back, error);
+    }
+}
+
+#[test]
+fn an_error_without_a_rule_code_has_no_sub_code_member() {
+    for rule in [
+        "not_found",
+        "conflict",
+        "internal",
+        "",
+        "DESTINATION_REQUIRED",
+    ] {
+        let error = ApiError::new(ErrorCode::NotFound, "Gone.").with_rule(rule);
+        assert_eq!(error.sub_code(), None, "{rule}");
+        let body = serde_json::to_value(&error).expect("json");
+        assert!(body.get("sub_code").is_none(), "{rule}: {body}");
+    }
+}

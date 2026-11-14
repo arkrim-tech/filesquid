@@ -2,7 +2,8 @@
 //! Decision 6).
 //!
 //! Every failed request answers with an [`ApiError`] JSON body (`code`, `message`,
-//! `retryable`, and `reason` for an authorisation denial) documented in the contract as
+//! `retryable`, `reason` for an authorisation denial and `sub_code` for a refusal whose rule
+//! the contract names) documented in the contract as
 //! `components.schemas.ApiError`, so every UI can show the failure and decide whether to offer
 //! a retry or a sign-in. Messages are written for people and
 //! never contain filesystem paths, SQL or internal error text (API-S-005). Internal details
@@ -155,6 +156,61 @@ impl DenialReason {
     }
 }
 
+/// The rule a refusal broke, when a client must tell it apart from other refusals with the
+/// same [`ErrorCode`] without reading `message` (API-S-011 **Destination**, API-S-019; owner
+/// decision 2026-10-31). Serialized in `snake_case` as the optional `sub_code` member of
+/// [`ApiError`]; documented as `components.schemas.ErrorSubCode`. The name is the rule code
+/// the journal records for the same refusal.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SubCode {
+    /// An upload, copy, move or import named no destination collection (`invalid_request`).
+    DestinationRequired,
+    /// The destination collection is unknown or belongs to another library (`not_found`).
+    CollectionNotFound,
+    /// Every numbered name beside a taken logical path, `-1` to `-9999`, is taken
+    /// (`conflict`).
+    PathSuffixExhausted,
+    /// A restore needs a new "untitled collection" and every such title is taken
+    /// (`conflict`).
+    RestoreNameExhausted,
+    /// A name, or a numbered name, is longer than 255 bytes (`invalid_request`).
+    NameTooLong,
+    /// A destination folder or logical path is not valid inside a collection
+    /// (`invalid_request`).
+    InvalidPath,
+}
+
+impl SubCode {
+    /// Every sub-code, in contract order.
+    pub const ALL: [SubCode; 6] = [
+        SubCode::DestinationRequired,
+        SubCode::CollectionNotFound,
+        SubCode::PathSuffixExhausted,
+        SubCode::RestoreNameExhausted,
+        SubCode::NameTooLong,
+        SubCode::InvalidPath,
+    ];
+
+    /// Wire name: the rule code the journal records.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SubCode::DestinationRequired => "destination_required",
+            SubCode::CollectionNotFound => "collection_not_found",
+            SubCode::PathSuffixExhausted => "path_suffix_exhausted",
+            SubCode::RestoreNameExhausted => "restore_name_exhausted",
+            SubCode::NameTooLong => "name_too_long",
+            SubCode::InvalidPath => "invalid_path",
+        }
+    }
+
+    /// The sub-code of the journal rule code `rule`, or `None` for a code that is not one
+    /// (a general code such as `not_found`, or a rule the contract does not carry). Pure.
+    pub fn of_rule(rule: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|code| code.as_str() == rule)
+    }
+}
+
 /// Error body of every failed API request.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ApiError {
@@ -164,6 +220,9 @@ pub struct ApiError {
     /// Present only on authorisation denials.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     reason: Option<DenialReason>,
+    /// Present only on a refusal whose rule the contract names ([`SubCode`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    sub_code: Option<SubCode>,
 }
 
 impl ApiError {
@@ -176,7 +235,22 @@ impl ApiError {
             message: message.into(),
             retryable: code.retryable(),
             reason: None,
+            sub_code: None,
         }
+    }
+
+    /// This error carrying the sub-code of the journal rule code `rule`, so a client tells
+    /// the refusal apart without reading `message` (API-S-011). A `rule` that is not a
+    /// [`SubCode`] leaves the error as it is. Pure.
+    #[must_use]
+    pub fn with_rule(mut self, rule: &str) -> Self {
+        self.sub_code = SubCode::of_rule(rule).or(self.sub_code);
+        self
+    }
+
+    /// The rule the refusal broke, when the contract names it.
+    pub fn sub_code(&self) -> Option<SubCode> {
+        self.sub_code
     }
 
     /// The typed denial for `reason`: `unauthorized` or `forbidden`, never retryable, with a

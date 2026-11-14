@@ -317,6 +317,10 @@ pub struct LibraryHistorySizeView {
     pub contents: usize,
     /// Their bytes, each content of an object counted once.
     pub bytes: u64,
+    /// The part of `bytes` that is history: the bytes held only by versions other than each
+    /// object's head version, each distinct content once, so a content the head version
+    /// also holds is never counted (API-S-014; owner decision 2026-10-31).
+    pub history_bytes: u64,
     /// True when the bounds stopped the count, so the totals are lower bounds.
     pub truncated: bool,
 }

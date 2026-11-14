@@ -1,5 +1,5 @@
 //! What one search covers (Task API-F2.3; API-S-012, SRS-F-063, SRS-NFR-004): the libraries,
-//! files and folder rows a caller may read, from the host's [`LibraryCatalog`], each file
+//! files and folder rows a caller may read, from the host's [`LibraryCatalog`](crate::library::LibraryCatalog), each file
 //! with its home collection's title and its delete state.
 //!
 //! Permission filtering comes first: a library, collection or virtual collection the caller
@@ -11,12 +11,12 @@
 //! learn that the scope is larger. A caller who may not read the repository cannot search it.
 //! Reads the catalog, which may block; call it on a blocking thread.
 
-use super::drive::FolderRow;
-use super::drive_scope::{catalog_error, folder_rows, read_bounded};
+use super::drive::{FolderRow, HomeCollection};
+use super::drive_scope::{catalog_error, collection_title, folder_rows, read_bounded};
 use super::error::FileError;
 use super::nodes::file_error;
 use crate::auth::Principal;
-use crate::library::{FileEntry, FileListing, FileScope, Keyed, LibraryCatalog, VisibilityFilter};
+use crate::library::{FileEntry, FileListing, FileScope, Keyed, VisibilityFilter};
 use crate::navigation::{NavigationService, NodeRef};
 use filesquid_core::{CollectionId, FileId, LibraryId};
 use std::collections::HashMap;
@@ -32,8 +32,12 @@ pub const MAX_SEARCH_LIBRARIES: usize = 1_000;
 pub struct ScopedFile {
     /// The file.
     pub file_id: FileId,
-    /// Its home collection's title, or `None` when that collection was deleted.
+    /// Its home collection's title, folded for matching, or `None` when that collection was
+    /// deleted.
     pub collection: Option<String>,
+    /// Its home collection as the row names it, or `None` for a file registered in no
+    /// collection of the library.
+    pub home: Option<HomeCollection>,
     /// True when it is recoverably deleted.
     pub deleted: bool,
 }
@@ -213,29 +217,20 @@ fn readable_files(
             }
         };
         let guard = match title {
-            Some(_) => NodeRef::Collection(home),
+            Some(_) => NodeRef::Collection(home.clone()),
             None => NodeRef::Library(library_id.clone()),
         };
         if navigation.may_read(principal, &guard) {
             files.push(ScopedFile {
                 file_id: file.id().clone(),
-                collection: title.map(|t| super::search_query::fold(&t)),
+                collection: title.as_deref().map(super::search_query::fold),
+                home: title.map(|title| HomeCollection {
+                    id: home.as_str().to_string(),
+                    title,
+                }),
                 deleted,
             });
         }
     }
     Ok(files)
-}
-
-/// The title of collection `id` of `library_id`, or `None` when it no longer exists there
-/// (the collection was deleted with the file, ADR 041 Decision 8).
-fn collection_title(
-    catalog: &dyn LibraryCatalog,
-    id: &CollectionId,
-    library_id: &LibraryId,
-) -> Result<Option<String>, FileError> {
-    let collection = catalog.collection(id).map_err(catalog_error)?;
-    Ok(collection
-        .filter(|c| c.library_id() == library_id)
-        .map(|c| c.title().to_string()))
 }

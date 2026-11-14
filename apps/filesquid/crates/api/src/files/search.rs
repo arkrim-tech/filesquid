@@ -11,13 +11,14 @@
 
 use super::drive::{
     check_limit, digest_parameters, file_candidate, folder_candidate, page_rows, ranked, Candidate,
-    FileFacts, FolderRow, MyTimes, PageParams, ViewRow,
+    FileFacts, FilePlace, FolderRow, MyTimes, PageParams, ViewRow,
 };
 use super::error::FileError;
 use super::search_match::{
     file_matches, file_score, folder_matches, folder_score, SearchFile, Searcher,
 };
 use super::search_query::Query;
+use super::search_scope::ScopedFile;
 use crate::preferences::{FolderPlacement, SortDirection, SortKey};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -182,7 +183,7 @@ pub fn search_page(
                 .copied()
                 .unwrap_or_default();
             candidates.push(order(
-                file_candidate(file.facts, mine, sort, None),
+                file_candidate(file.facts, file.place, mine, sort, None),
                 key,
                 score,
             ));
@@ -229,19 +230,24 @@ fn fingerprint(request: &SearchRequest, direction: SortDirection) -> String {
     ))
 }
 
-/// The search files of `facts`, placed as `scoped` says (by file ID).
+/// The search files of `facts` of `library_id`, placed as `scoped` says (by file ID).
 pub fn search_files(
+    library_id: &str,
     facts: Vec<FileFacts>,
-    scoped: &HashMap<String, (Option<String>, bool)>,
+    scoped: &HashMap<String, ScopedFile>,
 ) -> Vec<SearchFile> {
     facts
         .into_iter()
         .filter_map(|facts| {
-            let (collection, deleted) = scoped.get(&facts.file_id)?.clone();
+            let scoped = scoped.get(&facts.file_id)?;
             Some(SearchFile {
                 facts,
-                collection,
-                deleted,
+                collection: scoped.collection.clone(),
+                place: FilePlace {
+                    library_id: library_id.to_string(),
+                    home: scoped.home.clone(),
+                },
+                deleted: scoped.deleted,
             })
         })
         .collect()
@@ -258,6 +264,7 @@ mod tests {
             facts: FileFacts {
                 file_id: id.into(),
                 object_id: format!("urn:uuid:{id}"),
+                version: "v1".into(),
                 display_name: name.into(),
                 media_type: "application/pdf".into(),
                 size,
@@ -265,6 +272,10 @@ mod tests {
                 statements: Vec::new(),
             },
             collection: None,
+            place: FilePlace {
+                library_id: "lib".into(),
+                home: None,
+            },
             deleted: false,
         }
     }

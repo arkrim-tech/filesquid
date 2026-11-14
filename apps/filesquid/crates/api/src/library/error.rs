@@ -110,7 +110,7 @@ impl std::error::Error for LibraryError {}
 
 impl From<LibraryError> for ApiError {
     fn from(err: LibraryError) -> Self {
-        ApiError::new(err.api_code(), err.message())
+        ApiError::new(err.api_code(), err.message()).with_rule(err.error_code())
     }
 }
 

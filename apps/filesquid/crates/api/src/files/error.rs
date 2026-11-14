@@ -103,7 +103,8 @@ impl FileError {
         self.specific.unwrap_or_else(|| self.code.as_str())
     }
 
-    /// The typed answer for `operation`. An `internal` failure logs its detail to stdout
+    /// The typed answer for `operation`, carrying the rule's own code as its sub-code when
+    /// the contract names it (API-S-011). An `internal` failure logs its detail to stdout
     /// (never to the journal) through [`ApiError::internal`]; an `unavailable` one logs it
     /// at INFO under a target outside the journal's, so it reaches stdout only: the routes
     /// journal the refusal itself once, at level `error`, and a WARN here would journal it a
@@ -115,7 +116,11 @@ impl FileError {
                 if let Some(detail) = detail {
                     tracing::info!(target: super::LOG_TARGET, operation, detail, "storage unavailable");
                 }
-                ApiError::new(code, self.message)
+                let error = ApiError::new(code, self.message);
+                match self.specific {
+                    Some(rule) => error.with_rule(rule),
+                    None => error,
+                }
             }
         }
     }

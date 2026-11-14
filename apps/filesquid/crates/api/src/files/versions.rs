@@ -212,6 +212,7 @@ impl<B: StorageBackend, R, S> FileService<B, R, S> {
             objects: 0,
             contents: 0,
             bytes: 0,
+            history_bytes: 0,
             // An object the scan could not open is not counted, so the total is partial.
             truncated: roots.len() > MAX_SIZE_OBJECTS || stored > roots.len(),
         };
@@ -227,13 +228,15 @@ impl<B: StorageBackend, R, S> FileService<B, R, S> {
     }
 }
 
-/// Add each distinct content of `object` to `total`; false when [`MAX_SIZE_CONTENTS`] was
-/// reached first.
+/// Add each distinct content of `object` to `total`, and to its history bytes when the
+/// object's head version does not hold it; false when [`MAX_SIZE_CONTENTS`] was reached
+/// first.
 pub(super) async fn add_object_size<B: StorageBackend, R, S>(
     library: &Library<B, R, S>,
     object: &Object<'_, B>,
     total: &mut LibraryHistorySizeView,
 ) -> Result<bool, FileError> {
+    let at_head = head_digests(object);
     for (digest, paths) in &object.inventory().manifest {
         if total.contents >= MAX_SIZE_CONTENTS {
             return Ok(false);
@@ -241,12 +244,31 @@ pub(super) async fn add_object_size<B: StorageBackend, R, S>(
         let Some(content_path) = paths.first() else {
             continue;
         };
-        total.bytes += library
+        let size = library
             .content_size(object.root(), content_path, digest)
             .await?;
+        total.bytes += size;
         total.contents += 1;
+        if !at_head.contains(&digest.to_ascii_lowercase()) {
+            total.history_bytes += size;
+        }
     }
     Ok(true)
+}
+
+/// The digests of the contents `object`'s head version holds, in lower case. Pure.
+fn head_digests<B: StorageBackend>(object: &Object<'_, B>) -> BTreeSet<String> {
+    object
+        .inventory()
+        .versions
+        .get(object.head())
+        .map(|head| {
+            head.state
+                .keys()
+                .map(|digest| digest.to_ascii_lowercase())
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// Replace each version's commit-time label with its later label, when one was set.

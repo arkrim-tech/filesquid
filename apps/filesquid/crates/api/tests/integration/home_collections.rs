@@ -63,6 +63,11 @@ fn assert_refused(
 ) {
     assert_eq!(answer.status.as_u16(), status, "{:?}", answer.json());
     assert_eq!(answer.json()["code"], code);
+    assert_eq!(
+        answer.json()["sub_code"],
+        journal_code,
+        "the rule code is the answer's sub-code (API-S-011)"
+    );
     assert!(answer.json()["message"]
         .as_str()
         .is_some_and(|m| m.contains(journal_code)));
