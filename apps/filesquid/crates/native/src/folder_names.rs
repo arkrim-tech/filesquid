@@ -63,7 +63,7 @@ pub fn volume_name_of_mount(point: &Path) -> Option<String> {
 }
 
 /// The mount point of the volume that holds `folder`: its topmost ancestor on the same
-/// device, at most [`MAX_ANCESTORS`] levels up. Reads filesystem metadata.
+/// device, at most 256 levels up (`MAX_ANCESTORS`). Reads filesystem metadata.
 #[cfg(unix)]
 pub fn mount_point_of(folder: &Path) -> Option<PathBuf> {
     use std::os::unix::fs::MetadataExt;
