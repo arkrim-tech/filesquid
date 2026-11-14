@@ -455,7 +455,8 @@ where
     S: StorageBackend + 'static,
 {
     /// Spawn the clearing of a copy that was dropped before it settled; without a Tokio
-    /// runtime the failure is logged and the stage stays for the next attempt of its file ID.
+    /// runtime the failure is logged and the stage stays: only an attempt that reuses its
+    /// file ID (a retry of the same operation) resets it, and a copy with a fresh ID never does.
     fn drop(&mut self) {
         let Some(library) = self.library.take() else {
             return;
@@ -470,7 +471,7 @@ where
 
 /// Hand the clearing of the staging area of `object_id` at `root` of `library`, which a
 /// dropped copy left, to a task on the current Tokio runtime; without a runtime the failure is
-/// logged and the stage stays for the next attempt of its file ID. Spawns a task.
+/// logged and the stage stays, as [`StageGuard`]'s drop documents. Spawns a task.
 #[cfg(not(target_arch = "wasm32"))]
 fn spawn_clear<B, R, S>(library: Arc<Library<B, R, S>>, root: String, object_id: String)
 where
@@ -511,7 +512,8 @@ where
 }
 
 /// Clear what a copy that failed, or that an earlier run had already committed, left in its
-/// object's staging area; a failure to clear is logged (the next attempt clears it first).
+/// object's staging area, on a best-effort basis: a failure to clear is logged and the staged
+/// bytes may remain (only an attempt that reuses the file ID resets that area).
 /// Storage I/O.
 async fn clear_staged<B, R, S>(model: &ChangeModel<'_, B, R, S>)
 where
