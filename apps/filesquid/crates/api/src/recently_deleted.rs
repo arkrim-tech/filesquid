@@ -11,10 +11,13 @@
 //!   A repeated operation ID of a command that changed something answers its first outcome
 //!   from the catalog's receipt.
 //! - `GET /api/v1/settings/recently-deleted` (`library.read`): the installation default
-//!   retention, the expiry setting, whether the caller may change them, and each readable
-//!   library's own period and revision.
+//!   retention, the expiry setting, the expiry interval (`expiry_interval_minutes`, Task
+//!   API-F2.30), whether the caller may change them, and each readable library's own period
+//!   and revision.
 //! - `PUT /api/v1/settings/recently-deleted` (`settings.recently_deleted.configure`): the
-//!   admin (on the desktop, the owner) sets the installation default and the expiry setting,
+//!   admin (on the desktop, the owner) sets the installation default, the expiry setting and
+//!   the expiry interval (a whole number of minutes from 5 to 1,440; anything else is
+//!   `invalid_request` and stores nothing),
 //!   `{"envelope": CommandEnvelope, "input": InstallationSettings}` with the scope
 //!   `installation`, answered with a `committed` `CommandOutcome` whose `result` is the
 //!   settings answer; a repeated operation ID answers that outcome again.
@@ -98,6 +101,8 @@ pub struct RecentlyDeletedSettingsView {
     pub default_retention_days: u32,
     /// What expiry does to a deleted file's object.
     pub expiry: ExpiryMode,
+    /// Minutes between two expiry runs of the host (5 to 1,440; 60 by default).
+    pub expiry_interval_minutes: u32,
     /// Whether the caller may change the installation settings (only the admin).
     pub may_change: bool,
     /// The readable libraries with their own periods, in catalog order.
@@ -327,6 +332,7 @@ async fn settings_view(
         Ok(RecentlyDeletedSettingsView {
             default_retention_days: settings.default_retention_days,
             expiry: settings.expiry,
+            expiry_interval_minutes: settings.expiry_interval_minutes,
             may_change,
             libraries,
             complete,

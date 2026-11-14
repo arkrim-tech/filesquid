@@ -7,9 +7,11 @@ mod library_fixture;
 
 use filesquid_api::journal::Outcome;
 use filesquid_api::library::{
-    DeletionCause, ExpiryMode, FileEntry, FileScope, InstallationSettings, LibraryCatalog,
-    LibraryCommand, LibraryError, MemorySettings, RetentionSettings, VisibilityFilter,
-    MAX_RETENTION_DAYS, MAX_UNTITLED_TITLES, RECOVERABLE_DAYS, UNTITLED_COLLECTION_TITLE,
+    is_expiry_interval, DeletionCause, ExpiryMode, ExpirySchedule, FileEntry, FileScope,
+    InstallationSettings, LibraryCatalog, LibraryCommand, LibraryError, MemorySettings,
+    RetentionSettings, VisibilityFilter, DEFAULT_EXPIRY_INTERVAL_MINUTES,
+    MAX_EXPIRY_INTERVAL_MINUTES, MAX_RETENTION_DAYS, MAX_UNTITLED_TITLES,
+    MIN_EXPIRY_INTERVAL_MINUTES, RECOVERABLE_DAYS, UNTITLED_COLLECTION_TITLE,
 };
 use filesquid_core::{Collection, CollectionId, FileId};
 use library_fixture::{Fixture, DAY_MS, NOW_MS};
@@ -163,7 +165,7 @@ fn the_installation_default_applies_to_a_library_without_its_own_period() {
         .store(
             &InstallationSettings {
                 default_retention_days: 10,
-                expiry: ExpiryMode::KeepVersionHistory,
+                ..InstallationSettings::default()
             },
             filesquid_api::journal::JournalEntry::new("x", Outcome::Succeeded),
         )
@@ -308,8 +310,8 @@ fn service_at(
 fn settings_with(expiry: ExpiryMode) -> Arc<MemorySettings> {
     let settings = Arc::new(MemorySettings::new());
     let stored = InstallationSettings {
-        default_retention_days: RECOVERABLE_DAYS,
         expiry,
+        ..InstallationSettings::default()
     };
     settings
         .store(
@@ -425,4 +427,121 @@ fn a_run_with_nothing_due_changes_and_journals_nothing() {
     assert_eq!(report.expired, 0);
     assert!(report.operation_id.is_none());
     assert_eq!(fx.catalog.commit_count(), commits);
+}
+
+/// One minute in milliseconds.
+const MINUTE_MS: i64 = 60_000;
+
+/// Task API-F2.30 (API-S-019 **Routes and expiry runs**): the expiry interval is 60 minutes
+/// by default and a whole number of minutes from 5 to 1,440.
+#[test]
+fn the_expiry_interval_defaults_to_60_minutes_within_5_to_1440() {
+    assert_eq!(DEFAULT_EXPIRY_INTERVAL_MINUTES, 60);
+    assert_eq!(MIN_EXPIRY_INTERVAL_MINUTES, 5);
+    assert_eq!(MAX_EXPIRY_INTERVAL_MINUTES, 1_440);
+    let read = MemorySettings::new().read().expect("read");
+    assert_eq!(read.expiry_interval_minutes, 60);
+    for minutes in [5, 60, 1_440] {
+        assert!(
+            is_expiry_interval(minutes),
+            "{minutes} is within the bounds"
+        );
+    }
+    for minutes in [0, 4, 1_441, u32::MAX] {
+        assert!(
+            !is_expiry_interval(minutes),
+            "{minutes} is outside the bounds"
+        );
+    }
+}
+
+/// The settings `interval` minutes apart from the defaults.
+fn with_interval(minutes: u32) -> InstallationSettings {
+    InstallationSettings {
+        expiry_interval_minutes: minutes,
+        ..InstallationSettings::default()
+    }
+}
+
+/// Task API-F2.30: the service stores 5 and 1,440, journals each change once without its
+/// value, stores nothing for the current value, and refuses 4 and 1,441 as
+/// `invalid_expiry_interval` with nothing stored.
+#[test]
+fn the_service_stores_an_interval_within_the_bounds_and_refuses_one_outside_them() {
+    let fx = Fixture::with_library();
+    let settings = Arc::new(MemorySettings::new());
+    let service = fx.service.clone().with_settings(settings.clone());
+    let same = service.set_installation_settings("owner", with_interval(60));
+    assert_eq!(
+        same.expect("current value"),
+        InstallationSettings::default()
+    );
+    assert!(
+        settings.journal_entries().is_empty(),
+        "the current value stores nothing"
+    );
+    for (n, minutes) in [5, 1_440].into_iter().enumerate() {
+        let stored = service.set_installation_settings("owner", with_interval(minutes));
+        assert_eq!(stored.expect("stored").expiry_interval_minutes, minutes);
+        assert_eq!(settings.read().expect("read"), with_interval(minutes));
+        let journal = settings.journal_entries();
+        assert_eq!(journal.len(), n + 1, "each change is journaled once");
+        assert_eq!(journal[n].operation, "settings.recently_deleted.set");
+        assert!(journal[n].target_ids.is_empty(), "no value is journaled");
+        let text = serde_json::to_string(&journal[n]).expect("entry");
+        assert!(!text.contains("expiry_interval"), "no value is journaled");
+    }
+    for minutes in [4, 1_441] {
+        let refused = service.set_installation_settings("owner", with_interval(minutes));
+        let err = refused.expect_err("outside the bounds");
+        assert_eq!(err.error_code(), "invalid_expiry_interval");
+        assert!(matches!(err, LibraryError::Invalid { .. }));
+        assert_eq!(settings.read().expect("read"), with_interval(1_440));
+        assert_eq!(settings.journal_entries().len(), 2, "nothing is stored");
+        let bad = with_interval(minutes);
+        let seed = filesquid_api::journal::JournalEntry::new("x", Outcome::Succeeded);
+        assert!(settings.store(&bad, seed).is_err(), "the store refuses it");
+    }
+}
+
+/// Task API-F2.30: a host runs expiry at launch, then one interval after the start of the
+/// last run.
+#[test]
+fn the_schedule_is_due_at_launch_and_then_one_interval_after_the_last_start() {
+    let mut schedule = ExpirySchedule::new();
+    assert_eq!(schedule.next_due_ms(60), None, "nothing ran: due at launch");
+    assert!(schedule.is_due(60, 0));
+    schedule.record_start(1_000);
+    assert_eq!(schedule.last_started_ms(), Some(1_000));
+    assert_eq!(schedule.next_due_ms(60), Some(1_000 + 60 * MINUTE_MS));
+    assert!(!schedule.is_due(60, 1_000 + 60 * MINUTE_MS - 1));
+    assert!(schedule.is_due(60, 1_000 + 60 * MINUTE_MS));
+}
+
+/// Task API-F2.30: a changed interval takes effect for the next run without a restart; that
+/// run falls due one new interval after the start of the last run, or at once when that time
+/// has already passed.
+#[test]
+fn a_changed_interval_moves_the_next_run_and_runs_at_once_when_already_passed() {
+    let mut schedule = ExpirySchedule::new();
+    schedule.record_start(0);
+    assert_eq!(schedule.next_due_ms(15), Some(15 * MINUTE_MS));
+    assert!(!schedule.is_due(15, 14 * MINUTE_MS));
+    assert!(schedule.is_due(15, 15 * MINUTE_MS));
+    let now = 30 * MINUTE_MS;
+    assert!(!schedule.is_due(60, now), "the default has not passed");
+    assert!(schedule.is_due(10, now), "10 minutes passed 20 minutes ago");
+}
+
+/// Task API-F2.30: an interval outside the bounds (a store another program edited) is held
+/// to the bounds, so a run is never scheduled every tick or never again; a clock that went
+/// backwards does not lose the next run.
+#[test]
+fn the_schedule_holds_an_interval_to_the_bounds() {
+    let mut schedule = ExpirySchedule::new();
+    schedule.record_start(0);
+    assert_eq!(schedule.next_due_ms(0), Some(5 * MINUTE_MS));
+    assert_eq!(schedule.next_due_ms(u32::MAX), Some(1_440 * MINUTE_MS));
+    schedule.record_start(i64::MAX);
+    assert_eq!(schedule.next_due_ms(60), Some(i64::MAX), "no overflow");
 }
