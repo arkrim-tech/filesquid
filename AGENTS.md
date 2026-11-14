@@ -19,7 +19,7 @@
 - **Walkthrough Documentation:** When executing tests, the agent MUST copy the raw CLI output of the test runs into a permanent `apps/[Module Name]/resources/tasks/Task-[Task ID]-Walkthrough.md` file to provide immediate visual proof of passing tests, in addition to generating the structured test reports.
 - **Unit Test Traceability:** When code changes make a unit test obsolete or require modifications to the underlying implementation, the agent MUST explicitly update, refactor, or remove the corresponding unit tests to remain in sync with the source code.
 - **Strict Artifact Isolation:** This principle is tactically enforced on all AI agents via the instructions in `[artifact-isolation.md](./.agents/rules/artifact-isolation.md)`.
-- **PR Review Mandate:** All proposed Pull Requests MUST be reviewed by an external AI agent acting as a Senior Software Engineer. The agent will analyze code changes, enforce project paradigms, check for logic flaws, and provide change requests. The external reviewer is AI PR Agent. Any identified issues will be fixed and pushed to the PR, and the review-and-fix loop repeats until no AI PR Agent comments remain. Agents wait for each review by polling the AI PR Agent's check run, never through PR-activity subscriptions or scheduled check-ins. For tasks inside the current milestone, agents MAY then merge their own PR into the main branch, and they stop for the owner's manual testing review once the milestone's gate task is merged. The owner sets each milestone in the "Current milestone" section of the rule. Tactically enforced via [`pr-review-loop.md`](./.agents/rules/pr-review-loop.md).
+- **PR Review Mandate:** Pull requests are opened against `main` and merged through [`pr-review-loop.md`](./.agents/rules/pr-review-loop.md). There is no hosted reviewer (owner decision, 2026-11-14: the AI PR Agent workflow was removed). Agents do not poll a check run and do not wait for a bot comment. Fix any human review comment that requests a change. For tasks inside the current milestone, agents MAY then merge their own PR into the main branch, and they stop for the owner's manual testing review once the milestone's gate task is merged. The owner sets each milestone in the "Current milestone" section of the rule.
 
 ## 2. Branch-Per-Task
 
@@ -41,10 +41,10 @@
 
 ## 5. Local Verification
 
-**Purpose:** Keep every quality gate fast, deterministic and under the developer's control. Lint and tests run locally through the repository's pre-commit hook before a push. GitHub Actions is slow and unreliable for those gates, so they stay local. GitHub Actions is used for one job: the pull-request reviewer.
+**Purpose:** Keep every quality gate fast, deterministic and under the developer's control. Lint and tests run locally through the repository's pre-commit hook before a push. GitHub Actions is slow and unreliable for those gates, so they stay local. There is no hosted workflow.
 
-- **Quality gates stay local:** Agents MUST NOT move lint, tests, or any other quality gate into GitHub Actions or any other hosted CI. A pull request still needs the local hook, the AI PR Agent review, and human review where the review loop requires it.
-- **Pull-request reviewer:** The only hosted workflow is [`.github/workflows/pr_agent.yml`](./.github/workflows/pr_agent.yml). It runs the AI PR Agent on pull requests and does not build or test the repository. A later owner decision may replace that workflow with a remote self-hosted review server. Until that change lands, do not delete the workflow and do not add any other workflow.
+- **Quality gates stay local:** Agents MUST NOT move lint, tests, or any other quality gate into GitHub Actions or any other hosted CI. A pull request needs the local hook, and human review where the review loop requires it.
+- **No hosted workflow:** Do not add a GitHub Actions workflow or `.gitlab-ci.yml`. The pull-request reviewer workflow was removed on 2026-11-14. If a workflow appears, remove it.
 - **Pre-commit is the gate:** `scripts/pre-commit.sh` runs the branch, port, document-sync, traceability, link, workspace-boundary, logging, formatting, documentation and lint/test verifiers. A commit that fails the hook MUST NOT be pushed.
 - **Active Enforcement:** This principle is tactically enforced on all AI agents via the instructions in `[local-verification.md](./.agents/rules/local-verification.md)`.
 

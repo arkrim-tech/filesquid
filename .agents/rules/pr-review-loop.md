@@ -1,13 +1,13 @@
 ---
 trigger: always_on
-description: Run every agent pull request through the AI PR Agent review loop until no AI PR Agent comments remain, then merge it into main.
+description: Open a pull request, pass the local hook, fix open human review comments, then merge it into main.
 copyright: Pieter Van Garderen (2026)
 license: CC-BY
 ---
 
-# Pull Request Review Loop (AI PR Agent)
+# Pull Request Review Loop
 
-**Purpose:** This rule enforces the PR Review Mandate in `AGENTS.md`. The external reviewer is AI PR Agent. The owner has granted agents permission (2026-10-17) to merge their own pull requests into `main` once this loop is finished, for tasks inside the current milestone only.
+**Purpose:** This rule enforces the PR Review Mandate in `AGENTS.md`. There is no hosted pull-request reviewer (owner decision, 2026-11-14: the AI PR Agent workflow was removed). The owner has granted agents permission (2026-10-17) to merge their own pull requests into `main` once this loop is finished, for tasks inside the current milestone only.
 
 ## Current milestone
 
@@ -28,9 +28,8 @@ Only the owner edits this section. It is updated after the owner's manual testin
 ## The loop
 
 1. **Open the PR.** When a task is complete and the head-commit hook run required by its scope passes (`FULL=1 bash scripts/pre-commit.sh`, summary line `Test scope: full`, when the PR's change scope is `full` or includes `rust:`; a passing ordinary `bash scripts/pre-commit.sh` when it is `docs` or npm-only; see [local-verification.md](./local-verification.md#change-aware-test-scope)), push the task branch and open a pull request against `main`. Follow [pr-documentation-update.md](./pr-documentation-update.md) first.
-2. **Poll for the AI PR Agent.** The reviewer runs from [`.github/workflows/pr_agent.yml`](../../.github/workflows/pr_agent.yml) (owner decision, 2026-11-02). A later self-hosted server may replace that workflow; until then this file is the runner. It reviews each new head commit on its own. It is done when its check run on that commit has completed. After each push, poll that check run with `gh api repos/<owner>/<repo>/commits/<sha>/check-runs` (REST), at most once every 5 minutes and at most 24 polls per round, from a background loop or a monitor tool, never a foreground `sleep`. At each poll also read the PR's `mergeable_state`; when it is `dirty`, merge `main` into the branch straight away. Agents MUST NOT subscribe to PR activity or create scheduled triggers, wake-ups or check-ins for the loop (owner decision, 2026-10-18); re-triggering the AI PR Agent as below is allowed.
-   - If the check run has not completed 15 minutes after the push or the last re-trigger, re-trigger the AI PR Agent by commenting `/review` on the pull request. Re-trigger at most 3 times per head commit. The 24-poll cap covers the whole round, re-triggers included. If the re-triggers are used up or the cap is reached and the check run still has not completed, stop, do not merge, and report the blocker to the owner.
-3. **Fix every AI PR Agent comment.** For each open AI PR Agent review thread:
+2. **No hosted reviewer.** Do not poll a GitHub Actions check run, and do not comment `/review`. After each push, read the PR's `mergeable_state`; when it is `dirty`, merge `main` into the branch straight away. Agents MUST NOT subscribe to PR activity or create scheduled triggers, wake-ups or check-ins (owner decision, 2026-10-18).
+3. **Fix every human review comment that requests a change.** For each open human review thread:
    - Fix it in code or documentation, following every other rule in `.agents/rules/` (TDD, lint, docs, links).
    - If the finding is wrong, reply on the thread with the reasoning and evidence, then resolve the thread. Never dismiss a finding silently.
    - Each thread gets exactly one reply: the fix commit or the reasoning.
@@ -42,8 +41,6 @@ Only the owner edits this section. It is updated after the owner's manual testin
 
 Merge the PR into `main` only when all of these are true:
 
-- The AI PR Agent has reviewed the current head commit: its check run on that commit has completed with `success`. A clean pass posts no new review, so the check run is the signal; new findings arrive as review comments.
-- No AI PR Agent review thread is unresolved.
 - The hook passed on the current head commit with the run its scope requires: `FULL=1 bash scripts/pre-commit.sh`, summary line `Test scope: full`, when the PR's change scope (`scripts/changed_scope.sh` against `origin/main`) is `full` or includes `rust:`; otherwise a passing ordinary `bash scripts/pre-commit.sh`, summary line `Test scope: <scope>`.
 - The PR has no merge conflict with `main`. Resolve a conflict by merging `main` into the branch, then return to step 2.
 - No human reviewer has requested changes that are still open.
@@ -52,10 +49,11 @@ Use a merge commit (the repository's existing convention), then delete the task 
 
 ## Bound
 
-The loop is capped at **10 AI PR Agent review rounds** per PR (`AGENTS.md` §22). If the AI PR Agent still has open comments after round 10, or the same finding returns three times after being fixed, stop. Do not merge. Report to the owner what is still open and why it keeps coming back.
+If the same finding returns three times after being fixed, stop (`AGENTS.md` §22). Do not merge. Report to the owner what is still open and why it keeps coming back.
 
 ## MUST NOT
 
-- Merge with an unresolved AI PR Agent thread, a failing pre-commit hook, or before the AI PR Agent's check run on the head commit has completed.
-- Commit or push directly to `main`. The PR merge is the only way agent work reaches `main` ([task-workflow.md](./task-workflow.md)).
+- Merge with an unresolved human change request or a failing pre-commit hook.
+- Add a hosted workflow. There is none.
+- Commit or push directly to `main` unless the user prompt explicitly says to. The PR merge is the only way agent work reaches `main` ([task-workflow.md](./task-workflow.md)).
 - Weaken a verifier, skip a test, or bypass the hook with `--no-verify` to end the loop ([local-verification.md](./local-verification.md)).
