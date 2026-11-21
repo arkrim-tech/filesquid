@@ -84,4 +84,4 @@ FileSquid and the ImageSquid distribution are licensed under the [MIT License](.
 
 # Open Agent Dev
 
-This project is developed with AI coding agents using the [Open Agent Dev](https://github.com/peterVG/open-agent-dev/) tooling developed by [@peterVG](https://vangarderen.net). Role prompts live in [.agents/agents/](./.agents/agents/README.md).
+This project is developed with AI coding agents (Claude and Grok) using the [Open Agent Dev](https://github.com/peterVG/open-agent-dev/) tooling and workflow developed by [@peterVG](https://vangarderen.net). Role prompts live in [.agents/agents/](./.agents/agents/README.md). Cubic.dev and CodeRabbit were used for initial code review. Each feature is developed in a separate branch and require human review and approval before merging to main branch.
