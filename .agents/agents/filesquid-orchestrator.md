@@ -147,8 +147,8 @@ INSTRUCTIONS FOR EVERY AGENT AND SESSION
   Never use an action a reviewer's "Never use" entry lists. Push one round's fixes for
   all reviewers together, after the hook passes.
 - Repeat, for at most 10 review rounds (a batch of follow-up questions answered without a
-  push is a round too), until every required reviewer's latest review is
-  of the head commit, no reviewer has further comments, no reviewer thread is unresolved,
+  push is a round too), until every required reviewer has reviewed
+  the head commit as its section of pr-reviewers.md defines, no reviewer has further comments, no reviewer thread is unresolved,
   the hook has passed on the head commit, and no human reviewer has an open change
   request. Then send ONE short hand-back: PR URL, head SHA, which pre-commit run passed
   on the head commit (its "Test scope:" line), review rounds with finding counts per
@@ -159,8 +159,9 @@ INSTRUCTIONS FOR EVERY AGENT AND SESSION
   if a reviewer still has an open finding after the tenth round, if the same finding
   returns three times after being fixed, or if a required reviewer has not reviewed the
   head commit 60 minutes after a push (time waiting out a limit the reviewer stated does
-  not count). Report a PR that is waiting for the owner to start a reviewer's first
-  review as waiting.
+  not count). For a PR that waited for the owner to start a reviewer's first review, the
+  60 minutes run from the moment the owner started it, if that is later than the push.
+  While it is still waiting, report it as waiting.
 ```
 
 Read a lane's hand-back from its session record. The hand-back is the message that ends with `Hand-back:`.
@@ -168,7 +169,7 @@ Read a lane's hand-back from its session record. The hand-back is the message th
 ## Merge procedure
 
 - Merge only when all of these hold:
-  - Every required reviewer's latest review is of the head commit, no reviewer has further comments, and no reviewer thread is unresolved. Check it yourself with the "Reviewed the head commit" entry of each reviewer's section in [pr-reviewers.md](../../.agents/rules/pr-reviewers.md); do not rely on the hand-back alone.
+  - Every required reviewer has reviewed the head commit, no reviewer has further comments, and no reviewer thread is unresolved. Check it yourself with the "Reviewed the head commit" entry of each reviewer's section in [pr-reviewers.md](../../.agents/rules/pr-reviewers.md); do not rely on the hand-back alone.
   - No human reviewer has requested changes that are still open.
   - The pull request reports `mergeable_state` `"clean"`. It is `null` right after a push, so check again.
   - The other merge conditions in [pr-review-loop.md](../../.agents/rules/pr-review-loop.md#merge-conditions) also hold.

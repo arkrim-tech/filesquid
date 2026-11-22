@@ -57,9 +57,9 @@ Only the owner edits this section. It is updated after the owner's manual testin
 
    Human review comments are handled the same way.
 4. **Push the fixes.** Rerun `bash scripts/pre-commit.sh` (its change-aware scope is enough for a fix commit; the merge conditions below still require the scope's head-commit run, `FULL=1` for a `full` or `rust:` scope, before merge), commit with Conventional Commits, and push to the same branch. Push a round's fixes for all reviewers together: every active reviewer reviews each push, and reviews are metered ([pr-reviewers.md](./pr-reviewers.md), "Limits"). Then reply on each thread you fixed, naming the commit, and resolve it.
-5. **Repeat** steps 2 to 4, for at most 10 review rounds ([Bound](#bound)), until every required reviewer's latest review is of the head commit, no reviewer has further comments, and no reviewer thread is unresolved. The PR is then ready for human review to merge.
+5. **Repeat** steps 2 to 4, for at most 10 review rounds ([Bound](#bound)), until every required reviewer has reviewed the head commit, as step 2 defines it, no reviewer has further comments, and no reviewer thread is unresolved. The PR is then ready for human review to merge.
 
-A reviewer **has no further comments** when no finding from its review of the head commit, or from its replies since, is still open. A finding is closed when it was answered with reasoning in one reply (or, for a finding with no thread, in the PR comment of step 3) and its thread, if any, is resolved. A disputed security finding stays open until the owner settles it, with or without a thread. A finding fixed in code needs a new commit, so a new head and a new review by every active reviewer. A finding answered without a code change needs no further commit or review.
+A reviewer **has no further comments** when no finding from its review of the head commit, or from its replies since, is still open. A finding is closed when it was answered with reasoning in one reply (or, for a finding with no thread, in the PR comment of step 3) and its thread, if any, is resolved. A disputed security finding stays open until the owner settles it, with or without a thread. A finding fixed in code needs a new commit, so a new head and a new review by every required reviewer; a reviewer that is not required may review it too, and its findings are answered. A finding answered without a code change needs no further commit or review.
 
 A reviewer is **required** when [pr-reviewers.md](./pr-reviewers.md) marks it "Required before merge". Findings from a reviewer that is not required are still answered, but the loop does not wait for that reviewer.
 
@@ -67,7 +67,7 @@ A reviewer is **required** when [pr-reviewers.md](./pr-reviewers.md) marks it "R
 
 Merge the PR into `main` only when all of these are true:
 
-- Every required reviewer's latest review is of the head commit, no active reviewer has further comments, and no reviewer thread is unresolved. A disputed security finding left open for the owner, with or without a thread, blocks the merge until the owner settles it.
+- Every required reviewer has reviewed the head commit, as step 2 defines it, no active reviewer has further comments, and no reviewer thread is unresolved. A disputed security finding left open for the owner, with or without a thread, blocks the merge until the owner settles it.
 - The hook passed on the current head commit with the run its scope requires: `FULL=1 bash scripts/pre-commit.sh`, summary line `Test scope: full`, when the PR's change scope (`scripts/changed_scope.sh` against `origin/main`) is `full` or includes `rust:`; otherwise a passing ordinary `bash scripts/pre-commit.sh`, summary line `Test scope: <scope>`.
 - The PR has no merge conflict with `main`. Resolve a conflict by merging `main` into the branch, then return to step 2.
 - No human reviewer has requested changes that are still open.
@@ -82,7 +82,7 @@ The loop is capped at **10 review rounds** per PR (`AGENTS.md` §22). Owner deci
 
 - A reviewer still has an open finding after the tenth round.
 - The same finding returns three times after being fixed.
-- A required reviewer has not reviewed the head commit 60 minutes after a push, review requests included. Time spent waiting out a limit that the reviewer itself stated does not count toward the 60 minutes; the 24-poll cap below still applies. This does not apply to a PR that is still waiting for the owner to start a reviewer's first review; report that PR as waiting.
+- A required reviewer has not reviewed the head commit 60 minutes after a push, review requests included. Time spent waiting out a limit that the reviewer itself stated does not count toward the 60 minutes; the 24-poll cap below still applies. The 60 minutes run from the push, or, for a PR that waited for the owner to start a reviewer's first review, from the moment the owner started that review if that is later. While a PR is still waiting for the owner to start it, report the PR as waiting.
 - The 24-poll cap of a round is reached without a review of the head commit by every required reviewer.
 
 ## MUST NOT

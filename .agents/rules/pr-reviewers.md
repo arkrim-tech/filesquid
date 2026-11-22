@@ -15,7 +15,7 @@ Only the owner edits this file. An agent that observes a reviewer behaving diffe
 
 | Reviewer | Active | Required before merge | Configuration |
 |---|---|---|---|
-| CodeRabbit | Since 2026-11-14. Its free trial ends 2026-11-28. | Yes | `.coderabbit.yaml` at the repository root |
+| CodeRabbit | Since 2026-11-14. Its free trial ends 2026-11-28. | Yes | `.coderabbit.yaml` at the repository root, read from the pull request's branch. A branch without that file is reviewed with CodeRabbit's defaults. |
 | GitHub Copilot code review | Since 2026-11-22 | Yes | The repository ruleset "CoPilot Code Review" |
 
 A reviewer marked "Required before merge" blocks the merge until it has reviewed the head commit and has no open finding. A reviewer marked "No" is advisory: answer its findings, but do not wait for it.
