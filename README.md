@@ -28,7 +28,11 @@ FileSquid is in development, and much of what is described above is still to be 
 
 ## Native prerequisites (platform-agnostic)
 
-Install [rustup](https://rustup.rs/) 1.28.1 or newer (1.28.0 does not install the pinned toolchain automatically). The workspace pins Rust to an exact stable release, **1.99.1**, in `apps/filesquid/rust-toolchain.toml`, so a new stable release cannot change lints or behaviour under an existing branch. The first `cargo` or `rustc` command run inside `apps/filesquid/` installs that toolchain with `rustfmt`, `clippy` and the browser target `wasm32-unknown-unknown` (the `filesquid-ocfl`, `filesquid-metadata`, `filesquid-c2pa` and `filesquid-prov` checks build for it). To install it ahead of time, run these from `apps/filesquid/` (some rustup versions skip the components and target the file declares, so add them explicitly, as `scripts/setup-dev-environment.sh` does): `rustup toolchain install`, then `rustup component add rustfmt clippy` and `rustup target add wasm32-unknown-unknown`. `rustc --version` there prints `rustc 1.99.1`. Install **Node.js** 22.12.0 or newer (Node.js 24 LTS is simplest, since it bundles npm 11) with a version manager such as [mise](https://mise.jdx.dev/) or [asdf](https://asdf-vm.com/), or the installer from [nodejs.org](https://nodejs.org/). Use **npm 11 or newer** (bundled with Node.js 24, or `npm install -g npm@11` on Node.js 22; do not use `npm@latest`, because npm 12 requires Node.js 22.22.2 or newer): npm 10 crashes with `Cannot read properties of null (reading 'edgesOut')` when it resolves the relative-path link from ImageSquid to `@filesquid/ui`. Both packages declare the requirement in `engines` and enforce it with `engine-strict`, so an old npm stops with a clear message instead. Desktop builds need the OS webview toolchain described in [Tauri 2 prerequisites](https://v2.tauri.app/start/prerequisites/): MSVC + WebView2 on Windows, Xcode Command Line Tools on macOS, WebKitGTK 4.1 on Linux. Docker (optional) runs the Compose services.
+Install **[rustup](https://rustup.rs/)** 1.28.1 or newer (1.28.0 does not install the pinned toolchain automatically). The workspace pins Rust to an exact stable release, **1.99.1**, in `apps/filesquid/rust-toolchain.toml`, so a new stable release cannot change lints or behaviour under an existing branch. 
+
+The first `cargo` or `rustc` command run inside `apps/filesquid/` installs that toolchain with `rustfmt`, `clippy` and the browser target `wasm32-unknown-unknown` (the `filesquid-ocfl`, `filesquid-metadata`, `filesquid-c2pa` and `filesquid-prov` checks build for it). To install it ahead of time, run these from `apps/filesquid/` (some rustup versions skip the components and target the file declares, so add them explicitly, as `scripts/setup-dev-environment.sh` does): `rustup toolchain install`, then `rustup component add rustfmt clippy` and `rustup target add wasm32-unknown-unknown`. `rustc --version` there prints `rustc 1.99.1`. 
+
+Install **Node.js** 22.12.0 or newer (Node.js 24 LTS is simplest, since it bundles npm 11) with a version manager such as [mise](https://mise.jdx.dev/) or [asdf](https://asdf-vm.com/), or the installer from [nodejs.org](https://nodejs.org/). Use **npm 11 or newer** (bundled with Node.js 24, or `npm install -g npm@11` on Node.js 22; do not use `npm@latest`, because npm 12 requires Node.js 22.22.2 or newer): npm 10 crashes with `Cannot read properties of null (reading 'edgesOut')` when it resolves the relative-path link from ImageSquid to `@filesquid/ui`. Both packages declare the requirement in `engines` and enforce it with `engine-strict`, so an old npm stops with a clear message instead. Desktop builds need the OS webview toolchain described in [Tauri 2 prerequisites](https://v2.tauri.app/start/prerequisites/): MSVC + WebView2 on Windows, Xcode Command Line Tools on macOS, WebKitGTK 4.1 on Linux. Docker (optional) runs the Compose services.
 
 **libvips (thumbnails and previews).** The desktop media worker (the desktop executable started with `--filesquid-media-worker`, one process per thumbnail, Task DE-0.5) loads the libvips 8.13 or newer shared library at run time, so no build needs its headers: `libvips.so.42` on Linux, from a package that provides libvips 8.13 or newer (Debian 12's `libvips42` is 8.14, Ubuntu 24.04's `libvips42t64` is 8.15; Ubuntu 22.04's `libvips42` is 8.12, too old, and the worker refuses it), `libvips.42.dylib` on macOS (Homebrew's `vips`), `libvips-42.dll` on Windows (the libvips Windows build, on `PATH`). Without it, the worker answers `libvips_unavailable` and the media tests check that refusal instead of a thumbnail. Do not install ImageMagick for FileSquid ([ADR 006](./resources/architecture/006-libvips-native-stills-not-imagemagick.md)): where a libvips build carries its ImageMagick module, the worker blocks every Magick loader and saver before it reads a file, and `unit_media` fails if a Magick crate enters `Cargo.lock`.
 
@@ -50,13 +54,29 @@ cd apps/filesquid/ui && npm ci
 cd ../../imagesquid && npm ci
 ```
 
-Or let one script do all of the setup. `scripts/setup-dev-environment.sh` is idempotent and safe to run at the start of every session. It installs the toolchain pinned in `apps/filesquid/rust-toolchain.toml` and the `wasm32-unknown-unknown` target. It runs `cargo fetch --locked` and `npm ci` in both UI packages. When `python3` exists, it installs the community OCFL validator `ocfl-py` 2.1.0 with pip (it does not install `rocfl`). It registers the MVP progress merge driver (below) in the clone's git config. It then pre-warms the Cargo target with `cargo build --workspace --tests --locked`, using the same shared-target lock and Cargo settings as the pre-commit hook. Every step logs to stdout with a UTC timestamp. Each install, download or build command (rustup, cargo, npm, pip) has a time limit (`FILESQUID_SETUP_STEP_TIMEOUT`, default 1800 seconds; `FILESQUID_SETUP_BUILD_TIMEOUT`, default 3600 seconds for the pre-warm) when a `timeout` or `gtimeout` program is installed. Quick local checks such as `pip show` and `python3 -m venv` are not wrapped. Without a timeout program, the script warns and runs those commands without a limit (macOS has neither unless coreutils is installed); the lock wait is bounded either way. A failed required step (toolchain, fetch, `npm ci`) exits non-zero and names the step. A failed optional step (`ocfl-py`, merge driver, pre-warm) prints a warning and the script continues. In a cloud environment, put this one line in the environment's setup script; it runs from the repository checkout:
+### Or let one script do all of the setup 
+
+***`scripts/setup-dev-environment.sh`*** is idempotent and safe to run at the start of every session. 
+
+It installs the toolchain pinned in `apps/filesquid/rust-toolchain.toml` and the `wasm32-unknown-unknown` target. 
+
+It runs `cargo fetch --locked` and `npm ci` in both UI packages. 
+
+When `python3` exists, it installs the community OCFL validator `ocfl-py` 2.1.0 with pip (it does not install `rocfl`). 
+
+It registers the MVP progress merge driver (below) in the clone's git config. It then pre-warms the Cargo target with `cargo build --workspace --tests --locked`, using the same shared-target lock and Cargo settings as the pre-commit hook. 
+
+Every step logs to stdout with a UTC timestamp. Each install, download or build command (rustup, cargo, npm, pip) has a time limit (`FILESQUID_SETUP_STEP_TIMEOUT`, default 1800 seconds; `FILESQUID_SETUP_BUILD_TIMEOUT`, default 3600 seconds for the pre-warm) when a `timeout` or `gtimeout` program is installed. 
+
+Quick local checks such as `pip show` and `python3 -m venv` are not wrapped. Without a timeout program, the script warns and runs those commands without a limit (macOS has neither unless coreutils is installed); the lock wait is bounded either way. 
+
+A failed required step (toolchain, fetch, `npm ci`) exits non-zero and names the step. A failed optional step (`ocfl-py`, merge driver, pre-warm) prints a warning and the script continues. In a cloud environment, put this one line in the environment's setup script; it runs from the repository checkout:
 
 ```sh
 bash scripts/setup-dev-environment.sh
 ```
 
-. The `ocfl`, `metadata`, `c2pa` and `prov` crates stay independently installable and publishable for programmes that never run the FileSquid app.
+The `ocfl`, `metadata`, `c2pa` and `prov` crates stay independently installable and publishable for programmes that never run the FileSquid app.
 
 ## Run the application
 
@@ -84,4 +104,6 @@ FileSquid and the ImageSquid distribution are licensed under the [MIT License](.
 
 # Open Agent Dev
 
-This project is developed with AI coding agents from [Claude Code](https://claude.com/product/claude-code) and [Grok Build](https://x.ai/build) using the [Open Agent Dev](https://github.com/peterVG/open-agent-dev/) tooling and workflow developed by [@peterVG](https://vangarderen.net). Role prompts live in [.agents/agents/](./.agents/agents/README.md). [Cubic.dev](https://www.cubic.dev/), [CodeRabbit](https://www.coderabbit.ai/) and [Copilot](https://docs.github.com/en/copilot/how-tos/use-copilot-agents/use-code-review) were all used at different times for initial code review. Each feature is developed in a separate branch and require human review and approval before merging to main branch.
+This project is developed with AI coding agents from [Claude Code](https://claude.com/product/claude-code) and [Grok Build](https://x.ai/build) using the [Open Agent Dev](https://github.com/peterVG/open-agent-dev/) tooling and workflow developed by [@peterVG](https://vangarderen.net). Role prompts live in [.agents/agents/](./.agents/agents/README.md). 
+
+[Cubic.dev](https://www.cubic.dev/), [CodeRabbit](https://www.coderabbit.ai/) and [Copilot](https://docs.github.com/en/copilot/how-tos/use-copilot-agents/use-code-review) were all used at different times for initial code review. Each feature is developed in a separate branch and require human review and approval before merging to main branch.
