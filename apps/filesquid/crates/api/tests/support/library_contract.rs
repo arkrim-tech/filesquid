@@ -11,11 +11,11 @@ use filesquid_api::imports::{
     ImportStartError, ImportStarter, PlanBook, PlanDiscarded, PlanFacts, PlanItem, PlanItemPage,
 };
 use filesquid_api::local_library::choice::{
-    ChoiceOutcome, ChoicePurpose, ChooseError, LocationChoice, LocationChoiceRequest,
+    ChoiceOutcome, ChoicePurpose, ChooseError, ChosenFolder, LocationChoice, LocationChoiceRequest,
     LocationChooser,
 };
 use filesquid_api::local_library::{
-    FreeBytesReason, FreeSpace, LibraryFacts, MemoryLibraryRegistry, RecentLibraries,
+    FolderNames, FreeBytesReason, FreeSpace, LibraryFacts, MemoryLibraryRegistry, RecentLibraries,
     RecentLibrary, RenameLibraryRequest,
 };
 use filesquid_api::local_library::{
@@ -265,8 +265,9 @@ fn import_request() -> ImportRequest {
 struct PickingChooser;
 
 impl LocationChooser for PickingChooser {
-    fn choose(&self, _purpose: ChoicePurpose) -> Result<Option<String>, ChooseError> {
-        Ok(Some(NEW.to_string()))
+    fn choose(&self, _purpose: ChoicePurpose) -> Result<Option<ChosenFolder>, ChooseError> {
+        let names = FolderNames::safe(Some("Family archive"), Some("Photos SSD"));
+        Ok(Some(ChosenFolder::new(NEW, names)))
     }
 }
 
@@ -609,10 +610,20 @@ pub fn samples() -> Vec<(&'static str, Vec<Value>)> {
                 to_value(LocationChoice {
                     outcome: ChoiceOutcome::Chosen,
                     location_id: Some(NEW.to_string()),
+                    folder_name: Some("Family archive".to_string()),
+                    volume_name: Some("Photos SSD".to_string()),
+                }),
+                to_value(LocationChoice {
+                    outcome: ChoiceOutcome::Chosen,
+                    location_id: Some(NEW.to_string()),
+                    folder_name: Some("Family archive".to_string()),
+                    volume_name: None,
                 }),
                 to_value(LocationChoice {
                     outcome: ChoiceOutcome::Cancelled,
                     location_id: None,
+                    folder_name: None,
+                    volume_name: None,
                 }),
             ],
         ),
@@ -656,6 +667,8 @@ pub fn samples() -> Vec<(&'static str, Vec<Value>)> {
                     free_bytes: Some(1_000_000),
                     free_bytes_reason: None,
                     revision: Some("2".to_string()),
+                    folder_name: Some("Family archive".to_string()),
+                    volume_name: Some("Photos SSD".to_string()),
                 }),
             })],
         ),
@@ -836,11 +849,15 @@ fn facts_samples() -> Vec<(&'static str, Vec<Value>)> {
         free_bytes: Some(1_000_000),
         free_bytes_reason: None,
         revision: Some("1".to_string()),
+        folder_name: Some("Family archive".to_string()),
+        volume_name: Some("Photos SSD".to_string()),
     };
     let unknown = LibraryFacts {
         free_bytes: None,
         free_bytes_reason: Some(FreeBytesReason::NotLocal),
         revision: None,
+        folder_name: None,
+        volume_name: None,
         ..known.clone()
     };
     let recent = RecentLibrary {

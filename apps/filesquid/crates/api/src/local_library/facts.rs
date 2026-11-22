@@ -1,12 +1,15 @@
-//! Library facts (Task API-F2.18; API-S-038): a library's name, the free bytes of the volume
-//! that holds its storage root, and the libraries this host opened.
+//! Library facts (Tasks API-F2.18 and API-F2.31; API-S-038, API-S-034): a library's name, the
+//! free bytes of the volume that holds its storage root, the names of its folder and volume on
+//! the desktop, and the libraries this host opened.
 //!
 //! A host keeps what it knows of each library it bound in a [`LibraryRegistry`]: its name, the
 //! location it was opened from and when, and it answers the free space of a location. The API
 //! keeps the one meaning: [`check_name`] states the name rule, [`RegistryBook`] the bounded
 //! bookkeeping every host can reuse, and the routes decide readability and the 20-entry list.
 //! Nothing here carries a path: a location is an opaque ID the host registered, and no answer
-//! of the routes names it.
+//! of the routes names it. The folder's own name and its volume's name ([`FolderNames`]) are
+//! answered only where a host reads them (the desktop, the owner's own device; owner decision
+//! 2026-11-02), and never journaled, logged or sent on the event channel.
 
 use crate::journal::format_rfc3339_ms;
 use filesquid_core::LibraryId;
@@ -58,6 +61,36 @@ impl FreeSpace {
     }
 }
 
+/// The names of a chosen or library folder that the desktop answers to its owner (API-S-034
+/// **Folder and volume names**): the folder's own name, never a parent folder or the path, and
+/// the name of the volume that holds it, each `None` when the host cannot read it. A value is
+/// only ever answered to the caller: it never reaches a journal entry, a refusal, an event or
+/// a log line.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct FolderNames {
+    /// The folder's own name (its last path component), after API-S-005's safe transformation.
+    pub folder_name: Option<String>,
+    /// The name of the volume that holds the folder, after the same transformation.
+    pub volume_name: Option<String>,
+}
+
+impl FolderNames {
+    /// The names a host read, each passed through API-S-005's safe transformation
+    /// ([`crate::files::names::safe_name`]); a name with nothing left is `None`. Pure.
+    pub fn safe(folder_name: Option<&str>, volume_name: Option<&str>) -> Self {
+        Self {
+            folder_name: folder_name.and_then(crate::files::names::safe_name),
+            volume_name: volume_name.and_then(crate::files::names::safe_name),
+        }
+    }
+
+    /// These names after the safe transformation, so a route answers only safe names whatever
+    /// a host handed it; already safe names are unchanged. Pure.
+    pub fn made_safe(self) -> Self {
+        Self::safe(self.folder_name.as_deref(), self.volume_name.as_deref())
+    }
+}
+
 /// What a host remembers of one library it bound.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RegistryEntry {
@@ -98,6 +131,14 @@ pub trait LibraryRegistry: Send + Sync {
 
     /// The free space of the volume that holds `location_id`. May query the volume.
     fn free_space(&self, location_id: &str) -> FreeSpace;
+
+    /// The names of the folder registered as `location_id` and of its volume (API-S-034),
+    /// each `None` when the host cannot read it or the folder cannot be reached now. Only the
+    /// desktop host reads them; the default answers none, as every other host must. May query
+    /// the folder and its volume.
+    fn folder_names(&self, _location_id: &str) -> FolderNames {
+        FolderNames::default()
+    }
 }
 
 /// The bounded, in-memory bookkeeping of a [`LibraryRegistry`]: at most
@@ -190,11 +231,16 @@ fn forget_oldest(entries: &mut HashMap<LibraryId, RegistryEntry>) {
 /// The free-space reader of a [`MemoryLibraryRegistry`].
 type FreeSpaceFn = Box<dyn Fn(&str) -> FreeSpace + Send + Sync>;
 
-/// A [`LibraryRegistry`] in memory whose free space a function answers: for tests, and for a
-/// host whose locations a function can measure.
+/// The folder-names reader of a [`MemoryLibraryRegistry`].
+type FolderNamesFn = Box<dyn Fn(&str) -> FolderNames + Send + Sync>;
+
+/// A [`LibraryRegistry`] in memory whose free space a function answers, and its folder names
+/// another when one is given: for tests, and for a host whose locations a function can
+/// measure.
 pub struct MemoryLibraryRegistry {
     book: RegistryBook,
     free: FreeSpaceFn,
+    names: Option<FolderNamesFn>,
 }
 
 impl std::fmt::Debug for MemoryLibraryRegistry {
@@ -210,7 +256,18 @@ impl MemoryLibraryRegistry {
         Self {
             book: RegistryBook::new(),
             free: Box::new(free),
+            names: None,
         }
+    }
+
+    /// This registry, its locations' folder names answered by `names` (a desktop host's
+    /// reader); without it every location answers none. Pure.
+    pub fn with_folder_names(
+        mut self,
+        names: impl Fn(&str) -> FolderNames + Send + Sync + 'static,
+    ) -> Self {
+        self.names = Some(Box::new(names));
+        self
     }
 }
 
@@ -240,6 +297,12 @@ impl LibraryRegistry for MemoryLibraryRegistry {
     fn free_space(&self, location_id: &str) -> FreeSpace {
         (self.free)(location_id)
     }
+
+    fn folder_names(&self, location_id: &str) -> FolderNames {
+        self.names
+            .as_ref()
+            .map_or_else(FolderNames::default, |names| names(location_id))
+    }
 }
 
 /// Whether `name` is a library name: 1 to [`MAX_LIBRARY_NAME_BYTES`] bytes, not blank, and no
@@ -251,7 +314,7 @@ pub fn check_name(name: &str) -> bool {
 }
 
 /// The answer of the facts and rename routes: `{library_id, name, free_bytes,
-/// free_bytes_reason, revision}`.
+/// free_bytes_reason, revision, folder_name, volume_name}`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LibraryFacts {
     /// The library.
@@ -266,18 +329,36 @@ pub struct LibraryFacts {
     /// its next copy, rebuild or rename command (Task API-F2.19); `null` for a remembered
     /// library that is not open now.
     pub revision: Option<String>,
+    /// The library folder's own name on the desktop (API-S-034), `null` when unreadable, when
+    /// the folder cannot be reached now, and on every other host.
+    pub folder_name: Option<String>,
+    /// The name of the volume that holds the library folder, under the same rules.
+    pub volume_name: Option<String>,
+}
+
+/// What the facts of one library are made of besides its registry entry.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FactsReading {
+    /// The free space of its volume.
+    pub space: FreeSpace,
+    /// The names of its folder and volume.
+    pub names: FolderNames,
 }
 
 impl LibraryFacts {
-    /// The facts of `entry` with `space`, at `revision` when the library is open. Pure.
-    pub fn of(entry: &RegistryEntry, space: &FreeSpace, revision: Option<String>) -> Self {
-        let (free_bytes, free_bytes_reason) = space.fields();
+    /// The facts of `entry` with what was `read` of its folder, at `revision` when the
+    /// library is open. Pure.
+    pub fn of(entry: &RegistryEntry, read: &FactsReading, revision: Option<String>) -> Self {
+        let (free_bytes, free_bytes_reason) = read.space.fields();
+        let names = read.names.clone().made_safe();
         Self {
             library_id: entry.library_id.clone(),
             name: entry.name.clone(),
             free_bytes,
             free_bytes_reason,
             revision,
+            folder_name: names.folder_name,
+            volume_name: names.volume_name,
         }
     }
 }

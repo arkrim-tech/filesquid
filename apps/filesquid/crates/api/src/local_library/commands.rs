@@ -20,8 +20,8 @@
 
 use super::error::LocalLibraryError;
 use super::facts::{
-    check_name, FreeSpace, LibraryFacts, LibraryRegistry, RecentLibraries, RecentLibrary,
-    RegistryEntry, RenameLibraryRequest, MAX_RECENT_LIBRARIES,
+    check_name, FactsReading, FreeSpace, LibraryFacts, LibraryRegistry, RecentLibraries,
+    RecentLibrary, RegistryEntry, RenameLibraryRequest, MAX_RECENT_LIBRARIES,
 };
 use super::locations::{
     LibraryLocations, LibraryRequest, LibraryRoot, LibraryView, LocationRequest, Opened,
@@ -158,8 +158,8 @@ impl<L: LibraryLocations> LibraryCommands<L> {
             self.service
                 .journal_success(actor, RENAME_OPERATION, library);
         }
-        let space = read_free_space(registry, &entry.location_id).await;
-        Ok((LibraryFacts::of(&entry, &space, revision), changed))
+        let read = read_facts(registry, &entry.location_id).await;
+        Ok((LibraryFacts::of(&entry, &read, revision), changed))
     }
 
     /// Rename the open library `library` to `name` in `registry` under the open-library
@@ -189,8 +189,8 @@ impl<L: LibraryLocations> LibraryCommands<L> {
         Ok(changed)
     }
 
-    /// The facts of a library this host opened, for `actor`: its name and the free space of
-    /// its volume.
+    /// The facts of a library this host opened, for `actor`: its name, the free space of its
+    /// volume and, where the host reads them, the names of its folder and volume.
     ///
     /// # Errors
     ///
@@ -205,8 +205,8 @@ impl<L: LibraryLocations> LibraryCommands<L> {
             Ok((registry, entry))
         });
         let (registry, entry) = self.refused(actor, FACTS_OPERATION, Some(library), checked)?;
-        let space = read_free_space(registry, &entry.location_id).await;
-        Ok(LibraryFacts::of(&entry, &space, self.revision_of(library)))
+        let read = read_facts(registry, &entry.location_id).await;
+        Ok(LibraryFacts::of(&entry, &read, self.revision_of(library)))
     }
 
     /// The libraries this host opened that `readable` keeps, then at most
@@ -794,14 +794,25 @@ fn too_many_libraries() -> LocalLibraryError {
     )
 }
 
-/// Read the free space of `location_id` off the async executor, since a volume query may
-/// block.
-async fn read_free_space(registry: Arc<dyn LibraryRegistry>, location_id: &str) -> FreeSpace {
-    let spaces = read_free_spaces(registry, vec![location_id.to_string()]).await;
-    spaces
-        .into_iter()
-        .next()
-        .unwrap_or(FreeSpace::VolumeUnreadable)
+/// Read the free space of `location_id` and the names of its folder and volume off the async
+/// executor, on one blocking thread, since a volume query may block. A read that cannot
+/// finish answers an unreadable volume and no names, logged without either name.
+async fn read_facts(registry: Arc<dyn LibraryRegistry>, location_id: &str) -> FactsReading {
+    let location = location_id.to_string();
+    let read = move || FactsReading {
+        space: registry.free_space(&location),
+        names: registry.folder_names(&location),
+    };
+    match tokio::task::spawn_blocking(read).await {
+        Ok(reading) => reading,
+        Err(err) => {
+            tracing::warn!(target: super::LOG_TARGET, error = %err, "facts read failed");
+            FactsReading {
+                space: FreeSpace::VolumeUnreadable,
+                names: super::FolderNames::default(),
+            }
+        }
+    }
 }
 
 /// Read the free space of each of `locations` on one blocking thread, in order. A read that

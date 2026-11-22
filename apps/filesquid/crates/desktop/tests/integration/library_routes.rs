@@ -652,7 +652,18 @@ fn the_owner_picks_a_folder_in_the_hosts_dialog_and_the_app_sees_only_its_id() {
         .as_str()
         .expect("location")
         .to_string();
-    assert!(!choice.to_string().contains("Picked"), "{choice}");
+    assert_eq!(
+        choice["folder_name"], "Picked library",
+        "the folder's own name only (Task API-F2.31)"
+    );
+    let root = dir.to_string_lossy().to_string();
+    let parent = dir.file_name().expect("name").to_string_lossy().to_string();
+    assert!(!choice.to_string().contains(&root), "no path: {choice}");
+    assert!(
+        !choice.to_string().contains(&parent),
+        "no parent folder: {choice}"
+    );
+    assert!(choice["volume_name"].is_null() || choice["volume_name"].is_string());
     let (status, again) = desktop.post(
         "/api/v1/libraries/location-choices",
         json!({ "purpose": "open" }),
@@ -692,6 +703,16 @@ fn a_cancelled_or_unusable_pick_registers_nothing() {
     let locations = Arc::new(HostLocations::new(&dir.join("data")));
     let cancelled = DesktopChooser::new(locations.clone(), Box::new(ScriptedDialog(None)));
     assert_eq!(cancelled.choose(ChoicePurpose::Open), Ok(None));
+    let picked = dir.join("Family archive");
+    std::fs::create_dir_all(&picked).expect("folder");
+    std::fs::create_dir_all(dir.join("data")).expect("data dir");
+    let chooser = DesktopChooser::new(locations.clone(), Box::new(ScriptedDialog(Some(picked))));
+    let chosen = chooser
+        .choose(ChoicePurpose::Create)
+        .expect("chosen")
+        .expect("a folder");
+    assert!(chosen.location_id.starts_with("loc-"));
+    assert_eq!(chosen.names.folder_name.as_deref(), Some("Family archive"));
     let refused = DesktopChooser::new(locations, Box::new(ScriptedDialog(Some(file))));
     assert_eq!(
         refused.choose(ChoicePurpose::Create),
@@ -735,6 +756,7 @@ fn a_named_library_answers_its_facts_and_is_listed_as_recent_without_its_folder(
         !facts.to_string().contains(&path),
         "no folder path: {facts}"
     );
+    assert_eq!(facts["folder_name"], "Family archive", "{facts}");
     let rename = json!({ "library_id": library, "name": "Family archive 1990s" });
     let (status, renamed) = desktop.command("/api/v1/libraries/renames", rename);
     assert_eq!(status, 200, "{renamed}");
@@ -780,6 +802,40 @@ fn a_named_library_answers_its_facts_and_is_listed_as_recent_without_its_folder(
         !journal.contains("Family archive"),
         "no name in the journal"
     );
+}
+
+/// Task API-F2.31 (API-S-034, API-S-038): the facts name a library's folder while it can be
+/// reached, and answer no name once it has moved away; neither name is journaled.
+#[test]
+fn the_facts_name_the_library_folder_until_it_cannot_be_reached() {
+    let dir = fresh_dir("folder-names");
+    let desktop = Desktop::launch(dir.join("data"));
+    let folder = dir.join("Tax 2026");
+    std::fs::create_dir_all(&folder).expect("folder");
+    let location = desktop.register(&folder);
+    let body = json!({ "location_id": location, "name": "Taxes" });
+    let (status, created) = desktop.command("/api/v1/libraries", body);
+    assert_eq!(status, 200, "{created}");
+    let library = created["library_id"].as_str().expect("id").to_string();
+    let uri = format!("/api/v1/libraries/{library}/facts");
+    let (status, facts) = desktop.get(&uri);
+    assert_eq!(status, 200, "{facts}");
+    assert_eq!(facts["folder_name"], "Tax 2026", "{facts}");
+    let volume = facts["volume_name"].clone();
+    std::fs::rename(&folder, dir.join("Moved away")).expect("moved");
+    let (status, facts) = desktop.get(&uri);
+    assert_eq!(status, 200, "{facts}");
+    assert_eq!(facts.get("folder_name"), Some(&Value::Null), "{facts}");
+    assert_eq!(facts.get("volume_name"), Some(&Value::Null), "{facts}");
+    let (_, entries) = desktop.stop();
+    let journal = serde_json::to_string(&entries).expect("json");
+    assert!(
+        !journal.contains("Tax 2026"),
+        "no folder name in the journal"
+    );
+    if let Some(name) = volume.as_str() {
+        assert!(!journal.contains(name), "no volume name in the journal");
+    }
 }
 
 #[test]

@@ -2,6 +2,9 @@
 //! library's name at create, open and rename; `GET /api/v1/libraries/{library}/facts` with the
 //! free bytes of its volume or the reason they are unknown; and `GET /api/v1/libraries/recent`,
 //! readable libraries first, then at most 20 newest first, never a path or location ID.
+//! Task API-F2.31 (API-S-034 **Folder and volume names**): the facts name the library's folder
+//! and its volume where the host reads them (the desktop), `null` otherwise, and neither name
+//! is ever journaled.
 
 #[path = "../support/library_routes_fixture.rs"]
 mod library_routes_fixture;
@@ -11,7 +14,7 @@ use filesquid_api::auth::Principal;
 use filesquid_api::journal::{JournalEntry, Outcome};
 use filesquid_api::library::{LibraryCatalog, MemoryCatalog};
 use filesquid_api::local_library::{
-    FreeSpace, LibraryRegistry, CREATE_OPERATION, FACTS_OPERATION, RENAME_OPERATION,
+    FolderNames, FreeSpace, LibraryRegistry, CREATE_OPERATION, FACTS_OPERATION, RENAME_OPERATION,
     UNTITLED_LIBRARY,
 };
 use filesquid_api::navigation::{
@@ -156,6 +159,8 @@ async fn a_library_is_created_with_its_name_and_the_facts_answer_it() {
                 "free_bytes": 1_000_000,
                 "free_bytes_reason": null,
                 "revision": "1",
+                "folder_name": null,
+                "volume_name": null,
             })
         );
         assert_redacted(&rig, &[&answer], &["Family archive"]);
@@ -418,4 +423,85 @@ async fn a_name_given_on_open_that_replaces_another_is_journaled_as_a_rename() {
     assert_eq!(renames[0].target_ids, std::slice::from_ref(&library));
     assert_eq!(facts(&rig, &library).await.json()["name"], "Second name");
     assert_redacted(&rig, &[&answer], &["First name", "Second name"]);
+}
+
+// ---- Folder and volume names (Task API-F2.31) ----
+
+/// The names of a folder "Family archive" on the volume "Photos SSD".
+fn family_names() -> FolderNames {
+    FolderNames::safe(Some("Family archive"), Some("Photos SSD"))
+}
+
+#[tokio::test]
+async fn the_desktop_facts_name_the_library_folder_and_its_volume_and_never_journal_them() {
+    let rig = LibraryRig::new(Mount::Desktop);
+    let (library, location) = create_named(&rig, "family", "Archive").await;
+    rig.names
+        .lock()
+        .expect("names")
+        .insert(location.clone(), family_names());
+    let answer = facts(&rig, &library).await;
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.text());
+    assert_eq!(answer.json()["folder_name"], "Family archive");
+    assert_eq!(answer.json()["volume_name"], "Photos SSD");
+    let renamed = rename(&rig, &library, "Archive 1990s").await;
+    assert_eq!(renamed.status, StatusCode::OK, "{}", renamed.text());
+    assert_eq!(renamed.result()["folder_name"], "Family archive");
+    assert_eq!(renamed.result()["volume_name"], "Photos SSD");
+    assert_redacted(
+        &rig,
+        &[&answer, &renamed],
+        &["Family archive", "Photos SSD"],
+    );
+}
+
+#[tokio::test]
+async fn an_unreadable_volume_or_an_unreachable_folder_answers_null_names() {
+    let rig = LibraryRig::new(Mount::Desktop);
+    let (no_volume, location) = create_named(&rig, "a", "A").await;
+    let (unreachable, _) = create_named(&rig, "b", "B").await;
+    let names = FolderNames::safe(Some("Family archive"), None);
+    rig.names.lock().expect("names").insert(location, names);
+    let answer = facts(&rig, &no_volume).await;
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.text());
+    let json = answer.json();
+    assert_eq!(json.get("folder_name"), Some(&json!("Family archive")));
+    assert_eq!(json.get("volume_name"), Some(&Value::Null), "{json}");
+    assert_null_names(&facts(&rig, &unreachable).await);
+}
+
+/// Assert `answer` is a successful facts answer that carries both names as `null`: present
+/// and null, so an error body or an omitted field never passes for one.
+fn assert_null_names(answer: &Answer) {
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.text());
+    let json = answer.json();
+    assert_eq!(json.get("folder_name"), Some(&Value::Null), "{json}");
+    assert_eq!(json.get("volume_name"), Some(&Value::Null), "{json}");
+}
+
+#[tokio::test]
+async fn a_host_that_reads_no_names_answers_both_as_null() {
+    let rig = LibraryRig::new(Mount::Server);
+    let (library, location) = create_named(&rig, "family", "Archive").await;
+    rig.names
+        .lock()
+        .expect("names")
+        .insert(location, family_names());
+    assert_null_names(&facts(&rig, &library).await);
+    assert_eq!(
+        rig.registry.folder_names("loc-unknown"),
+        FolderNames::default()
+    );
+}
+
+#[test]
+fn folder_names_pass_the_safe_transformation_of_api_s_005() {
+    let names = FolderNames::safe(Some(" Tax\u{7}/2026 "), Some("\u{1b}"));
+    assert_eq!(names.folder_name.as_deref(), Some("Tax_2026"));
+    assert_eq!(
+        names.volume_name, None,
+        "nothing is left of the volume name"
+    );
+    assert_eq!(FolderNames::safe(None, None), FolderNames::default());
+    assert_eq!(names.clone().made_safe(), names, "safe twice is safe once");
 }

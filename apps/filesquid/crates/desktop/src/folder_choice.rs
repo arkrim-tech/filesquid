@@ -4,10 +4,15 @@
 //!
 //! The owner picks a folder in a native dialog that the host shows from Rust ([`RfdDialog`],
 //! the `rfd` crate, not a Tauri plugin, so the webview keeps no dialog permission, DE-S-002).
-//! The host registers the picked folder in its [`HostLocations`] and answers only the opaque
-//! location ID; the path never leaves the host (DE-S-006). One dialog is open at a time.
+//! The host registers the picked folder in its [`HostLocations`] and answers the opaque
+//! location ID with the folder's own name and its volume's name (Task API-F2.31; owner
+//! decision 2026-11-02), never the path or a parent folder, which never leave the host
+//! (DE-S-006). One dialog is open at a time.
 
-use filesquid_api::local_library::choice::{ChoicePurpose, ChooseError, LocationChooser};
+use filesquid_api::local_library::choice::{
+    ChoicePurpose, ChooseError, ChosenFolder, LocationChooser,
+};
+use filesquid_api::local_library::LibraryRegistry;
 use filesquid_native::HostLocations;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -105,15 +110,19 @@ impl DesktopChooser {
 }
 
 impl LocationChooser for DesktopChooser {
-    fn choose(&self, purpose: ChoicePurpose) -> Result<Option<String>, ChooseError> {
+    /// Show the dialog, register the picked folder and answer its location ID with the names
+    /// of the folder and its volume as the host reads them (API-S-034; Task API-F2.31).
+    fn choose(&self, purpose: ChoicePurpose) -> Result<Option<ChosenFolder>, ChooseError> {
         if self.open.swap(true, Ordering::SeqCst) {
             return Err(ChooseError::Busy);
         }
         let picked = self.dialog.pick(purpose);
         self.open.store(false, Ordering::SeqCst);
-        match picked? {
-            Some(folder) => self.register(&folder).map(Some),
-            None => Ok(None),
-        }
+        let Some(folder) = picked? else {
+            return Ok(None);
+        };
+        let location = self.register(&folder)?;
+        let names = self.locations.folder_names(&location);
+        Ok(Some(ChosenFolder::new(location, names)))
     }
 }

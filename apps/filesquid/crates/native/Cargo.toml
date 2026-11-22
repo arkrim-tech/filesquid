@@ -161,3 +161,8 @@ required-features = ["desktop"]
 name = "unit_recently_deleted_settings"
 path = "tests/unit/recently_deleted_settings.rs"
 required-features = ["desktop"]
+
+[[test]]
+name = "unit_folder_names"
+path = "tests/unit/folder_names.rs"
+required-features = ["desktop"]

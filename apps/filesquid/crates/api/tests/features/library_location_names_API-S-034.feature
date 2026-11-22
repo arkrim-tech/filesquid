@@ -6,7 +6,8 @@
 # journal entry, a refusal, an event or a log line.
 # Owner decision 2026-11-02, verbatim: "RE: 5 - the desktop user can see folder name and volume so
 # they can better manage their own private desktop".
-# Scenarios only; Task API-F2.31 adds their step definitions (unmatched steps are reported as skipped).
+# Bound by Task API-F2.31 (support/location_names_steps.rs) over the library-routes rig with a
+# scripted host dialog; the desktop host's own reader is covered by the desktop and native tests.
 Feature: The owner's library folder and volume names on the desktop
   As the owner of a desktop installation
   I want to see the name of the folder I chose and the volume it is on
