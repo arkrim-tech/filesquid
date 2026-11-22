@@ -1,0 +1,103 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+#
+# CodeRabbit's switches for FileSquid.
+#
+# CodeRabbit is one of the pull-request reviewers listed in
+# .agents/rules/pr-reviewers.md. This file holds only what is specific to CodeRabbit;
+# the guidance every reviewer follows is in REVIEW.md. CodeRabbit reads this file from
+# the branch under review, so a pull request that edits it is reviewed with its own
+# edits. Only the owner changes this file. Comment `@coderabbitai configuration` on a
+# pull request to see the settings CodeRabbit resolved for it.
+#
+# Every key below differs from CodeRabbit's default or is pinned on purpose. Anything not
+# listed stays at its default.
+
+language: en-US
+
+reviews:
+  # More feedback than the default `chill` profile.
+  profile: assertive
+
+  # A review that stops on an error fails the `CodeRabbit` check run instead of ending
+  # neutral, so "the check run succeeded" means "a review ran".
+  fail_commit_status: true
+
+  # List ignored files and suppressed comments on the pull request, so a reader can see
+  # that no changed file was left out of the review.
+  review_details: true
+
+  # No fortune message while a review runs.
+  in_progress_fortune: false
+
+  auto_review:
+    enabled: true
+    drafts: false
+    # Review every push.
+    auto_incremental_review: true
+    # The default pauses automatic reviews after 5 reviewed commits on a pull request.
+    # The review loop allows up to 10 rounds, so never pause.
+    auto_pause_after_reviewed_commits: 0
+
+  # No review guidance lives in this file. What to look for is in REVIEW.md at the
+  # repository root, which CodeRabbit reads by default together with AGENTS.md.
+
+  # Pass or fail checks reported with each review. Custom checks need a paid CodeRabbit
+  # plan; where the plan does not include them they do not run.
+  pre_merge_checks:
+    custom_checks:
+      - name: "No hosted workflow"
+        mode: error
+        instructions: |
+          Fail if the pull request adds or changes any file under `.github/workflows/`
+          or a file named `.gitlab-ci.yml`. Pass otherwise.
+      - name: "Owner-merge files"
+        mode: warning
+        instructions: |
+          Warn if the pull request changes any of: `AGENTS.md`, `REVIEW.md`, `.coderabbit.yaml`,
+          a file under `.agents/rules/` or `.agents/agents/`, `scripts/pre-commit.sh`,
+          `scripts/changed_scope.sh`, a file matching `scripts/verify_*.sh`, a file
+          under `scripts/lib/`, or a file under `resources/architecture/`. Name the
+          files and state that only the owner may merge this pull request. Pass
+          otherwise.
+      - name: "Hook summary line recorded"
+        mode: warning
+        instructions: |
+          Pass if the pull request description, or a file matching
+          `**/resources/tasks/*Walkthrough.md` changed in the pull request, contains the
+          text `All Pre-Commit Hooks Passed! Test scope:`. Warn otherwise.
+      - name: "Tests accompany source changes"
+        mode: warning
+        instructions: |
+          If the pull request changes a file under `apps/filesquid/crates/<crate>/src/`,
+          pass only if it also changes a file under that same crate's `tests/`
+          directory. If it changes a file under `apps/filesquid/ui/src/`, pass only if
+          it also changes a file under `apps/filesquid/ui/tests/`. If it changes a file
+          under `apps/imagesquid/src/`, pass only if it also changes a file under
+          `apps/imagesquid/tests/` or `apps/filesquid/ui/tests/` (during the MVP the
+          FileSquid UI suite guards ImageSquid's label and token tables). Pass when no
+          such source file changed. Otherwise warn and name the crate or package.
+      - name: "Task walkthrough present"
+        mode: warning
+        instructions: |
+          A task ID takes one of two forms. The first is capital letters, a hyphen and
+          a dotted identifier that may begin with a capital letter and may end with a
+          lowercase letter (for example `UI-F2.19`, `API-F2.30`, `IO-1.2`, `FS-2.4`,
+          `FS-C.3`, `UI-F2.1a`). The second is a bare dotted number after the word
+          `Task` (for example `Task 0.8`, whose ID is `0.8`). If the pull request title
+          contains a task ID, pass only if the pull request adds or changes a file
+          under a `resources/tasks/` directory named `Task-<ID>-Walkthrough.md` or
+          `Task-<ID>-<suffix>-Walkthrough.md`, and adds no file ending in `-Plan.md`
+          or `-ToDos.md`. The ID must be followed by a hyphen: for `UI-F2.1b`, both
+          `Task-UI-F2.1b-Walkthrough.md` and `Task-UI-F2.1b-part1-Walkthrough.md`
+          count; for `UI-F2.1`, `Task-UI-F2.10-Walkthrough.md` does not. Pass when the
+          title holds no task ID. Otherwise warn.
+
+knowledge_base:
+  code_guidelines:
+    enabled: true
+    # CodeRabbit already reads `AGENTS.md` and `REVIEW.md` by default. The binding rules live in
+    # `.agents/rules/`, which is not a default location. `applyTo` makes them apply to
+    # every file in the repository; a bare pattern would scope them to their own folder.
+    filePatterns:
+      - files: ".agents/rules/*.md"
+        applyTo: "**/*"
