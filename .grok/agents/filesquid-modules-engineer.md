@@ -1,1 +1,0 @@
-../../.agents/agents/filesquid-modules-engineer.md
