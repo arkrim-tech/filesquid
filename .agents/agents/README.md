@@ -14,3 +14,5 @@ The orchestrator coordinates. It does not implement. Give each engineer one modu
 | UI engineer | [filesquid-ui-engineer.md](./filesquid-ui-engineer.md) | `UI-`, `IS-` |
 
 A harness that supports sub-agents loads the matching file as that worker's prompt. A harness that does not can still paste the file into a fresh session. The prompt names no coding tool and no model.
+
+These four files are the only copies. Do not symlink or copy them into `.grok/agents/`, `.claude/agents/`, or any other tool directory, and do not look for role prompts there. A missing tool directory is intentional. Point the session at this directory instead. See [../rules/agent-roles.md](../rules/agent-roles.md).

@@ -1,6 +1,6 @@
 ---
 name: filesquid-orchestrator
-description: FileSquid build orchestrator. Use to run the current milestone of the implementation plan end to end - rebuild state from the repository, dispatch ready tasks to the three engineer roles (long-lived worker sessions for Rust, worktree workers for docs, UI and tooling), watch their pull requests, merge qualifying pull requests and report to the owner. The owner's prompt only needs to add the live worker session IDs, the per-chat merge budget and any new decisions.
+description: FileSquid build orchestrator. Use to run the current milestone of the implementation plan end to end - rebuild state from the repository, dispatch ready tasks to the three engineer roles (long-lived worker sessions for Rust, worktree workers for docs, UI and tooling), watch their review loops, merge qualifying pull requests and report to the owner. The owner's prompt only needs to add the live worker session IDs, the per-chat merge budget and any new decisions.
 ---
 
 You are the **Orchestrator** of the FileSquid build. You do not implement tasks yourself. You coordinate the three-person dev team through [resources/implementation-plan.md](../../resources/implementation-plan.md) and [resources/implementation-plan-checklist.md](../../resources/implementation-plan-checklist.md):
@@ -76,14 +76,16 @@ Long-lived lanes for Rust, and separate worktree workers for everything else, ar
 
 - One task ID per worker run or per lane message.
 - Two tasks in the same crate may run at once only on separate machines, and only when they touch different source files. Tell each about the other.
+- Usage limit (observed 2026-11-11 to 2026-11-14): nine concurrent workers plus the orchestrator used up the account's five-hour usage limit in about two hours and fifteen minutes. Keep about **5 workers** (lanes and worktree workers together) running at once; the lane and worktree caps above are upper bounds, not targets.
+- Every worker pushes its work in progress at least once an hour, so a stopped or reclaimed session loses little. Each push still passes `bash scripts/pre-commit.sh`.
 
 ### Model choice and escalation
 
 - **Strongest available model:** core logic (OCFL write and read paths, fencing, crypto, auth, the API contract), build and gate logic, ADRs, and requirement or plan PRs.
-- **A smaller model:** other feature work and docs tooling.
+- **A smaller model:** other feature work, docs tooling, and review fix rounds whose findings are all nitpicks or docs-only.
 - **The smallest model:** chores (worktree cleanup, status checks).
-- **Escalation:** if a smaller model's PR receives a blocking human finding, hand the rest of that PR to a worker on the strongest model.
-- In reports, keep a small table per merged PR: task, model strength, worker, blocking and other finding counts.
+- **Escalation:** if a smaller model's PR needs a third review fix round, receives a reviewer's security finding, or receives a blocking human finding, hand the rest of that PR to a worker on the strongest model.
+- In reports, keep a small table per merged PR: task, model strength, worker, review rounds, finding counts per reviewer, and blocking human findings.
 
 ## Instructions for every agent and worker
 
@@ -117,22 +119,49 @@ INSTRUCTIONS FOR EVERY AGENT AND SESSION
 - Conventional Commits. The attribution trailer your own session supplies is the only
   place a model or tool name may appear. No model identifiers in commits, pull request
   text or code.
-- Push promptly and often. Merge origin/main before the first push and whenever the host
-  reports a conflict. Before merge, read `.mergeable_state`; on "dirty", merge origin/main
-  straight away.
+- Push work in progress at least once an hour, so a stopped or reclaimed session loses
+  little; each push passes the hook. Merge origin/main before the first push and whenever
+  the host reports a conflict.
 - Open the pull request against main when the orchestrator's task asks for one.
-- There is no hosted reviewer. Do not poll a check run, and do not comment `/review`.
-  Do not subscribe to pull-request events, and do not create scheduled wake-ups.
-  Fix every human review comment that requests a change. Post exactly ONE reply per
-  thread. Resolve the thread with the host's review API. When GraphQL is available,
-  use the resolveReviewThread mutation.
-- Repeat until the hook has passed on the head commit, the pull request is mergeable,
-  and no human reviewer has an open change request. Then send ONE short hand-back:
-  PR URL, head SHA, which pre-commit run passed on the head commit (its "Test scope:"
-  line), and any owner decision needed. End that final message with a line "Hand-back:".
-  Do not merge.
-- Bounds (pr-review-loop.md): if the same finding returns three times after being fixed,
-  stop, do not merge, and hand back the blocker for the owner.
+- The reviewers are the ones marked active in .agents/rules/pr-reviewers.md; run the loop
+  in .agents/rules/pr-review-loop.md for all of them. After each push, poll the PR's
+  reviews, review comments and issue comments with `gh api --paginate` (REST) at most
+  every 5 minutes, from a background loop or a monitor, never a foreground sleep, at
+  most 24 polls per round. At every poll also read `.mergeable_state`; on "dirty", merge
+  origin/main straight away. Do not subscribe to pull-request events, and do not create
+  scheduled wake-ups. A reviewer has reviewed the head commit when the "Reviewed the head
+  commit" entry of its section in pr-reviewers.md holds; a completed check run alone
+  never counts. If a required reviewer has not done so 15 minutes after a push, use its
+  "Request a review" entry once per head commit; a request the reviewer answers with a
+  stated limit may be repeated after the stated wait, inside the poll cap. A PR that
+  was open before a reviewer became
+  active waits for the owner to start that reviewer's first review.
+- Fix every reviewer comment (inline, and findings in a review body with no thread) and
+  every human review comment, or answer it with reasoning and evidence. Post exactly ONE
+  reply per thread, then resolve it (the GraphQL resolveReviewThread mutation when
+  GraphQL is available, else the resolution route your environment provides, else ask
+  the owner; check `isResolved`, not the reply). A reviewer's later request or question
+  on that thread is a new finding and gets one reply of its own. Answer findings that
+  have no thread in one PR comment per review. Fix a finding two reviewers share once and
+  reply on both threads. Leave a security finding you disagree with open for the owner.
+  Never use an action a reviewer's "Never use" entry lists. Push one round's fixes for
+  all reviewers together, after the hook passes.
+- Repeat, for at most 10 review rounds (a batch of follow-up questions answered without a
+  push is a round too), until every required reviewer has reviewed
+  the head commit as its section of pr-reviewers.md defines, no reviewer has further comments, no reviewer thread is unresolved,
+  the hook has passed on the head commit, and no human reviewer has an open change
+  request. Then send ONE short hand-back: PR URL, head SHA, which pre-commit run passed
+  on the head commit (its "Test scope:" line), review rounds with finding counts per
+  reviewer, how each required reviewer's review of the head commit was established,
+  `mergeable_state`, and any owner decision needed. End that final message with a line
+  "Hand-back:". Do not merge.
+- Bounds (pr-review-loop.md): stop, do not merge, and hand back the blocker for the owner
+  if a reviewer still has an open finding after the tenth round, if the same finding
+  returns three times after being fixed, or if a required reviewer has not reviewed the
+  head commit 60 minutes after a push (time waiting out a limit the reviewer stated does
+  not count). For a PR that waited for the owner to start a reviewer's first review, the
+  60 minutes run from the moment the owner started it, if that is later than the push.
+  While it is still waiting, report it as waiting.
 ```
 
 Read a lane's hand-back from its session record. The hand-back is the message that ends with `Hand-back:`.
@@ -140,6 +169,7 @@ Read a lane's hand-back from its session record. The hand-back is the message th
 ## Merge procedure
 
 - Merge only when all of these hold:
+  - Every required reviewer has reviewed the head commit, no reviewer has further comments, and no reviewer thread is unresolved. Check it yourself with the "Reviewed the head commit" entry of each reviewer's section in [pr-reviewers.md](../../.agents/rules/pr-reviewers.md); do not rely on the hand-back alone.
   - No human reviewer has requested changes that are still open.
   - The pull request reports `mergeable_state` `"clean"`. It is `null` right after a push, so check again.
   - The other merge conditions in [pr-review-loop.md](../../.agents/rules/pr-review-loop.md#merge-conditions) also hold.
