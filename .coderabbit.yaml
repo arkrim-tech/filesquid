@@ -76,12 +76,15 @@ reviews:
       - name: "Task walkthrough present"
         mode: warning
         instructions: |
-          If the pull request title contains a task ID in the form of letters, a
-          hyphen, an optional `F` and a dotted number (for example `UI-F2.19`,
-          `API-F2.30`, `DE-F3.1`, `IO-1.2`, `FS-2.4`), pass only if the pull request adds
-          or changes a file named `Task-<that ID>-Walkthrough.md` under a
-          `resources/tasks/` directory and adds no file ending in `-Plan.md` or
-          `-ToDos.md`. Pass when the title holds no task ID. Otherwise warn.
+          A task ID is letters, a hyphen, an optional `F`, a dotted number and an
+          optional lowercase letter (for example `UI-F2.19`, `API-F2.30`, `DE-F3.1`,
+          `IO-1.2`, `FS-2.4`, `UI-F2.1a`). If the pull request title contains one,
+          pass only if the pull request adds or changes a file under a
+          `resources/tasks/` directory whose name starts with `Task-<that ID>` and
+          ends with `Walkthrough.md` (so `Task-UI-F2.1b-Walkthrough.md` and
+          `Task-UI-F2.1b-part1-Walkthrough.md` both count), and adds no file ending
+          in `-Plan.md` or `-ToDos.md`. Pass when the title holds no task ID.
+          Otherwise warn.
 
 knowledge_base:
   code_guidelines:
