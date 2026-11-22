@@ -98,6 +98,27 @@ FILESQUID_BIND=127.0.0.1:8083 FILESQUID_UI_DIR=ui/dist cargo run -p filesquid-se
 
 Open `http://127.0.0.1:8083`. Without `FILESQUID_UI_DIR` the server serves the API only. `FILESQUID_BIND` defaults to `127.0.0.1:8083`.
 
+## Run tests
+
+Lint and tests run locally through the pre-commit hook, not on a hosted service. [local-verification.md](./.agents/rules/local-verification.md) lists every gate. From the repository root:
+
+```sh
+bash scripts/pre-commit.sh           # the commit gate: runs the tests the change needs
+FULL=1 bash scripts/pre-commit.sh    # the full suite: the head commit of a pull request whose scope is full or includes rust:
+```
+
+A passing run ends with `All Pre-Commit Hooks Passed! Test scope: <scope>`.
+
+To run one suite by hand:
+
+```sh
+cd apps/filesquid
+cargo test -p filesquid-api --locked --test features    # the BDD feature tests of one crate
+cd ui
+npm test                                                # unit and UI tests (Vitest)
+npm run report                                          # writes the test report to tests/allure-report/
+```
+
 # License
 
 FileSquid and the ImageSquid distribution are licensed under the [MIT License](./LICENSE). Copyright (c) 2026 Pieter Van Garderen. See [COPYRIGHT](./COPYRIGHT). 
