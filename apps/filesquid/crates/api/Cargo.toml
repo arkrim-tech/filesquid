@@ -100,6 +100,10 @@ name = "unit_journal_query"
 path = "tests/unit/journal_query.rs"
 
 [[test]]
+name = "unit_journal_own"
+path = "tests/unit/journal_own.rs"
+
+[[test]]
 name = "unit_journal_coverage"
 path = "tests/unit/journal_coverage.rs"
 

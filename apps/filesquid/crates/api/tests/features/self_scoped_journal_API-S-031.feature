@@ -3,7 +3,9 @@
 # and redaction of the admin journal route, resolving names only for files the caller may read, and
 # grants none of the admin routes (ADR 033). On the desktop the caller is the owner.
 # Owner decision 2026-10-31, verbatim: "accept recommendations" (decision 3).
-# Scenarios only; Task API-F2.27 adds their step definitions (unmatched steps are reported as skipped).
+# Step definitions: tests/support/own_journal_steps.rs (Task API-F2.27). Server accounts arrive
+# later, so "ana" is the authoriser's owner principal under a policy that grants it nothing and
+# "ben" is the administrator; the journal names each by its principal's actor.
 Feature: Self-scoped journal route
   As a user who is not an administrator
   I want to read the record of my own activity
@@ -27,7 +29,15 @@ Feature: Self-scoped journal route
     When own-journal caller "ana" reads the self-scoped journal filtered by operation "file.upload" one page of 2 at a time
     Then own-journal pages should hold only "ana"'s file.upload entries, with no repeat or gap
 
+  Scenario: The caller cannot choose whose entries to read
+    When own-journal caller "ana" reads the self-scoped journal filtered by actor "ben"
+    Then own-journal answer should be refused as an invalid request naming the actor parameter
+
   # Error and privacy cases
+  Scenario: A call without an accepted credential is refused
+    When own-journal is read without a credential and with a credential the host does not accept
+    Then own-journal answers should be unauthorized and forbidden, with no entry
+
   Scenario: The self-scoped route grants no admin route
     When own-journal caller "ana" reads the admin journal
     Then own-journal answer should be refused as forbidden and journaled as api.auth.denied

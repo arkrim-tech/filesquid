@@ -11,10 +11,11 @@
 //! bypasses authentication.
 //!
 //! - **Deny by default.** A host that installed no [`Authoriser`] refuses every guarded call. An
-//!   authoriser grants only what its [`Policy`] explicitly permits, with one exception:
-//!   `host.read` ([`Action::ReadHost`], the host descriptor) is granted to every authenticated
-//!   caller whatever the policy says ([`Action::granted_to_every_credential`], API-S-020).
-//!   Authentication is still required for it.
+//!   authoriser grants only what its [`Policy`] explicitly permits, with two exceptions:
+//!   `host.read` ([`Action::ReadHost`], the host descriptor, API-S-020) and
+//!   `journal.read_own` ([`Action::ReadOwnJournal`], the caller's own journal entries,
+//!   API-S-031) are granted to every authenticated caller whatever the policy says
+//!   ([`Action::granted_to_every_credential`]). Authentication is still required for them.
 //! - **Credentials.** `Authorization: Bearer <token>` on any request, WebSocket upgrades
 //!   included; browsers, which cannot set headers on a WebSocket, offer the
 //!   `filesquid.bearer.<token>` subprotocol instead ([`presented_credential`]). A present but
