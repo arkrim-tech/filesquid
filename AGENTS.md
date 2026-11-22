@@ -6,6 +6,8 @@
 
 **CRITICAL INSTRUCTION** When the user deletes or revises a file (or a deletion/revision appears in the workspace or git status), do **not** assume it was accidental. Do **not** restore previous content or re-add removed files without first asking whether the change was intentional and should stick. Restore only after explicit user confirmation. Tactically enforced via [`.agents/rules/no-silent-restore.md`](./.agents/rules/no-silent-restore.md).
 
+**CRITICAL INSTRUCTION:** Role prompts live only in [`.agents/agents/`](./.agents/agents/README.md). Do not create, restore, symlink, or search `.grok/agents/`, `.claude/agents/`, or any other tool-specific agents directory. If a harness does not auto-load `.agents/agents/`, point the session at the files in that directory. Tactically enforced via [`.agents/rules/agent-roles.md`](./.agents/rules/agent-roles.md).
+
 ## 1. Test-driven development
 
 **Purpose:** Ensure that all code is well-tested which includes functional feature tests, unit tests integration tests, UI tests, and performance tests.
@@ -79,7 +81,7 @@
 **Purpose:** Ensure the project adheres to established industry standards for interoperability, requirements engineering, and documentation.
 
 - **Agent Skills 1.0:** The project template and agent tools comply with the Agent Skills 1.0 specification (including progressive disclosure, multi-tool support, and vendor neutrality). The framework principles are defined in [`.agents/kb/agent-skills-1.0.md`](./.agents/kb/agent-skills-1.0.md).
-- **Agent roles:** The build team is four Open Agent Format sub-agent definitions in [`.agents/agents/`](./.agents/agents/README.md): an orchestrator and the modules, platform, and UI engineers. A role is a worker with its own session. A skill in [`.agents/skills/`](./.agents/skills/) is a procedure a worker loads. Role files name no coding tool and no model.
+- **Agent roles:** The build team is four Open Agent Format sub-agent definitions in [`.agents/agents/`](./.agents/agents/README.md): an orchestrator and the modules, platform, and UI engineers. That directory is the only copy. Do not create or look for `.grok/agents/`, `.claude/agents/`, or another tool-specific agents directory. A role is a worker with its own session. A skill in [`.agents/skills/`](./.agents/skills/) is a procedure a worker loads. Role files name no coding tool and no model. Tactically enforced via [`agent-roles.md`](./.agents/rules/agent-roles.md).
 - **Conventional Commits:** All git commits MUST use the Conventional Commits format (`feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `chore:`). The exact formatting rules are located in [`.agents/kb/conventional-commits.md`](./.agents/kb/conventional-commits.md).
 - **ISO/IEC/IEEE 29148:** The Software Requirements Specification (SRS) MUST be Unambiguous, Complete, Verifiable, Consistent, and Traceable. Specific agent instructions for these criteria are defined in [`.agents/kb/iso-29148-srs.md`](./.agents/kb/iso-29148-srs.md).
 - **ISO/IEC/IEEE 42010:** Architecture Decision Records (ADRs) MUST include the 9 specific information items required by the ISO 42010 standard for architecture descriptions as defined in [`.agents/kb/iso-42010-adr.md`](./.agents/kb/iso-42010-adr.md). ADR location, naming, and formatting rules are tactically enforced via [`adr-formatting.md`](./.agents/rules/adr-formatting.md).
