@@ -36,7 +36,7 @@ Only the owner edits this section. It is updated after the owner's manual testin
 ## The loop
 
 1. **Open the PR.** When a task is complete and the head-commit hook run required by its scope passes (`FULL=1 bash scripts/pre-commit.sh`, summary line `Test scope: full`, when the PR's change scope is `full` or includes `rust:`; a passing ordinary `bash scripts/pre-commit.sh` when it is `docs` or npm-only; see [local-verification.md](./local-verification.md#change-aware-test-scope)), push the task branch and open a pull request against `main`. Follow [pr-documentation-update.md](./pr-documentation-update.md) first.
-2. **Wait for every active reviewer's review of the head commit.** Each reviewer starts its reviews as the "Starts" entry of its section in [pr-reviewers.md](./pr-reviewers.md) says. After each push, poll the PR over REST:
+2. **Wait for every required reviewer's review of the head commit.** A reviewer is required when [pr-reviewers.md](./pr-reviewers.md) marks it "Required before merge"; findings from any other active reviewer are answered in step 3, but nothing waits for them. Each reviewer starts its reviews as the "Starts" entry of its section in [pr-reviewers.md](./pr-reviewers.md) says. After each push, poll the PR over REST:
    - `gh api --paginate repos/<owner>/<repo>/pulls/<n>/reviews`: reviews by each reviewer's account. Each names the commit it reviewed in `commit_id`, and its body can carry findings that have no thread.
    - `gh api --paginate repos/<owner>/<repo>/pulls/<n>/comments`: the reviewers' inline comments and their replies on threads.
    - `gh api --paginate repos/<owner>/<repo>/issues/<n>/comments`: the reviewers' summary comments and status notes.
@@ -46,7 +46,7 @@ Only the owner edits this section. It is updated after the owner's manual testin
 
    Poll at most once every 5 minutes and at most 24 polls per round, from a background loop or a monitor tool, never a foreground `sleep`. Agents MUST NOT subscribe to PR activity or create scheduled triggers, wake-ups or check-ins for the loop (owner decision, 2026-10-18).
    - A reviewer has reviewed the head commit when the "Reviewed the head commit" entry of its section holds. A completed check run or commit status never counts by itself.
-   - If a reviewer has not done so 15 minutes after the push, use the "Request a review" entry of its section, at most once per head commit and per reviewer. When its "Limits" entry names a wait, wait that long first.
+   - If a required reviewer has not done so 15 minutes after the push, use the "Request a review" entry of its section, at most once per head commit and per reviewer. When its "Limits" entry names a wait, wait that long first.
 3. **Fix every reviewer comment.** Every finding from every active reviewer counts: inline comments, findings that sit in a review body with no thread, and any reviewer reply on a thread that asks for more. For each:
    - Fix it in code or documentation, following every other rule in `.agents/rules/` (TDD, lint, docs, links).
    - If the finding is wrong, answer it with the reasoning and evidence. Never dismiss a finding silently.

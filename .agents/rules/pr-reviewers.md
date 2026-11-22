@@ -26,7 +26,7 @@ Reviewers' product names may appear in this file, in pull request text and in th
 
 ## What reviewers are asked to look for
 
-[`REVIEW.md`](../../REVIEW.md) at the repository root holds the review guidance, written for any reviewer. Both active reviewers read it from the pull request's branch without further configuration, together with `AGENTS.md`. A reviewer's own configuration holds only that reviewer's switches, never review guidance.
+[`REVIEW.md`](../../REVIEW.md) at the repository root holds the review guidance, written for any reviewer. Both active reviewers read it from the pull request's branch without further configuration, together with `AGENTS.md`: CodeRabbit's published configuration schema lists `**/REVIEW.md` and `**/AGENTS.md` among the default patterns of `knowledge_base.code_guidelines.filePatterns`, and GitHub documents both file names for Copilot code review. A reviewer's own configuration holds only that reviewer's switches, never review guidance.
 
 ## Sections every reviewer has
 

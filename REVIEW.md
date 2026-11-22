@@ -8,7 +8,7 @@ The binding project rules are [AGENTS.md](./AGENTS.md) and every file in [`.agen
 
 - Follow each changed call into the unchanged code it reaches before concluding. Report a defect that only shows across functions or files.
 - Hiding or removing something that existed before is a behaviour change. Say which user action or check is no longer reachable.
-- A pull request that changes `AGENTS.md`, `REVIEW.md`, a reviewer's configuration, a file under `.agents/rules/` or `.agents/agents/`, a gate script under `scripts/`, or a file under `resources/architecture/` is for the owner to merge. Say so.
+- Some pull requests are never merged by an agent: the list is the "Never self-merge" entry of the orchestrator's [merge procedure](./.agents/agents/filesquid-orchestrator.md#merge-procedure). This file and each reviewer's configuration belong to the owner in the same way ([pr-reviewers.md](./.agents/rules/pr-reviewers.md)). When a pull request touches one of those, say that it is for the owner to merge.
 - A pull request MUST NOT add a file under `.github/workflows/` or a `.gitlab-ci.yml`.
 
 ## Rust crates: `apps/filesquid/crates/**/src/**`
@@ -51,7 +51,8 @@ Judge whether each test would fail if the feature were broken.
 
 Check the walkthrough's claims against the diff in the same pull request.
 
-- It holds raw test output, a coverage report, and the pre-commit summary line `Test scope: <scope>` for the head commit.
+- It holds the raw output of the test runs it reports, and a coverage report when a test suite ran. A docs-only run that skipped the suites needs neither.
+- The pre-commit summary line `Test scope: <scope>` for the head commit is in the walkthrough or in the pull request description. Either place is enough.
 - A suite that was not run is named as not run. A failing run is not described as passing, or waved through as pre-existing without evidence.
 - Every "tested" or "covered" claim has a matching test in the diff.
 - Every documented command appears to have been executed in the environment the walkthrough shows.
