@@ -71,20 +71,26 @@ reviews:
           If the pull request changes a file under `apps/filesquid/crates/<crate>/src/`,
           pass only if it also changes a file under that same crate's `tests/`
           directory. If it changes a file under `apps/filesquid/ui/src/`, pass only if
-          it also changes a file under `apps/filesquid/ui/tests/`. Pass when no such
-          source file changed. Otherwise warn and name the crate or package.
+          it also changes a file under `apps/filesquid/ui/tests/`. If it changes a file
+          under `apps/imagesquid/src/`, pass only if it also changes a file under
+          `apps/imagesquid/tests/` or `apps/filesquid/ui/tests/` (during the MVP the
+          FileSquid UI suite guards ImageSquid's label and token tables). Pass when no
+          such source file changed. Otherwise warn and name the crate or package.
       - name: "Task walkthrough present"
         mode: warning
         instructions: |
-          A task ID is letters, a hyphen, an optional `F`, a dotted number and an
-          optional lowercase letter (for example `UI-F2.19`, `API-F2.30`, `DE-F3.1`,
-          `IO-1.2`, `FS-2.4`, `UI-F2.1a`). If the pull request title contains one,
-          pass only if the pull request adds or changes a file under a
-          `resources/tasks/` directory whose name starts with `Task-<that ID>` and
-          ends with `Walkthrough.md` (so `Task-UI-F2.1b-Walkthrough.md` and
-          `Task-UI-F2.1b-part1-Walkthrough.md` both count), and adds no file ending
-          in `-Plan.md` or `-ToDos.md`. Pass when the title holds no task ID.
-          Otherwise warn.
+          A task ID takes one of two forms. The first is capital letters, a hyphen and
+          a dotted identifier that may begin with a capital letter and may end with a
+          lowercase letter (for example `UI-F2.19`, `API-F2.30`, `IO-1.2`, `FS-2.4`,
+          `FS-C.3`, `UI-F2.1a`). The second is a bare dotted number after the word
+          `Task` (for example `Task 0.8`, whose ID is `0.8`). If the pull request title
+          contains a task ID, pass only if the pull request adds or changes a file
+          under a `resources/tasks/` directory named `Task-<ID>-Walkthrough.md` or
+          `Task-<ID>-<suffix>-Walkthrough.md`, and adds no file ending in `-Plan.md`
+          or `-ToDos.md`. The ID must be followed by a hyphen: for `UI-F2.1b`, both
+          `Task-UI-F2.1b-Walkthrough.md` and `Task-UI-F2.1b-part1-Walkthrough.md`
+          count; for `UI-F2.1`, `Task-UI-F2.10-Walkthrough.md` does not. Pass when the
+          title holds no task ID. Otherwise warn.
 
 knowledge_base:
   code_guidelines:
