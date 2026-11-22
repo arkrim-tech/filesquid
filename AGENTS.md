@@ -6,6 +6,8 @@
 
 **CRITICAL INSTRUCTION** When the user deletes or revises a file (or a deletion/revision appears in the workspace or git status), do **not** assume it was accidental. Do **not** restore previous content or re-add removed files without first asking whether the change was intentional and should stick. Restore only after explicit user confirmation. Tactically enforced via [`.agents/rules/no-silent-restore.md`](./.agents/rules/no-silent-restore.md).
 
+**CRITICAL INSTRUCTION:** Role prompts live only in [`.agents/agents/`](./.agents/agents/README.md). Do not create, restore, symlink, or search `.grok/agents/`, `.claude/agents/`, or any other tool-specific agents directory. If a harness does not auto-load `.agents/agents/`, point the session at the files in that directory. Tactically enforced via [`.agents/rules/agent-roles.md`](./.agents/rules/agent-roles.md).
+
 ## 1. Test-driven development
 
 **Purpose:** Ensure that all code is well-tested which includes functional feature tests, unit tests integration tests, UI tests, and performance tests.
@@ -19,7 +21,7 @@
 - **Walkthrough Documentation:** When executing tests, the agent MUST copy the raw CLI output of the test runs into a permanent `apps/[Module Name]/resources/tasks/Task-[Task ID]-Walkthrough.md` file to provide immediate visual proof of passing tests, in addition to generating the structured test reports.
 - **Unit Test Traceability:** When code changes make a unit test obsolete or require modifications to the underlying implementation, the agent MUST explicitly update, refactor, or remove the corresponding unit tests to remain in sync with the source code.
 - **Strict Artifact Isolation:** This principle is tactically enforced on all AI agents via the instructions in `[artifact-isolation.md](./.agents/rules/artifact-isolation.md)`.
-- **PR Review Mandate:** Pull requests are opened against `main` and merged through [`pr-review-loop.md`](./.agents/rules/pr-review-loop.md). There is no hosted reviewer (owner decision, 2026-11-14: the AI PR Agent workflow was removed). Agents do not poll a check run and do not wait for a bot comment. Fix any human review comment that requests a change. For tasks inside the current milestone, agents MAY then merge their own PR into the main branch, and they stop for the owner's manual testing review once the milestone's gate task is merged. The owner sets each milestone in the "Current milestone" section of the rule.
+- **PR Review Mandate:** Pull requests are opened against `main` and merged through [`pr-review-loop.md`](./.agents/rules/pr-review-loop.md). Pull requests are reviewed by the external reviewers listed in [`pr-reviewers.md`](./.agents/rules/pr-reviewers.md), which run from no hosted workflow; that file is the only place that names them, and [`REVIEW.md`](./REVIEW.md) tells any reviewer what to look for. Agents fix or answer every reviewer and human review comment, and the loop in that rule repeats until no active reviewer has further comments, for at most 10 review rounds. For tasks inside the current milestone, agents MAY then merge their own PR into the main branch, and they stop for the owner's manual testing review once the milestone's gate task is merged. The owner sets each milestone in the "Current milestone" section of the rule.
 
 ## 2. Branch-Per-Task
 
@@ -43,7 +45,7 @@
 
 **Purpose:** Keep every quality gate fast, deterministic and under the developer's control. Lint and tests run locally through the repository's pre-commit hook before a push. GitHub Actions is slow and unreliable for those gates, so they stay local. There is no hosted workflow.
 
-- **Quality gates stay local:** Agents MUST NOT move lint, tests, or any other quality gate into GitHub Actions or any other hosted CI. A pull request needs the local hook, and human review where the review loop requires it.
+- **Quality gates stay local:** Agents MUST NOT move lint, tests, or any other quality gate into GitHub Actions or any other hosted CI. A pull request needs the local hook, the external review loop, and human review where the review loop requires it.
 - **No hosted workflow:** Do not add a GitHub Actions workflow or `.gitlab-ci.yml`. The pull-request reviewer workflow was removed on 2026-11-14. If a workflow appears, remove it.
 - **Pre-commit is the gate:** `scripts/pre-commit.sh` runs the branch, port, document-sync, traceability, link, workspace-boundary, logging, formatting, documentation and lint/test verifiers. A commit that fails the hook MUST NOT be pushed.
 - **Active Enforcement:** This principle is tactically enforced on all AI agents via the instructions in `[local-verification.md](./.agents/rules/local-verification.md)`.
@@ -79,7 +81,7 @@
 **Purpose:** Ensure the project adheres to established industry standards for interoperability, requirements engineering, and documentation.
 
 - **Agent Skills 1.0:** The project template and agent tools comply with the Agent Skills 1.0 specification (including progressive disclosure, multi-tool support, and vendor neutrality). The framework principles are defined in [`.agents/kb/agent-skills-1.0.md`](./.agents/kb/agent-skills-1.0.md).
-- **Agent roles:** The build team is four Open Agent Format sub-agent definitions in [`.agents/agents/`](./.agents/agents/README.md): an orchestrator and the modules, platform, and UI engineers. A role is a worker with its own session. A skill in [`.agents/skills/`](./.agents/skills/) is a procedure a worker loads. Role files name no coding tool and no model.
+- **Agent roles:** The build team is four Open Agent Format sub-agent definitions in [`.agents/agents/`](./.agents/agents/README.md): an orchestrator and the modules, platform, and UI engineers. That directory is the only copy. Do not create or look for `.grok/agents/`, `.claude/agents/`, or another tool-specific agents directory. A role is a worker with its own session. A skill in [`.agents/skills/`](./.agents/skills/) is a procedure a worker loads. Role files name no coding tool and no model. Tactically enforced via [`agent-roles.md`](./.agents/rules/agent-roles.md).
 - **Conventional Commits:** All git commits MUST use the Conventional Commits format (`feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `chore:`). The exact formatting rules are located in [`.agents/kb/conventional-commits.md`](./.agents/kb/conventional-commits.md).
 - **ISO/IEC/IEEE 29148:** The Software Requirements Specification (SRS) MUST be Unambiguous, Complete, Verifiable, Consistent, and Traceable. Specific agent instructions for these criteria are defined in [`.agents/kb/iso-29148-srs.md`](./.agents/kb/iso-29148-srs.md).
 - **ISO/IEC/IEEE 42010:** Architecture Decision Records (ADRs) MUST include the 9 specific information items required by the ISO 42010 standard for architecture descriptions as defined in [`.agents/kb/iso-42010-adr.md`](./.agents/kb/iso-42010-adr.md). ADR location, naming, and formatting rules are tactically enforced via [`adr-formatting.md`](./.agents/rules/adr-formatting.md).
