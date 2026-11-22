@@ -46,7 +46,7 @@ Only the owner edits this section. It is updated after the owner's manual testin
 
    Poll at most once every 5 minutes and at most 24 polls per round, from a background loop or a monitor tool, never a foreground `sleep`. Agents MUST NOT subscribe to PR activity or create scheduled triggers, wake-ups or check-ins for the loop (owner decision, 2026-10-18).
    - A reviewer has reviewed the head commit when the "Reviewed the head commit" entry of its section holds. A completed check run or commit status never counts by itself.
-   - If a required reviewer has not done so 15 minutes after the push, use the "Request a review" entry of its section, at most once per head commit and per reviewer. When its "Limits" entry names a wait, wait that long first.
+   - If a required reviewer has not done so 15 minutes after the push, use the "Request a review" entry of its section, once per head commit and per reviewer. A request that the reviewer answers with a stated limit, for example a rate limit, does not use up that one request: wait as its "Limits" entry says, then request again. These retries stay inside the 24-poll cap of the round.
 3. **Fix every reviewer comment.** Every finding from every active reviewer counts: inline comments, findings that sit in a review body with no thread, and any reviewer reply on a thread that asks for more. For each:
    - Fix it in code or documentation, following every other rule in `.agents/rules/` (TDD, lint, docs, links).
    - If the finding is wrong, answer it with the reasoning and evidence. Never dismiss a finding silently.
@@ -78,11 +78,11 @@ Use a merge commit (the repository's existing convention), then delete the task 
 
 ## Bound
 
-The loop is capped at **10 review rounds** per PR (`AGENTS.md` §22). Owner decision, 2026-11-14, verbatim: "add back your 10 review loop maximum rather than my "as many times as necessary"". It amends "as many times as necessary" in the decision quoted above. A round is one head commit on which at least one active reviewer raised a finding, and the agent's fixes or answers to those findings. The loop stops in these cases. Do not merge; report to the owner what is still open and why.
+The loop is capped at **10 review rounds** per PR (`AGENTS.md` §22). Owner decision, 2026-11-14, verbatim: "add back your 10 review loop maximum rather than my "as many times as necessary"". It amends "as many times as necessary" in the decision quoted above. A round is one batch of findings from the active reviewers and the agent's fixes or answers to it. A batch that arrives as follow-up requests or questions on answered threads counts as a round even when the head commit does not change. The loop stops in these cases. Do not merge; report to the owner what is still open and why.
 
 - A reviewer still has an open finding after the tenth round.
 - The same finding returns three times after being fixed.
-- A required reviewer has not reviewed the head commit 60 minutes after a push, the one review request included. Time spent waiting out a limit that the reviewer itself stated does not count. This does not apply to a PR that is still waiting for the owner to start a reviewer's first review; report that PR as waiting.
+- A required reviewer has not reviewed the head commit 60 minutes after a push, review requests included. Time spent waiting out a limit that the reviewer itself stated does not count toward the 60 minutes; the 24-poll cap below still applies. This does not apply to a PR that is still waiting for the owner to start a reviewer's first review; report that PR as waiting.
 - The 24-poll cap of a round is reached without a review of the head commit by every required reviewer.
 
 ## MUST NOT

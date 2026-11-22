@@ -54,7 +54,7 @@ Check the walkthrough's claims against the diff in the same pull request.
 - It holds the raw output of the test runs it reports, and a coverage report when a test suite ran. A docs-only run that skipped the suites needs neither.
 - The pre-commit summary line `Test scope: <scope>` for the head commit is in the walkthrough or in the pull request description. Either place is enough.
 - A suite that was not run is named as not run. A failing run is not described as passing, or waved through as pre-existing without evidence.
-- Every "tested" or "covered" claim has a matching test in the diff.
+- Every "tested" or "covered" claim has a matching test, in the diff or already in the repository.
 - Every documented command appears to have been executed in the environment the walkthrough shows.
 - Tests were written before the implementation. Flag a statement that they were not.
 - No absolute machine path appears.

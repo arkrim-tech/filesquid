@@ -131,8 +131,10 @@ INSTRUCTIONS FOR EVERY AGENT AND SESSION
   origin/main straight away. Do not subscribe to pull-request events, and do not create
   scheduled wake-ups. A reviewer has reviewed the head commit when the "Reviewed the head
   commit" entry of its section in pr-reviewers.md holds; a completed check run alone
-  never counts. If a reviewer has not done so 15 minutes after a push, use its "Request
-  a review" entry once per head commit. A PR that was open before a reviewer became
+  never counts. If a required reviewer has not done so 15 minutes after a push, use its
+  "Request a review" entry once per head commit; a request the reviewer answers with a
+  stated limit may be repeated after the stated wait, inside the poll cap. A PR that
+  was open before a reviewer became
   active waits for the owner to start that reviewer's first review.
 - Fix every reviewer comment (inline, and findings in a review body with no thread) and
   every human review comment, or answer it with reasoning and evidence. Post exactly ONE
@@ -144,7 +146,8 @@ INSTRUCTIONS FOR EVERY AGENT AND SESSION
   reply on both threads. Leave a security finding you disagree with open for the owner.
   Never use an action a reviewer's "Never use" entry lists. Push one round's fixes for
   all reviewers together, after the hook passes.
-- Repeat, for at most 10 review rounds, until every required reviewer's latest review is
+- Repeat, for at most 10 review rounds (a batch of follow-up questions answered without a
+  push is a round too), until every required reviewer's latest review is
   of the head commit, no reviewer has further comments, no reviewer thread is unresolved,
   the hook has passed on the head commit, and no human reviewer has an open change
   request. Then send ONE short hand-back: PR URL, head SHA, which pre-commit run passed
