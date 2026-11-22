@@ -129,6 +129,14 @@ path = "tests/integration/range_fixture.rs"
 required-features = ["test-webdriver"]
 
 [[test]]
+name = "integration_distribution_overlay"
+path = "tests/integration/distribution_overlay.rs"
+
+[[test]]
+name = "integration_linked_inventory"
+path = "tests/integration/linked_inventory.rs"
+
+[[test]]
 name = "features"
 path = "tests/features.rs"
 required-features = ["test-webdriver"]
