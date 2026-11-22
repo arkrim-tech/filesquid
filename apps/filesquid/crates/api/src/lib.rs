@@ -80,14 +80,14 @@ pub mod replica;
 mod routes;
 pub mod trace_layer;
 
-pub use error::{ApiError, DenialReason, ErrorCode};
+pub use error::{ApiError, DenialReason, ErrorCode, SubCode};
 pub use events::{ApiEvent, EventBus, EventFilter, EventSubscription};
 pub use routes::{route_actions, routed_paths, router, Liveness};
 
 use std::sync::{Arc, OnceLock};
 
 /// Version of the FileSquid API contract. Bumped when the contract changes.
-pub const API_VERSION: &str = "0.37.0";
+pub const API_VERSION: &str = "0.39.0";
 
 /// URL prefix shared by every API route.
 pub const API_PREFIX: &str = "/api/v1";

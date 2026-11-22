@@ -290,7 +290,8 @@ async fn the_deleted_view_lists_only_deleted_files_and_other_views_wait() {
         every_name(&rig, &drive.library_node(), "&view=deleted").await,
         ["Alpha.jpg"]
     );
-    for view_name in ["home", "recent", "favorites", "shares", "tags", "personal"] {
+    // Recent is served since Task API-F2.21 (`integration_row_facts`); the rest still wait.
+    for view_name in ["home", "favorites", "shares", "tags", "personal"] {
         let answer = view(&rig, &drive.library_node(), &format!("&view={view_name}")).await;
         assert_error(&answer, 400, "invalid_request");
     }

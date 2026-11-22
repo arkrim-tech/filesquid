@@ -29,13 +29,26 @@ import {
 import { formatLabel } from "../../src/theme/labels";
 import labels from "../../src/theme/labels.en.json";
 
-const repo: NavigationNode = { node: "r", kind: "repository", name: null, has_children: true };
-const family: NavigationNode = { node: "l1", kind: "library", name: "Family", has_children: true };
+const repo: NavigationNode = {
+  node: "r",
+  kind: "repository",
+  name: null,
+  has_children: true,
+  collection_id: null,
+};
+const family: NavigationNode = {
+  node: "l1",
+  kind: "library",
+  name: "Family",
+  has_children: true,
+  collection_id: null,
+};
 const photos: NavigationNode = {
   node: "c1",
   kind: "collection",
   name: "Photos",
   has_children: true,
+  collection_id: "c1",
 };
 
 describe("readStoredPreferences (UI-S-017)", () => {

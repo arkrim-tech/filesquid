@@ -457,7 +457,15 @@ describe("<fs-search-bar> Location choices", () => {
   it("stops after ten pages of collections, however long the listing goes on", async () => {
     const { element } = mountBar();
     const list = vi.fn(async () => ({
-      nodes: [{ node: "c", kind: "collection" as const, name: "Same", has_children: false }],
+      nodes: [
+        {
+          node: "c",
+          kind: "collection" as const,
+          name: "Same",
+          has_children: false,
+          collection_id: "c",
+        },
+      ],
       ancestors: [],
       next_cursor: "more",
     }));

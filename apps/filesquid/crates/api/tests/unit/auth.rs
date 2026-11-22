@@ -134,7 +134,8 @@ fn protected_paths() -> Vec<String> {
 /// through the router in `integration_files`, `integration_content_handles` and
 /// `integration_library_routes`, the client-events route, which needs a body, and the journal
 /// entry route, which needs a stored entry's ID (both tested in `unit_client_events` and
-/// `unit_journal_query`).
+/// `unit_journal_query`), and the navigation destination route, which needs a node (tested
+/// in `integration_navigation`).
 fn plain_get_paths() -> Vec<String> {
     route_actions()
         .into_iter()
@@ -154,6 +155,7 @@ fn plain_get_paths() -> Vec<String> {
         })
         .map(|(path, _)| path)
         .filter(|path| !path.contains("{entry}") && !path.contains("{job}"))
+        .filter(|path| path != "/api/v1/navigation/destination")
         .collect()
 }
 
@@ -393,7 +395,7 @@ fn every_routed_path_declares_its_action() {
             | "/api/v1/libraries/recent"
             | "/api/v1/settings/recently-deleted" => Action::ReadLibraries,
             "/api/v1/libraries/repairs" => Action::RepairLibraries,
-            "/api/v1/navigation" => Action::ReadNavigation,
+            "/api/v1/navigation" | "/api/v1/navigation/destination" => Action::ReadNavigation,
             "/api/v1/preferences" => Action::ManagePreferences,
             "/api/v1/client-events" => Action::RecordClientEvents,
             "/api/v1/jobs" | "/api/v1/jobs/{job}" | "/api/v1/jobs/{job}/items" => Action::ReadJobs,

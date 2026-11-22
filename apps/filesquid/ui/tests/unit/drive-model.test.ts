@@ -51,6 +51,10 @@ describe("driveRow", () => {
       kind: "file",
       file_id: "f1",
       object_id: "urn:uuid:f1",
+      library_id: "lib",
+      version: "v1",
+      collection_id: null,
+      collection_title: null,
       display_name: "a.pdf",
       media_type: "application/pdf",
       size: 5,
@@ -67,7 +71,16 @@ describe("driveRow", () => {
     });
   });
   it("maps a folder row to its node handle", () => {
-    const row: ViewRow = { kind: "folder", node: "c1", node_kind: "collection", name: "Photos" };
+    const row: ViewRow = {
+      kind: "folder",
+      node: "c1",
+      node_kind: "collection",
+      name: "Photos",
+      collection_id: "c1",
+      files: 0,
+      bytes: 0,
+      count_complete: true,
+    };
     expect(driveRow(row)).toMatchObject({ key: "c1", kind: "folder", node: "c1", name: "Photos" });
   });
 });

@@ -27,6 +27,7 @@ const node = (id: string, kind: NavigationNode["kind"], name: string | null): Na
   kind,
   name,
   has_children: true,
+  collection_id: null,
 });
 
 describe("firstLibraryScope", () => {

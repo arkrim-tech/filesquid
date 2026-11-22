@@ -379,13 +379,26 @@ function compareEntries(a: Entry, b: Entry, sort: string, direction: string): nu
 /** The row of an entry in the contract's shape. */
 function toRow(entry: Entry): ViewRow {
   if (entry.folder) {
-    return { kind: "folder", node: entry.key, node_kind: "collection", name: entry.name };
+    return {
+      kind: "folder",
+      node: entry.key,
+      node_kind: "collection",
+      name: entry.name,
+      collection_id: entry.key,
+      files: 0,
+      bytes: 0,
+      count_complete: true,
+    };
   }
   const id = `00000000-0000-4000-8000-${entry.key.replace(/\D/g, "").padStart(12, "0").slice(-12)}`;
   return {
     kind: "file",
     file_id: id,
     object_id: `urn:uuid:${id}`,
+    library_id: "00000000-0000-4000-8000-000000000001",
+    version: "v1",
+    collection_id: null,
+    collection_title: null,
     display_name: entry.name,
     media_type: entry.mediaType,
     size: entry.size,

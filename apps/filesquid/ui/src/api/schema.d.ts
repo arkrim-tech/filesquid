@@ -626,9 +626,29 @@ export interface paths {
         };
         /**
          * List one level of the navigation tree
-         * @description One level of the tree a UI shows as its navigation and breadcrumb (API-S-021). Without node: the host's one repository. With node: that node's children - a repository's libraries, then its one `recently_deleted` node (Task API-F2.15; a filter over the deleted files of every library this host has opened, `name` null, `has_children` false); a library's collections, then its virtual collections (no file is ever unfiled); a collection's folders; a folder's subfolders; nothing under a virtual collection; never files. A folder exists only when committed ordinary files imply it, so one implied only by hidden or deleted files is not listed. Every node carries an opaque handle (at most 512 bytes, never a path, storage key, SQL or token), its kind, its name and has_children (true only when the caller may read a child). ancestors holds the nodes from the repository down to and including the listed node, for the breadcrumb. Paging: limit 1-1000 (default 200) and an opaque cursor, in a stable order - the fixed kind order library, collection, virtual_collection, folder; libraries, collections and virtual collections in catalog order; folders by name in Unicode code-point order; no repeat or gap across pages. A page may hold fewer nodes than limit while next_cursor is present (nodes the caller may not read are skipped); keep following next_cursor until it is null. Only nodes the caller may read are listed, counted or named in an ancestor trail; an unknown node and one the caller may not read, or one under an unreadable ancestor, get the same 404 not_found. A folder whose handle would exceed 512 bytes cannot be named and is not listed. A malformed cursor, a cursor of another level, a limit outside 1-1000 or an unknown parameter answers 400 invalid_request. A successful read is not journaled; a refusal is journaled once as navigation.list (API-S-017). Subscribe to navigation.change on the event channel to know when to read a level again.
+         * @description One level of the tree a UI shows as its navigation and breadcrumb (API-S-021). Without node: the host's one repository. With node: that node's children - a repository's libraries, then its one `recently_deleted` node (Task API-F2.15; a filter over the deleted files of every library this host has opened, `name` null, `has_children` false); a library's collections, then its virtual collections (no file is ever unfiled); a collection's folders; a folder's subfolders; nothing under a virtual collection; never files. A folder exists only when committed ordinary files imply it, so one implied only by hidden or deleted files is not listed. Every node carries an opaque handle (at most 512 bytes, never a path, storage key, SQL or token), its kind, its name, has_children (true only when the caller may read a child) and collection_id (the collection of a collection node or of a folder node inside one, null on every other kind, so a client can name it as a destination). ancestors holds the nodes from the repository down to and including the listed node, for the breadcrumb. Paging: limit 1-1000 (default 200) and an opaque cursor, in a stable order - the fixed kind order library, collection, virtual_collection, folder; libraries, collections and virtual collections in catalog order; folders by name in Unicode code-point order; no repeat or gap across pages. A page may hold fewer nodes than limit while next_cursor is present (nodes the caller may not read are skipped); keep following next_cursor until it is null. Only nodes the caller may read are listed, counted or named in an ancestor trail; an unknown node and one the caller may not read, or one under an unreadable ancestor, get the same 404 not_found. A folder whose handle would exceed 512 bytes cannot be named and is not listed. A malformed cursor, a cursor of another level, a limit outside 1-1000 or an unknown parameter answers 400 invalid_request. A successful read is not journaled; a refusal is journaled once as navigation.list (API-S-017). Subscribe to navigation.change on the event channel to know when to read a level again.
          */
         get: operations["listNavigation"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/navigation/destination": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Resolve a collection or folder node to a destination
+         * @description The library_id and collection_id an upload, import, copy or move into the node names (API-S-021 Destination, API-S-011, API-S-036), and for a folder node also folder, its logical folder path inside that collection (null for a collection node). The node must be a collection, or a folder inside a collection, that the caller may read together with every node above it; a readable node of any other kind (the repository, a library, a virtual collection, the recently_deleted node) answers 400 invalid_request. An unknown node, a malformed handle, a node the caller may not read, a node under an ancestor the caller may not read and a node that no longer exists all get the same 404 not_found answer as the navigation listing, so nothing reveals whether a node exists. A missing node or an unknown parameter answers 400 invalid_request. A successful read is not journaled; a refusal is journaled once as navigation.destination with its error code and no node, name or path (API-S-017).
+         */
+        get: operations["getNavigationDestination"];
         put?: never;
         post?: never;
         delete?: never;
@@ -826,7 +846,7 @@ export interface paths {
         };
         /**
          * The bytes a library's history keeps
-         * @description Every object's distinct contents and their bytes, each content of an object counted once, within 10,000 objects and 100,000 contents (truncated says when a bound stopped the count). Nothing is deleted, expired or thinned to free space. A successful read is not journaled; a refusal is journaled once.
+         * @description Every object's distinct contents and their bytes, each content of an object counted once, within 10,000 objects and 100,000 contents (truncated says when a bound stopped the count), with `history_bytes` beside the total: the bytes held only by versions other than each object's head version, from which a client shows how much of the total is history. Nothing is deleted, expired or thinned to free space. A successful read is not journaled; a refusal is journaled once.
          */
         get: operations["getLibraryHistorySize"];
         put?: never;
@@ -1110,7 +1130,7 @@ export interface paths {
         };
         /**
          * One page of a view of a node
-         * @description The view operation (API-S-011, SRS-F-062): one page of the files of a library, collection or virtual-collection node, in a stable order. A library node's `all` view shows its collections and virtual collections as folder rows (no file is ever unfiled, ADR 041 Decision 3); a collection node shows its files, a virtual-collection node its members, and the `deleted` view the node's recoverably deleted files with no folder rows. The views home, personal, recent, favorites, shares and tags are not available yet (400). Each page sorts the whole scope again (at most 10,000 files, MAX_VIEW_FILES, and 1,000 folder rows; `complete` is false beyond that or when a file could not be read) and starts after the cursor's row, so rows never repeat. A missing value (a folder's size, a file the caller never opened) sorts after every value in both directions; ties break by name, then identifier. `modified_by_me` and `opened_by_me` come only from the caller's own succeeded journal entries (changes; content-handle mints and single-file downloads). A cursor made for other parameters is refused (400); a cursor of a view whose rows or their order changed since it was made is refused as conflict (409), so a row never repeats or is skipped, and the client starts again without a cursor. An unknown, malformed or unreadable node is 404; a node of another kind is 400. A successful read is not journaled; a refusal is journaled once. The repository's `recently_deleted` node (Task API-F2.15) lists the deleted files of every library this host has opened that the caller may read, whatever the view, with no folder rows, each file row carrying its `deleted` facts (library ID and name, deleted_at, purge_after under its own library's retention, days left, deletion cause, home collection and its title, also after that collection was deleted, and folder); a library whose files the host does not serve makes the view incomplete.
+         * @description The view operation (API-S-011, SRS-F-062): one page of the files of a library, collection or virtual-collection node, in a stable order. A library node's `all` view shows its collections and virtual collections as folder rows (no file is ever unfiled, ADR 041 Decision 3); a collection node shows its files, a virtual-collection node its members, and the `deleted` view the node's recoverably deleted files with no folder rows. The `recent` view (Task API-F2.21) lists the files the caller changed, opened or uploaded, newest first whatever sort, direction or folder placement is asked (the answer says direction descending), each file row carrying `recent`, the kind of the caller's latest action on it and its RFC 3339 UTC time; it is computed only from the caller's own succeeded journal entries, at most 20 journal pages per library, so another caller's activity never adds or moves a row; it takes the repository node (every library the caller may read), a library node or a collection node (the files whose home is that collection), any other node is 400, and a file that is hidden, deleted or in a collection the caller may not read is left out. The views home, personal, favorites, shares and tags are not available yet (400). Every file row names its `library_id`, the head `version` of its object and its home `collection_id` with `collection_title` (both null for a file registered in no collection). Every folder row carries `files` and `bytes`, the ordinary files beneath it and the bytes of their originals at the head, counted for the rows of the answered page within the bounds of one view (10,000 files for all the folder rows of one answer), with `count_complete` false when that bound or a file that could not be read stopped the count, and a collection row carries its `collection_id`. Each page sorts the whole scope again (at most 10,000 files, MAX_VIEW_FILES, and 1,000 folder rows; `complete` is false beyond that or when a file could not be read) and starts after the cursor's row, so rows never repeat. A missing value (a folder's size, a file the caller never opened) sorts after every value in both directions; ties break by name, then identifier. `modified_by_me` and `opened_by_me` come only from the caller's own succeeded journal entries (changes; content-handle mints and single-file downloads). A cursor made for other parameters is refused (400); a cursor of a view whose rows or their order changed since it was made is refused as conflict (409), so a row never repeats or is skipped, and the client starts again without a cursor. An unknown, malformed or unreadable node is 404; a node of another kind is 400. A successful read is not journaled; a refusal is journaled once. The repository's `recently_deleted` node (Task API-F2.15) lists the deleted files of every library this host has opened that the caller may read, whatever the view except `recent` (the `recent` view does not take the `recently_deleted` node: 400), with no folder rows, each file row carrying its `deleted` facts (library ID and name, deleted_at, purge_after under its own library's retention, days left, deletion cause, home collection and its title, also after that collection was deleted, and folder); a library whose files the host does not serve makes the view incomplete.
          */
         get: operations["getFileView"];
         put?: never;
@@ -1150,7 +1170,7 @@ export interface paths {
         };
         /**
          * Search the files the caller may read
-         * @description The search operation: the files and folder rows of the caller's readable scope that match q, as rows like GET /api/v1/files/view (display names, API-S-027; collections and virtual collections as folder rows). Grammar (API-S-012, SRS-F-063): terms separated by white space; a term is a word, a quoted phrase ("Client deck") or an operator name:value whose value may be quoted; a leading - excludes what the term matches; operator names compare without case, and text containing a colon is quoted. Free text matches the display name and every dcterms: value. Operators: type: (image, video, audio, text, document: PDF, RTF and the Microsoft Office, OOXML and OpenDocument formats; folder), in: (a collection's title), title: (dcterms:title), owner:me, creator: (dcterms:creator, whole value), tag: (dcterms:subject), is:deleted (files deleted one by one or with their collection, in every library the caller may read; is:unfiled is retired and refused like any unknown operator), before: and after: (the head version's date in the caller's zone), createdbefore: and createdafter: (YYYY-MM-DD; the capture date from exif:DateTimeOriginal, else dcterms:created: a value with a zone is an instant compared by its date in the caller's zone, a value without one by the calendar date it states, so no instant is invented), source: (dcterms:source), size> and size< (an integer and an optional B, KB, MB or GB in powers of 1024). Every value and name compared is normalised to Unicode NFC and then to lower case (each character's lower-case mapping, then NFC again), so a decomposed (NFD) name matches a composed query; diacritics are not folded. An unknown operator (generator: among them, since this build has no c2pa module) is refused as invalid_request naming it, never matched as an empty filter. Operators of the grammar this host cannot answer, is:favorite, owner: naming another user and the filesquid-server operators sharedwith:, to:, from: and pendingowner:, are refused as unavailable (503) naming the operator, the disabled-module error of API-S-007. The scope (the repository by default, or a library, collection or virtual-collection node) is permission-filtered before anything is read or ranked (SRS-NFR-004): an unreadable library, collection or file is never read or examined, and a caller who may not read the repository cannot search it (404). Relevance (the default order, most relevant first) adds for each free-text term 3 when the display name holds it, 2 when a dcterms:title does and 1 when a dcterms: value other than the title does (the three add up); any view sort key may replace it without changing the matches. Paging and cursors follow GET /api/v1/files/view: the order is stable, a cursor of other parameters is refused (400) and a cursor of results that changed is refused as conflict (409). Bounds: q is at most 1,024 bytes (MAX_QUERY_BYTES) and 32 terms (MAX_QUERY_TERMS); one search examines at most 1,000 libraries (MAX_SEARCH_LIBRARIES) and 10,000 files (MAX_SEARCH_FILES), reading one more catalog entry, never examined, only to learn that the scope is larger, and complete is false when a bound left files out or a file could not be read; the caller's own times read at most 20 journal pages per library (MAX_JOURNAL_PAGES). There is no separate index: each search reads the catalog and the files' OCFL records, so its answer always follows canonical state. Content (full-text) search is not offered yet. A successful search is not journaled; a refusal is journaled once.
+         * @description The search operation: the files and folder rows of the caller's readable scope that match q, as rows like GET /api/v1/files/view (display names, API-S-027; collections and virtual collections as folder rows), every file row carrying the same row facts (`library_id`, head `version`, home `collection_id` and `collection_title`) and every folder row its `collection_id`, `files`, `bytes` and `count_complete`. Grammar (API-S-012, SRS-F-063): terms separated by white space; a term is a word, a quoted phrase ("Client deck") or an operator name:value whose value may be quoted; a leading - excludes what the term matches; operator names compare without case, and text containing a colon is quoted. Free text matches the display name and every dcterms: value. Operators: type: (image, video, audio, text, document: PDF, RTF and the Microsoft Office, OOXML and OpenDocument formats; folder), in: (a collection's title), title: (dcterms:title), owner:me, creator: (dcterms:creator, whole value), tag: (dcterms:subject), is:deleted (files deleted one by one or with their collection, in every library the caller may read; is:unfiled is retired and refused like any unknown operator), before: and after: (the head version's date in the caller's zone), createdbefore: and createdafter: (YYYY-MM-DD; the capture date from exif:DateTimeOriginal, else dcterms:created: a value with a zone is an instant compared by its date in the caller's zone, a value without one by the calendar date it states, so no instant is invented), source: (dcterms:source), size> and size< (an integer and an optional B, KB, MB or GB in powers of 1024). Every value and name compared is normalised to Unicode NFC and then to lower case (each character's lower-case mapping, then NFC again), so a decomposed (NFD) name matches a composed query; diacritics are not folded. An unknown operator (generator: among them, since this build has no c2pa module) is refused as invalid_request naming it, never matched as an empty filter. Operators of the grammar this host cannot answer, is:favorite, owner: naming another user and the filesquid-server operators sharedwith:, to:, from: and pendingowner:, are refused as unavailable (503) naming the operator, the disabled-module error of API-S-007. The scope (the repository by default, or a library, collection or virtual-collection node) is permission-filtered before anything is read or ranked (SRS-NFR-004): an unreadable library, collection or file is never read or examined, and a caller who may not read the repository cannot search it (404). Relevance (the default order, most relevant first) adds for each free-text term 3 when the display name holds it, 2 when a dcterms:title does and 1 when a dcterms: value other than the title does (the three add up); any view sort key may replace it without changing the matches. Paging and cursors follow GET /api/v1/files/view: the order is stable, a cursor of other parameters is refused (400) and a cursor of results that changed is refused as conflict (409). Bounds: q is at most 1,024 bytes (MAX_QUERY_BYTES) and 32 terms (MAX_QUERY_TERMS); one search examines at most 1,000 libraries (MAX_SEARCH_LIBRARIES) and 10,000 files (MAX_SEARCH_FILES), reading one more catalog entry, never examined, only to learn that the scope is larger, and complete is false when a bound left files out or a file could not be read; the caller's own times read at most 20 journal pages per library (MAX_JOURNAL_PAGES). There is no separate index: each search reads the catalog and the files' OCFL records, so its answer always follows canonical state. Content (full-text) search is not offered yet. A successful search is not journaled; a refusal is journaled once.
          */
         get: operations["searchFiles"];
         put?: never;
@@ -1600,7 +1620,12 @@ export interface components {
          * @enum {string}
          */
         DenialReason: "missing_credentials" | "invalid_credentials" | "not_permitted";
-        /** @description Body of every failed API request. Authorisation denials (401 unauthorized, 403 forbidden) also carry `reason`. */
+        /**
+         * @description The rule a refusal broke, beside its HTTP status and `code` (API-S-011 Destination, API-S-019; owner decision 2026-10-31): destination_required (400 invalid_request: an upload, copy, move or import named no destination collection), collection_not_found (404 not_found: the destination collection is unknown or belongs to another library), path_suffix_exhausted (409 conflict: every numbered name from -1 to -9999 beside a taken logical path is taken), restore_name_exhausted (409 conflict: a restore needs a new "untitled collection" and every such title is taken), name_too_long (400 invalid_request: a name or numbered name is over 255 bytes) or invalid_path (400 invalid_request: a destination folder or logical path is not valid inside a collection). It is the rule code the journal records for the same refusal. Absent on every other error.
+         * @enum {string}
+         */
+        ErrorSubCode: "destination_required" | "collection_not_found" | "path_suffix_exhausted" | "restore_name_exhausted" | "name_too_long" | "invalid_path";
+        /** @description Body of every failed API request. Authorisation denials (401 unauthorized, 403 forbidden) also carry `reason`. A refusal whose rule the contract names also carries `sub_code`, so a client tells it apart without reading `message` (API-S-011). */
         ApiError: {
             code: components["schemas"]["ErrorCode"];
             /** @description Human-readable message the UI can show. Never contains paths, SQL or internal error text. */
@@ -1608,6 +1633,7 @@ export interface components {
             /** @description True when repeating the same request unchanged may succeed. */
             retryable: boolean;
             reason?: components["schemas"]["DenialReason"];
+            sub_code?: components["schemas"]["ErrorSubCode"];
         };
         /** @description Error reported by a module port, with retryability (CORE-S-005). */
         PortError: {
@@ -2017,6 +2043,8 @@ export interface components {
             name: string | null;
             /** @description True only when the caller may read at least one child of the node. A virtual collection never has children here. */
             has_children: boolean;
+            /** @description For a node of kind collection, and for a folder node inside a collection, the identifier of that collection, which an upload, copy or move names as its destination (API-S-011); null on every other kind. */
+            collection_id: string | null;
         };
         /** @description One page of one level of the navigation tree (API-S-021). */
         NavigationPage: {
@@ -2026,6 +2054,15 @@ export interface components {
             ancestors: components["schemas"]["NavigationNode"][];
             /** @description The opaque cursor of the next page, or null on the last page. */
             next_cursor: string | null;
+        };
+        /** @description What an upload, import, copy or move into a collection or folder node names as its destination (API-S-021 Destination, API-S-011, API-S-036). */
+        NavigationDestination: {
+            /** @description The library of the collection. */
+            library_id: string;
+            /** @description The collection. */
+            collection_id: string;
+            /** @description For a folder node, its logical folder path inside the collection (segments joined by `/`); null for a collection node, the collection's root. */
+            folder: string | null;
         };
         /** @description Payload of navigation.change: after a committed change adds, removes, renames or moves a node, the nodes whose children changed. Exactly one of parents (1 to 64 handles) and all is present. A subscriber receives only the handles it may read and no event when it may read none. */
         NavigationChange: {
@@ -2225,7 +2262,7 @@ export interface components {
             /** @description Their bytes, each content counted once. */
             bytes: number;
         };
-        /** @description The bytes a library's history keeps: each distinct content of each object once, within 10,000 objects and 100,000 contents. */
+        /** @description The bytes a library's history keeps: each distinct content of each object once, within 10,000 objects and 100,000 contents, and beside that total the bytes only versions other than each object's head version hold (`history_bytes`). */
         LibraryHistorySize: {
             /** @description The library. */
             library_id: string;
@@ -2235,6 +2272,8 @@ export interface components {
             contents: number;
             /** @description Their bytes, each content of an object counted once. */
             bytes: number;
+            /** @description The part of `bytes` that is history: the bytes on disk held only by versions other than each object's head version, each distinct content counted once, so a content the head version also holds is never counted as history. Within the same bounds as `bytes`; a lower bound when `truncated` is true (API-S-014; owner decision 2026-10-31). */
+            history_bytes: number;
             /** @description True when a bound stopped the count, so the totals are lower bounds. */
             truncated: boolean;
         };
@@ -2707,7 +2746,7 @@ export interface components {
             path?: string;
         };
         /**
-         * @description Which files a view shows; only all and deleted are available yet.
+         * @description Which files a view shows; all, deleted and recent are available. home, personal and shares (Task API-F2.28), favorites and tags (Task CL-1.4) are refused as not available yet.
          * @enum {string}
          */
         ViewKind: "home" | "all" | "personal" | "recent" | "favorites" | "shares" | "tags" | "deleted";
@@ -2716,7 +2755,21 @@ export interface components {
          * @enum {string}
          */
         ViewFolderKind: "collection" | "virtual_collection";
-        /** @description A folder row: a collection or virtual collection the view can open. */
+        /**
+         * @description What the caller last did to a file of the `recent` view: changed (renamed, moved, restored or copied it, or changed its metadata), opened (a content handle or a single-file download) or uploaded (the file or new content for it).
+         * @enum {string}
+         */
+        RecentKind: "changed" | "opened" | "uploaded";
+        /** @description The caller's latest action on a file of the `recent` view, from the caller's own succeeded journal entries only. */
+        RecentAction: {
+            action: components["schemas"]["RecentKind"];
+            /**
+             * Format: date-time
+             * @description When the caller did it (RFC 3339 UTC).
+             */
+            at: string;
+        };
+        /** @description A folder row: a collection or virtual collection the view can open, with the files and bytes beneath it (API-S-011 Row facts). */
         ViewFolderRow: {
             /**
              * @description A folder row.
@@ -2728,8 +2781,16 @@ export interface components {
             node_kind: components["schemas"]["ViewFolderKind"];
             /** @description Its name. */
             name: string;
+            /** @description For a collection, its identifier, which an upload, copy or move names as its destination; null for a virtual collection. */
+            collection_id: string | null;
+            /** @description The ordinary files beneath it that the caller may read and that were counted. */
+            files: number;
+            /** @description Their bytes: each counted file's original at its head. */
+            bytes: number;
+            /** @description False when the bound of one view stopped the count (the folder rows of one answer together count at most 10,000 files) or a file could not be read, so `files` and `bytes` are lower bounds. */
+            count_complete: boolean;
         };
-        /** @description A file row. */
+        /** @description A file row. It names its library, the head version of its object and its home collection with that collection's title (API-S-011 Row facts), so a client acts on the file and shows where it is without another call. */
         ViewFileRow: {
             /**
              * @description A file row.
@@ -2740,6 +2801,14 @@ export interface components {
             file_id: string;
             /** @description Its object, `urn:uuid:<file-id>`. */
             object_id: string;
+            /** @description Its library. */
+            library_id: string;
+            /** @description The head version of its object (`v1`, `v2`, ...). */
+            version: string;
+            /** @description Its home collection; null for a file registered in no collection of its library. */
+            collection_id: string | null;
+            /** @description The home collection's title; null when `collection_id` is null. */
+            collection_title: string | null;
             /** @description The name users see (API-S-027). */
             display_name: string;
             /** @description The media type of the original. */
@@ -2763,6 +2832,8 @@ export interface components {
             opened_by_me: string | null;
             /** @description Present in a `deleted` view and in the Recently deleted node's view only. */
             deleted?: components["schemas"]["DeletedRow"];
+            /** @description The caller's latest action on the file; present in the `recent` view only. */
+            recent?: components["schemas"]["RecentAction"];
         };
         /** @description One row of a view. */
         ViewRow: components["schemas"]["ViewFolderRow"] | components["schemas"]["ViewFileRow"];
@@ -2778,7 +2849,7 @@ export interface components {
             rows: components["schemas"]["ViewRow"][];
             /** @description The cursor of the next page, or null on the last page. */
             next_cursor: string | null;
-            /** @description False when the scope held more than 10,000 files or 1,000 folder rows, or a file could not be read. */
+            /** @description False when the scope held more than 10,000 files or 1,000 folder rows, or a file could not be read. A folder row's own count says separately when it is incomplete (`count_complete`). */
             complete: boolean;
         };
         /** @description The bytes the history of a collection's files keeps. */
@@ -2940,6 +3011,7 @@ export interface components {
             message: string;
             /** @description True when repeating the same request unchanged may succeed. */
             retryable: boolean;
+            sub_code?: components["schemas"]["ErrorSubCode"];
         };
         /** @description Body of `POST /api/v1/files/folders`: the command envelope and the input (Task API-F2.13, API-S-002). */
         CreateFolderCommand: {
@@ -3225,6 +3297,7 @@ export interface components {
             message: string;
             /** @description True when repeating the same request unchanged may succeed. */
             retryable: boolean;
+            sub_code?: components["schemas"]["ErrorSubCode"];
         };
         /** @description The collection move of `POST /api/v1/files/moves` (Task API-F2.14, API-S-011 Destination): a registered file gets another home collection or folder, keeping its name, in one snapshot version that rewrites no bytes. */
         CollectionMoveRequest: {
@@ -4986,6 +5059,35 @@ export interface operations {
             503: components["responses"]["Unavailable"];
         };
     };
+    getNavigationDestination: {
+        parameters: {
+            query: {
+                /** @description The opaque handle of a collection node or of a folder node inside a collection, as the navigation listing answered it. */
+                node: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The destination the node names. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NavigationDestination"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["Internal"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
     createLibrary: {
         parameters: {
             query?: never;
@@ -5750,9 +5852,9 @@ export interface operations {
     getFileView: {
         parameters: {
             query: {
-                /** @description A library, collection or virtual-collection node handle, as the navigation listing gave it. */
+                /** @description A library, collection or virtual-collection node handle, as the navigation listing gave it; the repository's `recently_deleted` node; or, for the `recent` view, the repository, a library or a collection node. */
                 node: string;
-                /** @description The view; all when absent. */
+                /** @description The view: all (the default), deleted or recent. */
                 view?: components["schemas"]["ViewKind"];
                 /** @description The sort key; name when absent. */
                 sort?: components["schemas"]["SortKey"];

@@ -172,6 +172,7 @@ async fn an_import_without_a_destination_is_refused_before_any_dialog() {
     let (status, answer) = host.post(request, true).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{answer}");
     assert_eq!(answer["code"], "invalid_request");
+    assert_eq!(answer["sub_code"], DESTINATION_REQUIRED, "{answer}");
     assert!(
         answer["message"]
             .as_str()
@@ -199,6 +200,7 @@ async fn an_unknown_or_foreign_collection_is_not_found_before_any_dialog() {
         request["collection_id"] = json!(collection);
         let (status, answer) = host.post(request, true).await;
         assert_eq!(status, StatusCode::NOT_FOUND, "{collection}: {answer}");
+        assert_eq!(answer["sub_code"], COLLECTION_NOT_FOUND, "{answer}");
         assert!(
             answer["message"]
                 .as_str()

@@ -44,6 +44,31 @@ pub struct NodeView {
     pub name: Option<String>,
     /// True only when the caller may read at least one child.
     pub has_children: bool,
+    /// For a collection, and for a folder inside a collection, that collection's identifier,
+    /// which an upload, copy or move names as its destination (API-S-011); `null` on every
+    /// other kind.
+    pub collection_id: Option<String>,
+}
+
+/// Query of `GET /api/v1/navigation/destination`.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DestinationRequest {
+    /// The collection or folder node to resolve.
+    pub node: String,
+}
+
+/// What an upload, import, copy or move into a collection or folder node names as its
+/// destination (API-S-011 **Destination**, API-S-036).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct DestinationView {
+    /// The library of the collection.
+    pub library_id: String,
+    /// The collection.
+    pub collection_id: String,
+    /// For a folder node, its logical folder path inside the collection; `null` for a
+    /// collection node (the collection's root).
+    pub folder: Option<String>,
 }
 
 /// One page of one level of the tree.

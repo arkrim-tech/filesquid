@@ -14,7 +14,7 @@ import type { NavigationChange } from "../../src/navigation/model";
 afterEach(() => vi.restoreAllMocks());
 
 const REPOSITORY = {
-  nodes: [{ node: "r", kind: "repository", name: null, has_children: true }],
+  nodes: [{ node: "r", kind: "repository", name: null, has_children: true, collection_id: null }],
   ancestors: [],
   next_cursor: null,
 };

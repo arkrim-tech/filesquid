@@ -292,6 +292,36 @@ async fn library_history_size_counts_every_kept_content_once() {
     assert_eq!(size["contents"], 2);
     assert_eq!(size["bytes"], 11);
     assert_eq!(size["truncated"], false);
+    assert_eq!(
+        size["history_bytes"], 0,
+        "the head still holds the first content through b.txt, so it is no history"
+    );
+}
+
+#[tokio::test]
+async fn history_bytes_count_only_content_no_head_version_holds_each_once() {
+    let rig = FilesRig::with_files(&[("a.txt", b"alpha"), ("keep.txt", b"kept")]).await;
+    let uri = format!("/api/v1/files/library-history-size?library_id={LIBRARY}");
+    let one_version = rig.get(&uri).await.json();
+    assert_eq!(one_version["bytes"], 9, "{one_version}");
+    assert_eq!(
+        one_version["history_bytes"], 0,
+        "one version per object keeps no history"
+    );
+    // v2 keeps a.txt's first content and adds a file; v3 replaces a.txt: the first content
+    // is held by two older versions and by no head, so it counts once.
+    rig.commit(&[("b.txt", b"second")]).await;
+    rig.commit(&[("a.txt", b"bravo!!")]).await;
+    let size = rig.get(&uri).await.json();
+    assert_eq!(size["contents"], 4, "{size}");
+    assert_eq!(size["bytes"], 22, "{size}");
+    assert_eq!(size["history_bytes"], 5, "{size}");
+    assert_eq!(size["truncated"], false);
+    // A removed file's content is history too.
+    rig.remove("keep.txt").await;
+    let size = rig.get(&uri).await.json();
+    assert_eq!(size["bytes"], 22, "{size}");
+    assert_eq!(size["history_bytes"], 9, "{size}");
 }
 
 #[tokio::test]

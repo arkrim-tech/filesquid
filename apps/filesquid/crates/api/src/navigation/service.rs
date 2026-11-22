@@ -15,7 +15,7 @@ use super::cursor::{parent_tag, Position, Rank};
 use super::error::NavigationError;
 use super::node::{FolderScope, NodeRef};
 use super::port::{FolderIndex, NavigationAccess};
-use super::view::{NavigationPage, NavigationRequest, NodeKind, NodeView};
+use super::view::{DestinationView, NavigationPage, NavigationRequest, NodeKind, NodeView};
 use super::{DEFAULT_LIMIT, LOG_TARGET, MAX_HAS_CHILDREN_SCANS, MAX_LIMIT, MAX_SCAN};
 use crate::auth::Principal;
 use crate::library::{LibraryCatalog, PageKey};
@@ -110,6 +110,42 @@ impl NavigationService {
         node: &NodeRef,
     ) -> Result<(), NavigationError> {
         self.resolve(principal, node).map(|_| ())
+    }
+
+    /// The destination an upload, import, copy or move into the node `handle` names
+    /// (API-S-021 **Destination**): the library and collection of a collection node, and
+    /// also the logical folder path of a folder node inside a collection. The node and every
+    /// node above it must exist and be readable to `principal`, exactly as for
+    /// [`Self::list`]. May block, as [`Self::list`] does.
+    ///
+    /// # Errors
+    ///
+    /// `not_found` for a node that is unknown, malformed, unreadable, under an unreadable
+    /// ancestor or no longer there (one answer for all of them, checked before the kind, so
+    /// nothing reveals whether a node exists); `invalid_request` for a readable node of any
+    /// other kind; `unavailable` or `internal` when a port fails.
+    pub fn destination(
+        &self,
+        principal: &Principal,
+        handle: &str,
+    ) -> Result<DestinationView, NavigationError> {
+        let node = NodeRef::from_handle(handle).ok_or(NavigationError::NotFound)?;
+        let chain = self.resolve(principal, &node)?;
+        let Some(collection) = collection_of(&node) else {
+            return Err(NavigationError::invalid(
+                "Only a collection or a folder inside a collection is a destination.",
+            ));
+        };
+        let library = library_of(&chain).ok_or_else(NavigationError::internal)?;
+        let folder = match &node {
+            NodeRef::Folder { path, .. } => Some(path.clone()),
+            _ => None,
+        };
+        Ok(DestinationView {
+            library_id: library.as_str().to_string(),
+            collection_id: collection.as_str().to_string(),
+            folder,
+        })
     }
 
     /// The host's one repository, whose libraries a search covers by default (API-S-012).
@@ -624,6 +660,32 @@ fn view_of(
         kind: kind_of(node),
         name,
         has_children,
+        collection_id: collection_of(node).map(|id| id.as_str().to_string()),
+    })
+}
+
+/// The collection `node` is or lies in: a collection itself, or the collection a folder is
+/// inside; `None` for every other kind. Pure.
+fn collection_of(node: &NodeRef) -> Option<&filesquid_core::CollectionId> {
+    match node {
+        NodeRef::Collection(id) => Some(id),
+        NodeRef::Folder {
+            scope: FolderScope::Collection(id),
+            ..
+        } => Some(id),
+        NodeRef::Repository(_)
+        | NodeRef::Library(_)
+        | NodeRef::VirtualCollection(_)
+        | NodeRef::RecentlyDeleted(_) => None,
+    }
+}
+
+/// The library node of a resolved `chain` (the repository, the library, then its
+/// descendants), when the chain reaches one. Pure.
+fn library_of(chain: &[(NodeRef, Option<String>)]) -> Option<&filesquid_core::LibraryId> {
+    chain.iter().find_map(|(node, _)| match node {
+        NodeRef::Library(id) => Some(id),
+        _ => None,
     })
 }
 

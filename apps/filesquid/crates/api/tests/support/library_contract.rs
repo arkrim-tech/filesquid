@@ -701,14 +701,25 @@ pub fn samples() -> Vec<(&'static str, Vec<Value>)> {
         ),
         (
             "LibraryCommandConflict",
-            vec![to_value(ConflictAnswer {
-                outcome: CommandOutcome::new(operation(), CommandOutcomeKind::Conflict),
-                result: None,
-                error: filesquid_api::ApiError::new(
-                    filesquid_api::ErrorCode::Conflict,
-                    "The library changed since it was last read.",
-                ),
-            })],
+            vec![
+                to_value(ConflictAnswer {
+                    outcome: CommandOutcome::new(operation(), CommandOutcomeKind::Conflict),
+                    result: None,
+                    error: filesquid_api::ApiError::new(
+                        filesquid_api::ErrorCode::Conflict,
+                        "The library changed since it was last read.",
+                    ),
+                }),
+                to_value(ConflictAnswer {
+                    outcome: CommandOutcome::new(operation(), CommandOutcomeKind::Conflict),
+                    result: None,
+                    error: filesquid_api::ApiError::new(
+                        filesquid_api::ErrorCode::Conflict,
+                        "Every untitled collection title is taken.",
+                    )
+                    .with_rule("restore_name_exhausted"),
+                }),
+            ],
         ),
         (
             "SnapshotCopyRequest",

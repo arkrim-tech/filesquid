@@ -200,6 +200,10 @@ name = "integration_search"
 path = "tests/integration/search.rs"
 
 [[test]]
+name = "integration_row_facts"
+path = "tests/integration/row_facts.rs"
+
+[[test]]
 name = "integration_drive"
 path = "tests/integration/drive.rs"
 

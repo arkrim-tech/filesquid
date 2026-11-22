@@ -38,7 +38,9 @@ describe("MemoryNavigationSource", () => {
   it("answers the repository at the root level, without ancestors", async () => {
     const page = await new MemoryNavigationSource(fixture).list(null);
     expect(page).toEqual({
-      nodes: [{ node: "r", kind: "repository", name: null, has_children: true }],
+      nodes: [
+        { node: "r", kind: "repository", name: null, has_children: true, collection_id: null },
+      ],
       ancestors: [],
       next_cursor: null,
     });
@@ -46,7 +48,9 @@ describe("MemoryNavigationSource", () => {
 
   it("answers one level of children with the ancestors down to the listed node", async () => {
     const page = await new MemoryNavigationSource(fixture).list("c1");
-    expect(page.nodes).toEqual([{ node: "f1", kind: "folder", name: "2025", has_children: false }]);
+    expect(page.nodes).toEqual([
+      { node: "f1", kind: "folder", name: "2025", has_children: false, collection_id: null },
+    ]);
     expect(page.ancestors.map((n) => n.node)).toEqual(["r", "l1", "c1"]);
   });
 
@@ -199,7 +203,13 @@ describe("loader", () => {
     expect(pins).toEqual([
       {
         pin: { node: "f1", kind: "folder" },
-        node: { node: "f1", kind: "folder", name: "2025", has_children: false },
+        node: {
+          node: "f1",
+          kind: "folder",
+          name: "2025",
+          has_children: false,
+          collection_id: null,
+        },
       },
       { pin: { node: "gone", kind: "collection" }, node: null },
     ]);

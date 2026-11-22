@@ -764,3 +764,223 @@ async fn a_lag_hint_reaches_a_subscriber_whose_filter_drops_everything() {
     let event = subscription.next().await.expect("the hint");
     assert_eq!(event.topic, "events.resync");
 }
+
+// ---- Collection IDs and the destination route (Task API-F2.21; API-S-021) ----
+
+/// `GET /api/v1/navigation/destination` of `node` through the router, as the owner.
+async fn destination(rig: &NavRig, node: &str) -> files_fixture::Answer {
+    let uri = format!(
+        "/api/v1/navigation/destination?node={}",
+        files_fixture::encode(node)
+    );
+    rig.photos_rig.get(&uri).await
+}
+
+/// The node named `name` of a navigation page.
+fn node_named<'a>(page: &'a Value, name: &str) -> &'a Value {
+    page["nodes"]
+        .as_array()
+        .expect("nodes")
+        .iter()
+        .find(|n| n["name"] == name)
+        .unwrap_or_else(|| panic!("no node {name}: {page}"))
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn collection_and_folder_nodes_carry_their_collection_id_and_no_other_kind_does() {
+    let rig = NavRig::new().await;
+    let photos_id = rig.photos.as_str();
+    let root = rig.get("").await.json();
+    assert_eq!(root["nodes"][0]["collection_id"], Value::Null, "{root}");
+    let repository = root["nodes"][0]["node"].as_str().expect("handle");
+    let libraries = rig.get(&format!("node={repository}")).await.json();
+    for node in libraries["nodes"].as_array().expect("nodes") {
+        assert_eq!(node["collection_id"], Value::Null, "{node}");
+        assert!(node.get("collection_id").is_some(), "always a member");
+    }
+    let library = rig.handle(&NodeRef::Library(rig.library.clone()));
+    let level = rig.get(&format!("node={library}")).await.json();
+    assert_eq!(node_named(&level, "Photos")["collection_id"], photos_id);
+    assert_eq!(
+        node_named(&level, "Best of 2025")["collection_id"],
+        Value::Null,
+        "a virtual collection is no destination"
+    );
+    let collection = rig.handle(&NodeRef::Collection(rig.photos.clone()));
+    let folders = rig.get(&format!("node={collection}")).await.json();
+    assert_eq!(node_named(&folders, "2025")["collection_id"], photos_id);
+    let deep = rig
+        .get(&format!("node={}", rig.photos_folder("2025")))
+        .await
+        .json();
+    assert_eq!(node_named(&deep, "summer")["collection_id"], photos_id);
+    let ancestors = deep["ancestors"].as_array().expect("ancestors");
+    let carried: Vec<&Value> = ancestors.iter().map(|n| &n["collection_id"]).collect();
+    assert_eq!(
+        carried,
+        [
+            &Value::Null,
+            &Value::Null,
+            &json!(photos_id),
+            &json!(photos_id)
+        ],
+        "repository, library, collection, folder"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_collection_node_resolves_to_the_destination_an_upload_names() {
+    let rig = NavRig::new().await;
+    let collection = rig.handle(&NodeRef::Collection(rig.photos.clone()));
+    let answer = destination(&rig, &collection).await;
+    assert_eq!(answer.status, StatusCode::OK, "{:?}", answer.json());
+    assert_eq!(
+        answer.json(),
+        json!({
+            "library_id": rig.library.as_str(),
+            "collection_id": rig.photos.as_str(),
+            "folder": null,
+        })
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_folder_node_resolves_to_its_collection_and_folder() {
+    let rig = NavRig::new().await;
+    let answer = destination(&rig, &rig.photos_folder("2025/summer")).await;
+    assert_eq!(answer.status, StatusCode::OK, "{:?}", answer.json());
+    assert_eq!(
+        answer.json(),
+        json!({
+            "library_id": rig.library.as_str(),
+            "collection_id": rig.photos.as_str(),
+            "folder": "2025/summer",
+        })
+    );
+    assert!(
+        rig.photos_rig
+            .journaled("navigation.destination")
+            .is_empty(),
+        "a successful read is not journaled"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_node_that_is_no_collection_or_folder_is_no_destination() {
+    let rig = NavRig::new().await;
+    let root = rig.get("").await.json();
+    let repository = root["nodes"][0]["node"]
+        .as_str()
+        .expect("handle")
+        .to_string();
+    let level = rig.get(&format!("node={repository}")).await.json();
+    let trash = level["nodes"]
+        .as_array()
+        .expect("nodes")
+        .iter()
+        .find(|n| n["kind"] == "recently_deleted")
+        .expect("recently deleted")["node"]
+        .as_str()
+        .expect("handle")
+        .to_string();
+    let others = [
+        repository,
+        trash,
+        rig.handle(&NodeRef::Library(rig.library.clone())),
+        rig.handle(&NodeRef::VirtualCollection(rig.best_of.clone())),
+    ];
+    for node in &others {
+        let answer = destination(&rig, node).await;
+        assert_error(&answer, 400, "invalid_request");
+    }
+    let journaled = rig.photos_rig.journaled("navigation.destination");
+    assert_eq!(journaled.len(), others.len(), "each refusal once");
+    assert!(journaled
+        .iter()
+        .all(|e| e.error_code.as_deref() == Some("invalid_request")));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn every_node_that_cannot_be_read_gets_the_listings_one_not_found() {
+    let rig = NavRig::new().await;
+    let listing = rig.get("node=n1.not-a-handle").await;
+    assert_error(&listing, 404, "not_found");
+    let expected = listing.json();
+    let absent = rig.handle(&NodeRef::Collection(
+        filesquid_core::CollectionId::new("no-such-collection").expect("id"),
+    ));
+    let absent_folder = rig.photos_folder("2024/never");
+    let absent_library = rig.handle(&NodeRef::Library(
+        filesquid_core::LibraryId::new("no-such-library").expect("id"),
+    ));
+    // A folder whose files were all hidden or deleted no longer exists.
+    rig.folders
+        .hide(&FolderScope::Collection(rig.photos.clone()), "2025/winter");
+    let removed = rig.photos_folder("2025/winter");
+    let nodes = [
+        absent,
+        absent_folder,
+        absent_library,
+        removed,
+        "n1.not-a-handle".to_string(),
+        "zzz".to_string(),
+        "x".repeat(600),
+    ];
+    for node in &nodes {
+        let answer = destination(&rig, node).await;
+        assert_eq!(answer.status, StatusCode::NOT_FOUND, "{node}");
+        assert_eq!(answer.json(), expected, "{node}: one identical answer");
+    }
+    let journaled = rig.photos_rig.journaled("navigation.destination");
+    assert_eq!(journaled.len(), nodes.len(), "each refusal once");
+    let text = format!("{journaled:?}");
+    for word in ["2025", "winter", "never", "Photos", "no-such"] {
+        assert!(!text.contains(word), "{word} was journaled");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_unreadable_node_or_one_under_an_unreadable_ancestor_is_the_same_not_found() {
+    let rig = NavRig::new().await;
+    let photos = NodeRef::Collection(rig.photos.clone());
+    let library = NodeRef::Library(rig.library.clone());
+    let no_photos = Arc::new(rig.user({
+        let photos = photos.clone();
+        move |node| *node != photos
+    }));
+    let no_library = Arc::new(rig.user(move |node| *node != library));
+    let unknown = "n1.not-a-handle".to_string();
+    let mut bodies = Vec::new();
+    for (service, node) in [
+        (no_photos.clone(), rig.handle(&photos)),
+        (no_photos, rig.photos_folder("2025")),
+        (no_library.clone(), rig.handle(&photos)),
+        (no_library.clone(), rig.photos_folder("2025/summer")),
+        (no_library, unknown),
+    ] {
+        let read = move || service.destination(&Principal::Owner, &node);
+        let err = tokio::task::spawn_blocking(read)
+            .await
+            .expect("task")
+            .expect_err("not found");
+        bodies.push(serde_json::to_value(filesquid_api::ApiError::from(err)).expect("body"));
+    }
+    assert!(
+        bodies.windows(2).all(|pair| pair[0] == pair[1]),
+        "{bodies:?}"
+    );
+    assert_eq!(bodies[0]["code"], "not_found");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_destination_route_needs_its_node_and_takes_no_other_parameter() {
+    let rig = NavRig::new().await;
+    let collection = rig.handle(&NodeRef::Collection(rig.photos.clone()));
+    for uri in [
+        "/api/v1/navigation/destination".to_string(),
+        format!("/api/v1/navigation/destination?node={collection}&limit=5"),
+    ] {
+        let answer = rig.photos_rig.get(&uri).await;
+        assert_error(&answer, 400, "invalid_request");
+    }
+}

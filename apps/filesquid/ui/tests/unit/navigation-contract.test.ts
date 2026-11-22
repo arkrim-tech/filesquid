@@ -13,9 +13,27 @@ import {
   parseNavigationPage,
 } from "../../src/navigation/contract";
 
-const repository = { node: "r", kind: "repository", name: null, has_children: true };
-const library = { node: "l1", kind: "library", name: "Family", has_children: true };
-const folder = { node: "f1", kind: "folder", name: "2025", has_children: false };
+const repository = {
+  node: "r",
+  kind: "repository",
+  name: null,
+  has_children: true,
+  collection_id: null,
+};
+const library = {
+  node: "l1",
+  kind: "library",
+  name: "Family",
+  has_children: true,
+  collection_id: null,
+};
+const folder = {
+  node: "f1",
+  kind: "folder",
+  name: "2025",
+  has_children: false,
+  collection_id: null,
+};
 
 /** A page with overrides. */
 const page = (over: Record<string, unknown> = {}) => ({
@@ -43,7 +61,13 @@ describe("parseNavigationPage", () => {
   });
 
   it("accepts the repository's children: a library and the unnamed Recently deleted node", () => {
-    const trash = { node: "d1", kind: "recently_deleted", name: null, has_children: false };
+    const trash = {
+      node: "d1",
+      kind: "recently_deleted",
+      name: null,
+      has_children: false,
+      collection_id: null,
+    };
     expect(
       parseNavigationPage({ nodes: [library, trash], ancestors: [repository], next_cursor: null }),
     ).toEqual({ nodes: [library, trash], ancestors: [repository], next_cursor: null });

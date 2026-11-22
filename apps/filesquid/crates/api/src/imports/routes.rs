@@ -301,7 +301,9 @@ async fn refuse_destination(
         .operation_id(request.envelope.operation_id().as_str())
         .error_code(error_code);
     journal_entry(state, entry).await;
-    ApiError::new(code, message).into_response()
+    ApiError::new(code, message)
+        .with_rule(error_code)
+        .into_response()
 }
 
 /// The level, status code and message of a starter refusal; the message names the error
