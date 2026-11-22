@@ -109,6 +109,7 @@
   "navigationBreadcrumb": "Breadcrumb",
   "navigationGone": "This destination is no longer available",
   "navigationFilesPending": "The files of this destination cannot be listed here yet.",
+  "navigationLevelLimit": "Showing the first {count} only. Use search to find the rest.",
   "stateLoading": "Loading…",
   "stateEmpty": "Nothing here yet",
   "stateError": "Something went wrong",

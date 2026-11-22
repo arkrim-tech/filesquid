@@ -115,6 +115,7 @@ export const REQUIRED_LABEL_KEYS = [
   "navigationBreadcrumb",
   "navigationGone",
   "navigationFilesPending",
+  "navigationLevelLimit",
   "stateLoading",
   "stateEmpty",
   "stateError",

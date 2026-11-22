@@ -1,6 +1,12 @@
 /**
- * Known gaps of the performance suite (Task UI-F3.1, Finding 4): budgets the product is known
- * to miss, recorded for the owner. Pure, so it is unit tested without a browser.
+ * Known gaps of the performance suite (Task UI-F3.1): how a budget the product is known to
+ * miss is recorded for the owner without hiding anything else. Pure, so it is unit tested
+ * without a browser.
+ *
+ * No gap is declared now. The one gap the suite had, the Large catalog's navigation tree
+ * (Finding 4 of the Task UI-F3.1 Walkthrough), closed when the tree was virtualised (Task
+ * UI-F3.4, UI-S-035), and its declaration was removed with it. The rule stays for a later gap:
+ * declaring one is an owner decision.
  */
 import type { Measurement } from "./report";
 
@@ -10,24 +16,6 @@ export interface KnownGap {
   readonly ids: readonly string[];
   /** Why, in a sentence, with where it is recorded. */
   readonly reason: string;
-}
-
-/**
- * The known gap of the Large catalog's navigation tree (owner decision needed, Task UI-F3.1
- * Walkthrough, Finding 4). The tree draws every node of a level up to its cap of 10,000 nodes,
- * about 60,000 elements, and that costs about 50 ms of every frame that changes the current
- * destination, so opening a folder and going back miss the 100 ms result gate on the Large
- * catalog (the Small catalog holds it). A virtualised tree is the fix.
- *
- * @param ids - The records of the classes that open folders.
- * @returns The gap.
- */
-export function treeGap(...ids: string[]): KnownGap {
-  return {
-    ids,
-    reason:
-      "Large catalog: the 10,000-node navigation tree keeps opening folders above the 100 ms gate",
-  };
 }
 
 /** The failures of a run, split by whether a known gap tolerates them. */

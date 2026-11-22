@@ -372,10 +372,21 @@ describe("<fs-nav-tree> keyboard", () => {
     expect(photos.getAttribute("aria-expanded")).toBe("true");
     expect(photos.hasAttribute("aria-busy")).toBe(false);
     expect(root.activeElement).toBe(photos);
-    expect(root.getElementById(photos.getAttribute("aria-owns") ?? "")?.getAttribute("role")).toBe(
-      "group",
-    );
-    expect(item(root, "collection", "2025").getAttribute("aria-level")).toBe("2");
+    // The tree is flat (Task UI-F3.4): no group is owned; each item states its own level, the
+    // size of its level and its place in it.
+    expect(photos.hasAttribute("aria-owns")).toBe(false);
+    expect(root.querySelector('[role="group"]')).toBeNull();
+    expect([photos.getAttribute("aria-setsize"), photos.getAttribute("aria-posinset")]).toEqual([
+      "2",
+      "1",
+    ]);
+    const inner = item(root, "collection", "2025");
+    expect(inner.getAttribute("aria-level")).toBe("2");
+    expect([inner.getAttribute("aria-setsize"), inner.getAttribute("aria-posinset")]).toEqual([
+      "2",
+      "1",
+    ]);
+    expect(item(root, "collection", "Hobbies").getAttribute("aria-posinset")).toBe("2");
     press(root, "ArrowRight");
     expect(root.activeElement?.textContent).toBe("2025");
     press(root, "ArrowLeft");

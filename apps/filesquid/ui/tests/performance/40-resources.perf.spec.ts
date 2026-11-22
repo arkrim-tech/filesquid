@@ -8,6 +8,9 @@
  * - With the largest view the API answers loaded in full (11,000 rows), rows in the DOM stay
  *   within the visible rows plus two overscans of 5, and the scrolling area is no taller than
  *   the window.
+ * - The navigation tree likewise (Task UI-F3.4, UI-S-035): with a level of 10,000 nodes shown,
+ *   its tree items in the DOM stay within the items in its window plus two overscans of 5, its
+ *   scrolling area is no taller than the window, and the level says where it stopped.
  * - Every folder and file row appears once, in the host's sorted order, across all pages (the
  *   list is read back by scrolling it to the end and reading the footer and the DOM).
  * - The Large profile's scope is over the API's caps: the limit chip shows (`complete: false`).
@@ -28,6 +31,10 @@ const labels = activeLabels();
 
 const OVERSCAN = 5;
 const ROW_PX = 44;
+/** The navigation tree, its scrolling area in the shell's sidebar and its row height (30 px). */
+const TREE = "fs-app-shell >> fs-nav-tree";
+const TREE_AREA = "fs-app-shell >> .tree";
+const TREE_ROW_PX = 30;
 const PAGES = Math.ceil(11_000 / VIEW_CAPS.pageSize);
 
 for (const id of ["medium", "large"] as ProfileId[]) {
@@ -98,6 +105,66 @@ for (const id of ["medium", "large"] as ProfileId[]) {
     expect(host.unserved).toEqual([]);
   });
 }
+
+test("large: the navigation tree holds a bounded window of its 10,000 nodes", async ({
+  page,
+}, info) => {
+  // Task UI-F3.4, UI-S-035: the tree holds at most the tree items in its window plus two
+  // overscans of 5, however many nodes its open levels hold, and its scrolling area is never
+  // taller than the window. The Large library lists 50,000 collections; the level shows 10,000.
+  const session = await openView(page, new Catalogue(PROFILES.large));
+  const { probe } = session;
+  const items = `${TREE} >> [role='treeitem']`;
+  await expect(page.locator("fs-nav-tree [role='treeitem']").first()).toBeVisible();
+  const counts: number[] = [];
+  let heights = { clientHeight: 0, scrollHeight: 0 };
+  for (const top of [0, 15, 4_000, 150_000, 299_000]) {
+    await probe.scrollTo(TREE_AREA, top);
+    await page.waitForTimeout(50);
+    counts.push(await probe.rowCount(items));
+  }
+  heights = await probe.scrollToEnd(TREE_AREA);
+  await page.waitForTimeout(50);
+  counts.push(await probe.rowCount(items));
+  // The rows in view, one more for a row cut by an edge, and the two overscans.
+  const bound = Math.ceil(heights.clientHeight / TREE_ROW_PX) + 1 + 2 * OVERSCAN;
+  const records = [
+    value({
+      id: "dom-tree-items-large",
+      title: "Tree items in the DOM with a level of 10,000 nodes shown, large catalog",
+      budget: "UI-S-035: tree items in the window + 2 x overscan of 5",
+      value: Math.max(...counts),
+      max: bound,
+      notes: {
+        atEachScrollPosition: counts.join(", "),
+        scrollerClientHeightPx: heights.clientHeight,
+        contentHeightPx: heights.scrollHeight,
+        domElements: await probe.domCount(),
+      },
+    }),
+    value({
+      id: "tree-scroller-height-large",
+      title: "Height of the tree's scrolling area, large catalog (never taller than the window)",
+      budget: "UI-S-035, UI-S-025: the tree scrolls inside the sidebar (window 900 px)",
+      value: heights.clientHeight,
+      max: VIEWPORT.height,
+    }),
+  ];
+  await publish(info, records);
+  assertBudgets(records);
+  expect(Math.min(...counts)).toBeGreaterThan(heights.clientHeight / TREE_ROW_PX / 2);
+  // All 10,000 rows are there to scroll through (30 px each), and the level says where it stopped.
+  expect(heights.scrollHeight).toBeGreaterThanOrEqual(10_000 * TREE_ROW_PX);
+  await expect(page.locator("fs-nav-tree li.limit")).toHaveText(
+    fill(label(labels, "navigationLevelLimit"), { count: "10,000" }),
+  );
+  await expect(page.locator("fs-nav-tree [role='treeitem']").last()).toHaveAttribute(
+    "aria-setsize",
+    "10000",
+  );
+  expect(session.errors).toEqual([]);
+  expect(session.host.unserved).toEqual([]);
+});
 
 test("heap growth after warm-up stays within 10% over 600 mixed interactions", async ({
   page,

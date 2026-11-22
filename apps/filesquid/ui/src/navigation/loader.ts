@@ -2,10 +2,12 @@
  * Reading the navigation tree through a {@link NavigationSource} (UI-F2.1a): every page of a
  * level, the first two levels plus each library's children at start, and the name and kind of
  * pinned destinations. Each function is named for the reads it makes; every loop is bounded by
- * {@link MAX_PAGES} pages, {@link MAX_LIBRARIES} libraries and {@link MAX_PINNED} pins
- * (AGENTS.md section 22).
+ * {@link MAX_PAGES} pages and {@link MAX_LEVEL_NODES} nodes a level, {@link MAX_LIBRARIES}
+ * libraries and {@link MAX_PINNED} pins (AGENTS.md section 22). A level that stops at its cap
+ * says so on the console and is marked, so the tree can say so on screen (UI-S-017).
  */
 import {
+  MAX_LEVEL_NODES,
   MAX_LIBRARIES,
   MAX_PAGES,
   MAX_PINNED,
@@ -17,10 +19,12 @@ import {
 
 /** A whole level: its nodes and the `ancestors` of the listed node. */
 export interface NavigationLevel {
-  /** Every node of the level, up to {@link MAX_PAGES} pages. */
+  /** The nodes of the level, up to {@link MAX_PAGES} pages and {@link MAX_LEVEL_NODES} nodes. */
   readonly nodes: readonly NavigationNode[];
   /** The listed node's ancestors, the node itself last; empty for the root level. */
   readonly ancestors: readonly NavigationNode[];
+  /** True when the level holds more nodes than were read: it stopped at its cap. */
+  readonly capped: boolean;
 }
 
 /** What the tree shows at start: the repository, its libraries and each library's children. */
@@ -31,6 +35,8 @@ export interface NavigationData {
   readonly libraries: readonly NavigationNode[];
   /** Loaded children by parent handle (each library's at start, more as nodes open). */
   readonly children: ReadonlyMap<string, readonly NavigationNode[]>;
+  /** The parents among `children` whose level stopped at its cap. */
+  readonly capped: ReadonlySet<string>;
 }
 
 /** A pinned destination with what the API answered for it: the node, or null for `not_found`. */
@@ -42,7 +48,8 @@ export interface ResolvedPin {
 }
 
 /**
- * Read every page of one level. Stops after {@link MAX_PAGES} pages with a console message.
+ * Read one level page by page. Stops after {@link MAX_PAGES} pages or {@link MAX_LEVEL_NODES}
+ * nodes, whichever comes first, with a console message, and marks the level as capped.
  * I/O: source reads.
  *
  * @param source The navigation source.
@@ -56,15 +63,24 @@ export async function readLevel(
   const nodes: NavigationNode[] = [];
   let ancestors: readonly NavigationNode[] = [];
   let cursor: string | null = null;
-  for (let page = 0; page < MAX_PAGES; page += 1) {
+  let pages = 0;
+  while (pages < MAX_PAGES && nodes.length < MAX_LEVEL_NODES) {
     const answer = await source.list(parent, cursor);
+    pages += 1;
     nodes.push(...answer.nodes);
     ancestors = answer.ancestors;
     cursor = answer.next_cursor;
-    if (cursor === null) return { nodes, ancestors };
+    if (cursor === null) break;
   }
-  console.warn(`FileSquid showed the first ${MAX_PAGES} pages of a navigation level only`);
-  return { nodes, ancestors };
+  const capped = cursor !== null || nodes.length > MAX_LEVEL_NODES;
+  if (capped) console.warn(capMessage(pages));
+  return { nodes: nodes.slice(0, MAX_LEVEL_NODES), ancestors, capped };
+}
+
+/** What the console says when a level stopped at its cap: by pages, else by nodes. */
+function capMessage(pages: number): string {
+  const shown = pages === MAX_PAGES ? `${MAX_PAGES} pages` : `${MAX_LEVEL_NODES} nodes`;
+  return `FileSquid showed the first ${shown} of a navigation level only`;
 }
 
 /**
@@ -78,7 +94,7 @@ export async function readLevel(
  */
 export async function readNavigation(source: NavigationSource): Promise<NavigationData> {
   const repository = (await readLevel(source, null)).nodes[0];
-  if (!repository) return { libraries: [], children: new Map() };
+  if (!repository) return { libraries: [], children: new Map(), capped: new Set() };
   const listed = (await readLevel(source, repository.node)).nodes;
   if (listed.length > MAX_LIBRARIES) {
     console.warn(`FileSquid shows the first ${MAX_LIBRARIES} libraries in the navigation only`);
@@ -86,12 +102,17 @@ export async function readNavigation(source: NavigationSource): Promise<Navigati
   const libraries = listed.slice(0, MAX_LIBRARIES);
   const levels = await Promise.allSettled(libraries.map((lib) => readLevel(source, lib.node)));
   const children = new Map<string, readonly NavigationNode[]>();
+  const capped = new Set<string>();
   levels.forEach((level, i) => {
     const lib = libraries[i] as NavigationNode;
-    if (level.status === "fulfilled") children.set(lib.node, level.value.nodes);
-    else console.warn("FileSquid could not read a library's navigation children", level.reason);
+    if (level.status === "rejected") {
+      console.warn("FileSquid could not read a library's navigation children", level.reason);
+      return;
+    }
+    children.set(lib.node, level.value.nodes);
+    if (level.value.capped) capped.add(lib.node);
   });
-  return { repository, libraries, children };
+  return { repository, libraries, children, capped };
 }
 
 /**

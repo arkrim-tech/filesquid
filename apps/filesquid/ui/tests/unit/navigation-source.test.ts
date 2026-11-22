@@ -8,7 +8,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "../../src/api/client";
 import { MemoryNavigationSource, type FixtureNode } from "../../src/navigation/source";
 import { readLevel, readNavigation, readPins } from "../../src/navigation/loader";
-import { MAX_LIBRARIES, MAX_PAGES, type NavigationSource } from "../../src/navigation/model";
+import {
+  MAX_LEVEL_NODES,
+  MAX_LIBRARIES,
+  MAX_PAGES,
+  type NavigationSource,
+} from "../../src/navigation/model";
+import { BIG_LIBRARY, BigNavigationSource } from "../support/big-navigation";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -113,6 +119,7 @@ describe("loader", () => {
       .mockImplementation((parent, cursor) => original(parent, cursor, 1));
     const level = await readLevel(source, "l1");
     expect(level.nodes.map((n) => n.node)).toEqual(["c1", "v1"]);
+    expect(level.capped).toBe(false);
     expect(spy).toHaveBeenCalledTimes(2);
   });
 
@@ -122,9 +129,44 @@ describe("loader", () => {
       list: async () => ({ nodes: [], ancestors: [], next_cursor: "more" }),
     };
     const spy = vi.spyOn(endless, "list");
-    await readLevel(endless, null);
+    const level = await readLevel(endless, null);
     expect(spy).toHaveBeenCalledTimes(MAX_PAGES);
     expect(warn).toHaveBeenCalledOnce();
+    expect(level.capped).toBe(true);
+  });
+
+  // UI-S-017: a level shows at most its first 10,000 nodes, 50 pages of 200, and says so.
+  it("shows the first 10,000 nodes of a longer level, in 50 pages of 200, and says so", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const source = new BigNavigationSource({ total: 10_050 });
+    const level = await readLevel(source, BIG_LIBRARY);
+    expect(MAX_LEVEL_NODES).toBe(10_000);
+    expect(MAX_PAGES * 200).toBe(MAX_LEVEL_NODES);
+    expect(level.nodes).toHaveLength(10_000);
+    expect(level.nodes.at(-1)?.node).toBe("c-10000");
+    expect(level.capped).toBe(true);
+    expect(source.calls).toHaveLength(50);
+    expect(warn).toHaveBeenCalledOnce();
+    expect(String(warn.mock.calls[0]?.[0])).toContain("first 50 pages of a navigation level");
+  });
+
+  it("reads a level of exactly 10,000 nodes whole, without a cap", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const level = await readLevel(new BigNavigationSource({ total: 10_000 }), BIG_LIBRARY);
+    expect(level.nodes).toHaveLength(10_000);
+    expect(level.capped).toBe(false);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("stops at 10,000 nodes when a source answers larger pages", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const source = new BigNavigationSource({ total: 12_500, pageSize: 1000 });
+    const level = await readLevel(source, BIG_LIBRARY);
+    expect(level.nodes).toHaveLength(10_000);
+    expect(level.capped).toBe(true);
+    expect(source.calls).toHaveLength(10);
+    expect(warn).toHaveBeenCalledOnce();
+    expect(String(warn.mock.calls[0]?.[0])).toContain("first 10000 nodes of a navigation level");
   });
 
   it("reads the repository, its libraries and each library's children", async () => {
@@ -135,6 +177,14 @@ describe("loader", () => {
       "collection",
       "virtual_collection",
     ]);
+    expect([...data.capped]).toEqual([]);
+  });
+
+  it("names the libraries whose level stopped at the cap", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const data = await readNavigation(new BigNavigationSource({ total: 10_050 }));
+    expect(data.children.get(BIG_LIBRARY)).toHaveLength(10_000);
+    expect([...data.capped]).toEqual([BIG_LIBRARY]);
   });
 
   it("keeps the libraries that load when one library's read fails", async () => {
@@ -179,7 +229,11 @@ describe("loader", () => {
     const empty: NavigationSource = {
       list: async () => ({ nodes: [], ancestors: [], next_cursor: null }),
     };
-    expect(await readNavigation(empty)).toEqual({ libraries: [], children: new Map() });
+    expect(await readNavigation(empty)).toEqual({
+      libraries: [],
+      children: new Map(),
+      capped: new Set(),
+    });
   });
 
   it("reads pins by their ancestors, marks not_found ones and logs other failures", async () => {

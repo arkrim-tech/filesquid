@@ -110,6 +110,8 @@ export const MAX_HANDLE_BYTES = 512;
 export const MAX_SECTIONS = 16;
 /** Most pages read for one level before the listing stops. */
 export const MAX_PAGES = 50;
+/** Most nodes one level shows (UI-S-017): {@link MAX_PAGES} pages of the API's default 200. */
+export const MAX_LEVEL_NODES = 10_000;
 /** Most libraries whose children the tree reads at start (each read runs at the same time). */
 export const MAX_LIBRARIES = 64;
 /** Deepest level the tree renders and walks. */
