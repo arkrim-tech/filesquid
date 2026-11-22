@@ -196,6 +196,14 @@ name = "integration_drive_views"
 path = "tests/integration/drive_views.rs"
 
 [[test]]
+name = "integration_streamed_copies"
+path = "tests/integration/streamed_copies.rs"
+
+[[test]]
+name = "integration_streamed_copy_large"
+path = "tests/integration/streamed_copy_large.rs"
+
+[[test]]
 name = "integration_search"
 path = "tests/integration/search.rs"
 

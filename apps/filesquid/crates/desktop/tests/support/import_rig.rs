@@ -369,6 +369,19 @@ impl ImportRig {
         self.send("POST", path, Vec::new()).await
     }
 
+    /// Install the launch's home collections over the library's catalog index, as the
+    /// desktop does at launch, so uploads and copies register their files (API-S-011).
+    pub fn install_home_collections(&self) {
+        let catalog = self.catalog.as_ref().expect("the rig is running");
+        filesquid_desktop_lib::install_home_collections(&self.state, catalog)
+            .expect("home collections");
+    }
+
+    /// POST the JSON `body` to `path` through the scheme as the owner (a command).
+    pub async fn command(&self, path: &str, body: &Value) -> (u16, Value) {
+        self.send("POST", path, body.to_string().into_bytes()).await
+    }
+
     /// A subscriber to this launch's event bus, the bus the desktop event channel forwards.
     pub fn subscribe(&self) -> tokio::sync::broadcast::Receiver<ApiEvent> {
         self.state.events.subscribe()

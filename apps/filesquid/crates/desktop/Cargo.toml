@@ -96,6 +96,10 @@ name = "integration_imports"
 path = "tests/integration/imports.rs"
 
 [[test]]
+name = "integration_streamed_copy"
+path = "tests/integration/streamed_copy.rs"
+
+[[test]]
 name = "integration_import_controls"
 path = "tests/integration/import_controls.rs"
 

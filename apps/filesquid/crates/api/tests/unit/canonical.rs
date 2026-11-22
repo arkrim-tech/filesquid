@@ -1030,7 +1030,9 @@ fn a_copy_record_keeps_what_the_owner_sees_and_is_bound_to_the_new_object() {
         started: "2026-10-20T00:00:00Z",
         finished: "2026-10-20T00:00:01Z",
     };
-    let copied = copy_record(&copy, &input, JPEG).unwrap();
+    let sha256 = filesquid_ocfl::DigestAlgorithm::Sha256.digest_hex(JPEG);
+    let content = (sha256.as_str(), JPEG.len() as u64);
+    let copied = copy_record(&copy, &input, content).unwrap();
     assert_eq!(copied.display_name(), "Harbour.JPEG");
     assert_eq!(copied.original_name(), record.original_name());
     assert_eq!(copied.media_type(), Some("image/jpeg"));
@@ -1043,6 +1045,7 @@ fn a_copy_record_keeps_what_the_owner_sees_and_is_bound_to_the_new_object() {
         Some(format!("original/{}.JPEG", copy.as_str()).as_str())
     );
     assert_eq!(acquisition.size, JPEG.len() as u64);
+    assert_eq!(acquisition.sha256, sha256, "the content it was given");
     assert_eq!(acquisition.recorded_at, "2026-10-20T00:00:01Z");
     assert_eq!(
         copied.imports()[0].source,
