@@ -68,6 +68,7 @@ The `.agents/` directory is the **standard** defined by Agent Skills 1.0, ensuri
 - A role is a sub-agent with its own session (orchestrator, modules, platform, UI).
 - A skill is a procedure any of those workers loads when the task needs it.
 - Role files follow the Open Agent Format simplified sub-agent definition: `name`, `description`, then the prompt. They name no coding tool and no model.
+- `.agents/agents/` is the only copy. Do not create or search `.grok/agents/`, `.claude/agents/`, or another tool-specific agents directory. See [rules/agent-roles.md](./rules/agent-roles.md).
 
 ## Agent Skills 1.0 Format
 
